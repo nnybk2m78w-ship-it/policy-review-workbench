@@ -23964,6 +23964,10 @@ function clearSidebarSearch() {
 function setSidebarCat(cat) {
   if (appState.sidebarCat === cat) return;
   appState.sidebarCat = cat;
+  // 增量更新 Tab 高亮（不重绘整个侧边栏，保留搜索框焦点）
+  document.querySelectorAll('.sidebar-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.cat === cat);
+  });
   renderSidebarList();
 }
 
