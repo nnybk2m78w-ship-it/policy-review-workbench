@@ -302,7 +302,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div class="header-left">
     <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:43:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
   </div>
   <div class="header-center">
     <div class="stat-chips">
@@ -24286,7 +24286,7 @@ function renderConfirm(main) {
     
     // Build key fields summary
     let kvHtml = '';
-    const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','depart_date','product_code','discount_per','age_limit','manual_confirm_fields'];
+    const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit','manual_confirm_fields'];
     keyFields.forEach(f => {
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
         const v = typeof p.data[f] === 'boolean' ? (p.data[f] ? '是' : '否') : String(p.data[f]);
