@@ -22064,7 +22064,7 @@ function saveEdit(policyId, field) {
       time: timeStr,
     });
     
-    saveLocalState();
+    saveState();
   }
   appState.editingField = null;
   appState.editingPolicyId = null;
@@ -22131,7 +22131,7 @@ async function confirmFile(id) {
     // API unavailable — confirm locally and show inline notice
     p.status = 'confirmed';
     p.confirmed_at = new Date().toLocaleString('zh-CN');
-    saveLocalState();
+    saveState();
     showInlineSyncBar('飞书同步暂不可用（请手动在表格中确认）',
       `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
        <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
