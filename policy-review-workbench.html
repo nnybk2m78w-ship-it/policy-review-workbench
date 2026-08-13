@@ -302,7 +302,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div class="header-left">
     <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
   </div>
   <div class="header-center">
     <div class="stat-chips">
@@ -15891,8 +15891,8 @@ const REVIEW_POLICIES = [
       "business_line": "自有票台",
       "flight_type": "单程",
       "booking_cabin": "",
-      "sale_date": "",
-      "depart_date": "2026 年 5 月 12 日 00",
+      "sale_date": "2026-05-10 2026-06-30",
+      "depart_date": "2026-05-12 2026-06-30",
       "discount_per": "",
       "age_limit": "",
       "manual_confirm_fields": "批量预解析结果，需人工审核核心字段后再进入配置",
@@ -15902,6 +15902,7 @@ const REVIEW_POLICIES = [
         "/Users/lydefantuan/Downloads/近一年政策文件/多彩贵州航空支支串飞航线单次卡J舱政策（20260510-20260630）.pdf"
       ],
       "document_type": "fare_policy",
+      "redeem_date": "2026-05-11 2026-06-29",
       "file_name": "多彩贵州航空支支串飞航线单次卡J舱政策（20260510-20260630）.pdf",
       "category": "01_次卡",
       "subcategory": "多彩贵州航空",
@@ -23703,7 +23704,7 @@ const REVIEW_POLICIES = [
     "subcategory": "深圳航空"
   }
 ];
-const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_family", "product_type", "product_code", "product_code_raw", "product_category"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "realname_required", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "次卡数据", "fields": ["office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
+const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_family", "product_type", "product_code", "product_code_raw", "product_category"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "realname_required", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "次卡数据", "fields": ["office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
 const LABELS = {
   "scenario": "解析场景",
   "business_line": "业务线",
@@ -23724,6 +23725,7 @@ const LABELS = {
   "cabin": "舱位代码",
   "cabin_count": "舱位数量",
   "sale_date": "销售日期",
+  "redeem_date": "兑换日期",
   "depart_date": "旅行日期",
   "depart_date_note": "旅行日期备注",
   "advance_purchase_days": "提前购票",
