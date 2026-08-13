@@ -134,7 +134,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sidebar-subgroup-header.active { background:#eef2ff; color:var(--primary); }
 .sidebar-subgroup-header .arrow { transition:transform 0.2s; font-size:10px; margin-right:6px; display:inline-block; }
 .sidebar-subgroup-header.collapsed .arrow { transform:rotate(-90deg); }
-.sidebar-subgroup-header { position:sticky; top:32px; z-index:3; }
+.sidebar-subgroup-header { position:sticky; top:47px; z-index:3; }
 .sidebar-subgroup-body { display:block; }
 .sidebar-subgroup-body.collapsed { display:none; }
 .sidebar-subgroup-body .file-item { padding-left:40px; }
@@ -146,7 +146,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sb-filter-btn { font-size:10px; border:1px solid #c9d0e0; border-radius:10px; padding:1px 7px; background:#fff; color:#777; cursor:pointer; line-height:14px; }
 .sb-filter-btn:hover { background:var(--primary); border-color:var(--primary); color:#fff; }
 /* 仅显示某航司的提示条 */
-.sub-filter-bar { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:11px; color:var(--primary); background:#eef2ff; border-bottom:1px solid #d8defa; position:sticky; top:32px; z-index:3; }
+.sub-filter-bar { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:11px; color:var(--primary); background:#eef2ff; border-bottom:1px solid #d8defa; position:sticky; top:47px; z-index:3; }
 .sub-filter-bar .sub-filter-clear { border:none; background:var(--primary); color:#fff; border-radius:50%; width:17px; height:17px; line-height:15px; cursor:pointer; font-size:11px; padding:0; text-align:center; }
 .sub-filter-bar .sub-filter-clear:hover { background:#3457d5; }
 /* ===== 侧边栏搜索框 ===== */
@@ -156,13 +156,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sidebar-search .sb-clear { position:absolute; right:18px; top:10px; width:20px; height:20px; line-height:18px; text-align:center; border:none; border-radius:50%; background:#e5e7eb; color:#666; font-size:14px; cursor:pointer; padding:0; }
 .sidebar-search .sb-clear:hover { background:#d1d5db; color:#333; }
 /* ===== 一级分类 Tab ===== */
-.sidebar-tabs { display:flex; border-bottom:1px solid var(--border); background:#fff; position:sticky; top:0; z-index:4; }
-.sidebar-tab { flex:1; padding:9px 2px 7px; font-size:12px; text-align:center; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; user-select:none; transition:color 0.15s, background 0.15s; }
-.sidebar-tab:hover { background:#f8f9ff; }
-.sidebar-tab.active { color:var(--primary); font-weight:600; border-bottom-color:var(--primary); background:#eef2ff; }
-.sidebar-tab .n { font-size:10px; opacity:0.7; margin-left:2px; }
+.sidebar-tabs { display:flex; gap:6px; padding:8px 12px; border-bottom:1px solid var(--border); background:#fff; position:sticky; top:0; z-index:4; }
+.sidebar-tab { flex:1; padding:7px 4px; font-size:12px; line-height:16px; text-align:center; cursor:pointer; color:var(--muted); border-radius:7px; user-select:none; transition:color 0.15s, background 0.15s; }
+.sidebar-tab:hover { background:#f0f3ff; }
+.sidebar-tab.active { background:var(--primary); color:#fff; font-weight:600; box-shadow:0 1px 4px rgba(60,90,220,0.35); }
+.sidebar-tab .n { font-size:10px; opacity:0.75; margin-left:2px; }
+.sidebar-tab.active .n { opacity:0.85; }
 /* ===== 搜索列表 ===== */
 .sidebar-list { padding-bottom:20px; }
+/* 一级分类信息条：强化 Tab 切换的视觉反馈 */
+.cat-info-bar { display:flex; align-items:center; justify-content:space-between; padding:8px 14px; font-size:12px; font-weight:600; color:#333; background:linear-gradient(180deg,#f5f7ff,#eef2ff); border-bottom:1px solid #dfe4f7; }
+.cat-info-bar .cat-name { color:var(--primary); }
+.cat-info-bar .cat-meta { font-size:11px; color:var(--muted); font-weight:normal; }
 .search-count { padding:8px 16px; font-size:11px; color:var(--muted); border-bottom:1px solid #f1f2f6; }
 .search-empty { padding:28px 16px; color:var(--muted); text-align:center; font-size:13px; }
 .sb-path { font-size:10px; color:var(--muted); margin-top:2px; }
@@ -229,7 +234,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div>
     <h1>政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></h1>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:50:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:23:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:30:12</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:38</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:28:44</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:27:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:25:47</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:24:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:21:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 12:04:32</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:57:03</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:46:02</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:41:05</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:39:57</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:38:51</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-10 09:48:34</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:19:25</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:01:46</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:59:01</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:58:15</div><div class="meta" style="display:none" id="headerMetaOld">3 份待审核文件</div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:58:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:50:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:23:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:30:12</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:38</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:28:44</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:27:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:25:47</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:24:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:21:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 12:04:32</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:57:03</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:46:02</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:41:05</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:39:57</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:38:51</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-10 09:48:34</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:19:25</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:01:46</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:59:01</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:58:15</div><div class="meta" style="display:none" id="headerMetaOld">3 份待审核文件</div>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-text" id="progressText">已确认 0/3</div>
   </div>
@@ -23729,8 +23734,8 @@ function render() {
 const CATEGORY_ORDER = ['03_自营', '02_旗舰店', '01_次卡'];
 const CATEGORY_NAMES = { '03_自营': '自营', '02_旗舰店': '旗舰店', '01_次卡': '次卡' };
 
-// 收起状态记忆（localStorage 持久化，默认全部展开）
-const EXPANDED_KEY = 'policy_review_collapsed_subs';
+// 展开状态记忆（localStorage 持久化，二级默认收起）
+const EXPANDED_KEY = 'policy_review_expanded_subs_v2';
 function getExpandedSubs() {
   try {
     return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'));
@@ -23876,7 +23881,14 @@ function renderGroups() {
     return groups[b].length - groups[a].length;
   });
 
-  let html = '';
+  // 一级分类信息条（强化 Tab 切换反馈）
+  const catAll = appState.policies.filter(p => (p.category || '03_自营') === cat);
+  const catConfirmed = catAll.filter(p => p.status === 'confirmed').length;
+  let html = `<div class="cat-info-bar">
+    <span class="cat-name">${CATEGORY_NAMES[cat] || cat}</span>
+    <span class="cat-meta">${catAll.length}份 · ${catConfirmed}已确认</span>
+  </div>`;
+
   sortedSubs.forEach(sub => {
     const items = groups[sub];
     const confirmed = items.filter(p => p.status === 'confirmed');
@@ -23885,8 +23897,8 @@ function renderGroups() {
     const subActive = items.some(p => p.id === appState.currentFileId);
     const subFiltered = subFilter === sub;
 
-    // 默认全部展开；当前文件所在组强制展开；仅被用户手动收起的组折叠
-    const isOpen = subActive || !expanded.has(subKey);
+    // 二级默认收起；当前文件所在组、只看过滤的组强制展开；手动展开的组持久化
+    const isOpen = subActive || subFiltered || expanded.has(subKey);
 
     html += `<div class="sidebar-subgroup">`;
     html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''}${isOpen ? '' : ' collapsed'}" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
@@ -23961,11 +23973,11 @@ function toggleSubgroup(header) {
   if (!body) return;
   const nowCollapsed = body.classList.toggle('collapsed');
   header.classList.toggle('collapsed');
-  // 记忆收起状态（默认全部展开）
-  const collapsedSet = getExpandedSubs();
-  if (nowCollapsed) collapsedSet.add(key);
-  else collapsedSet.delete(key);
-  saveExpandedSubs(collapsedSet);
+  // 记忆展开状态（二级默认收起，手动展开的组持久化）
+  const expandedSet = getExpandedSubs();
+  if (nowCollapsed) expandedSet.delete(key);
+  else expandedSet.add(key);
+  saveExpandedSubs(expandedSet);
 }
 
 // 只看某航司（可配合搜索叠加过滤）
