@@ -21686,7 +21686,7 @@ if (saved) {
       appState.policies = REVIEW_POLICIES.map(p => {
         const savedEntry = savedMap.get(p.file_name);
         if (savedEntry) {
-          return {
+          const merged = {
             ...p,
             status: savedEntry.status || p.status,
             confirmed_at: savedEntry.confirmed_at || p.confirmed_at,
@@ -21694,6 +21694,9 @@ if (saved) {
             audit: savedEntry.audit || p.audit,
             _change_history: savedEntry._change_history || [],
           };
+          // 加载时清理：当前值等于原始值则移除修改标识
+          refreshEditedFields(merged);
+          return merged;
         }
         return p;
       });
@@ -22094,6 +22097,27 @@ function formatTime(now) {
     String(now.getSeconds()).padStart(2,'0');
 }
 
+// 获取字段从飞书同步时的原始值
+function getOriginalFieldValue(policyId, field) {
+  const original = REVIEW_POLICIES.find(p => p.id === policyId);
+  return String(original && original.data[field] !== undefined ? original.data[field] : '');
+}
+
+// 清理已改回原值的字段标识：当前值等于飞书原始值时，不再视为修改
+function refreshEditedFields(p) {
+  if (!p || !p.audit || !p.audit.edited_fields) return;
+  const original = REVIEW_POLICIES.find(orig => orig.id === p.id);
+  if (!original) return;
+  p.audit.edited_fields = p.audit.edited_fields.filter(field => {
+    const current = String(p.data[field] ?? '');
+    const origVal = String(original.data[field] ?? '');
+    return current !== origVal;
+  });
+  if (p.audit.edited_fields.length === 0) {
+    delete p.audit.edited_fields;
+  }
+}
+
 let pendingEdit = null; // {policyId, field, oldVal, newVal}
 
 function saveEdit(policyId, field) {
@@ -22174,6 +22198,9 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
     time: timeStr,
     reason: reason,
   });
+
+  // 保存后清理：若当前值已等于飞书原始值，则移除修改标识
+  refreshEditedFields(p);
 
   saveState();
   render();
