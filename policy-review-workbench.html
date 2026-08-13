@@ -134,10 +134,39 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sidebar-subgroup-header.active { background:#eef2ff; color:var(--primary); }
 .sidebar-subgroup-header .arrow { transition:transform 0.2s; font-size:10px; margin-right:6px; display:inline-block; }
 .sidebar-subgroup-header.collapsed .arrow { transform:rotate(-90deg); }
-.sidebar-subgroup-body { overflow:hidden; transition:max-height 0.3s ease; }
-.sidebar-subgroup-body.collapsed { max-height:0 !important; }
+.sidebar-subgroup-header { position:sticky; top:32px; z-index:3; }
+.sidebar-subgroup-body { display:block; }
+.sidebar-subgroup-body.collapsed { display:none; }
 .sidebar-subgroup-body .file-item { padding-left:40px; }
 .sidebar-subgroup-body .sidebar-confirmed-toggle { padding-left:40px; }
+/* 航司只看按钮 */
+.sb-sg-left { display:flex; align-items:center; min-width:0; overflow:hidden; }
+.sb-sg-left .sg-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sb-sg-right { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.sb-filter-btn { font-size:10px; border:1px solid #c9d0e0; border-radius:10px; padding:1px 7px; background:#fff; color:#777; cursor:pointer; line-height:14px; }
+.sb-filter-btn:hover { background:var(--primary); border-color:var(--primary); color:#fff; }
+/* 仅显示某航司的提示条 */
+.sub-filter-bar { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:11px; color:var(--primary); background:#eef2ff; border-bottom:1px solid #d8defa; position:sticky; top:32px; z-index:3; }
+.sub-filter-bar .sub-filter-clear { border:none; background:var(--primary); color:#fff; border-radius:50%; width:17px; height:17px; line-height:15px; cursor:pointer; font-size:11px; padding:0; text-align:center; }
+.sub-filter-bar .sub-filter-clear:hover { background:#3457d5; }
+/* ===== 侧边栏搜索框 ===== */
+.sidebar-search { position:relative; padding:8px 12px 10px; border-bottom:1px solid var(--border); }
+.sidebar-search input { width:100%; box-sizing:border-box; padding:7px 28px 7px 10px; font-size:12px; border:1px solid var(--border); border-radius:6px; background:#f8f9ff; outline:none; transition:border-color 0.15s, background 0.15s; }
+.sidebar-search input:focus { border-color:var(--primary); background:#fff; }
+.sidebar-search .sb-clear { position:absolute; right:18px; top:10px; width:20px; height:20px; line-height:18px; text-align:center; border:none; border-radius:50%; background:#e5e7eb; color:#666; font-size:14px; cursor:pointer; padding:0; }
+.sidebar-search .sb-clear:hover { background:#d1d5db; color:#333; }
+/* ===== 一级分类 Tab ===== */
+.sidebar-tabs { display:flex; border-bottom:1px solid var(--border); background:#fff; position:sticky; top:0; z-index:4; }
+.sidebar-tab { flex:1; padding:9px 2px 7px; font-size:12px; text-align:center; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; user-select:none; transition:color 0.15s, background 0.15s; }
+.sidebar-tab:hover { background:#f8f9ff; }
+.sidebar-tab.active { color:var(--primary); font-weight:600; border-bottom-color:var(--primary); background:#eef2ff; }
+.sidebar-tab .n { font-size:10px; opacity:0.7; margin-left:2px; }
+/* ===== 搜索列表 ===== */
+.sidebar-list { padding-bottom:20px; }
+.search-count { padding:8px 16px; font-size:11px; color:var(--muted); border-bottom:1px solid #f1f2f6; }
+.search-empty { padding:28px 16px; color:var(--muted); text-align:center; font-size:13px; }
+.sb-path { font-size:10px; color:var(--muted); margin-top:2px; }
+.sidebar-list .file-item .name mark, .sidebar-list .file-item .sub mark { background:#ffe58f; color:#614700; padding:0 1px; border-radius:2px; }
 .sidebar-confirmed-toggle { padding:8px 16px 8px 28px; font-size:11px; color:var(--muted); cursor:pointer; user-select:none; transition:background 0.15s; border-bottom:1px dashed #f1f2f6; }
 .sidebar-confirmed-toggle:hover { background:#f8f9ff; color:var(--primary); }
 .sidebar-confirmed-toggle .count { background:var(--success); color:#fff; border-radius:10px; padding:1px 7px; font-size:10px; margin:0 3px; }
@@ -200,7 +229,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div>
     <h1>政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></h1>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:23:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:30:12</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:38</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:28:44</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:27:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:25:47</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:24:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:21:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 12:04:32</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:57:03</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:46:02</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:41:05</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:39:57</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:38:51</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-10 09:48:34</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:19:25</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:01:46</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:59:01</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:58:15</div><div class="meta" style="display:none" id="headerMetaOld">3 份待审核文件</div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:50:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:23:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:30:12</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:38</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:28:44</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:27:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:25:47</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:24:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:21:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 12:04:32</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:57:03</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:46:02</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:41:05</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:39:57</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:38:51</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-10 09:48:34</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:19:25</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:01:46</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:59:01</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:58:15</div><div class="meta" style="display:none" id="headerMetaOld">3 份待审核文件</div>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-text" id="progressText">已确认 0/3</div>
   </div>
@@ -951,7 +980,7 @@ const REVIEW_POLICIES = [
     "file_name": "6月自然衔接明细（6月第二期）-去哪儿.xlsx",
     "source_type": "xlsx",
     "parsed_at": "2026-08-10T10:10:07.000+08:00",
-    "status": "reviewing",
+    "status": "confirmed",
     "source_text": "=== SHEET: 去哪儿 ===\n产品名称\t乘机日期\t出票日期\t始发\t到达\t航班号\t票面价\t票号\t编码\t销售舱位\t运输舱位\t运价基础\t代理人号\t代理人名称\tEI项\t平台订单号\t另一程票号\t截图\n自然衔接\t2026-06-25 00:00:00\t2026-06-23 00:00:00\tSZX\tZHA\tZH9327\t220\t4794840280843\tKVQ7N9\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260623185421578\t893-4879079048\n自然衔接\t2026-06-16 00:00:00\t2026-06-15 00:00:00\tSZX\tZHA\tZH9327\t220\t4794842344596\tKFHQ84\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260615125111520\t8804228468106\n自然衔接\t2026-06-20 00:00:00\t2026-05-22 00:00:00\tSZX\tZHA\tZH9327\t220\t4792719296859\tKD28MQ\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260522113408060\t479-2719314010\n自然衔接\t2026-06-24 00:00:00\t2026-06-17 00:00:00\tSZX\tZHA\tZH9327\t220\t4794842688976\tHD2WJR\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260617170428555\t8918847087943\n自然衔接\t2026-06-26 00:00:00\t2026-06-05 00:00:00\tSZX\tYCU\tZH9139\t400\t4792716004490\tKMYP34\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260605001827955\t731-2715918515\n自然衔接\t2026-06-26 00:00:00\t2026-06-05 00:00:00\tSZX\tYCU\tZH9139\t400\t4792716004491\tKMYP34\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260605001827955\t731-2715918516\n自然衔接\t2026-06-25 00:00:00\t2026-06-05 00:00:00\tSZX\tINC\tZH9233\t600\t4792715989622\tKGJ9G1\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260605224139442\t891-8737877932\n自然衔接\t2026-06-21 00:00:00\t2026-06-17 00:00:00\tSZX\tINC\tZH9231\t600\t4794842597239\tHN2R1E\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260617013105099\t7812169631054\n自然衔接\t2026-06-17 00:00:00\t2026-05-09 00:00:00\tSZX\tINC\tZH9231\t600\t4792717356479\tJXQP0K\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260509194609028\t781-2717366211\n自然衔接\t2026-06-17 00:00:00\t2026-05-09 00:00:00\tSZX\tINC\tZH9231\t600\t4792717356480\tJXQP0K\tT\tT\tTLTCN\t08343543\t去哪儿网（天津）国际旅行社有限公司深圳分公司\t自然衔接不得签转\tqvr260509194609028\t781-2717366212\n",
     "data": {
       "product_type": "PAT:A#CXSLT0002（需由主政策确认）",
@@ -981,7 +1010,8 @@ const REVIEW_POLICIES = [
     "evidence": {},
     "audit": {},
     "category": "03_自营",
-    "subcategory": "深圳航空"
+    "subcategory": "深圳航空",
+    "confirmed_at": "2026-08-13T16:29:17.477+08:00"
   },
   {
     "id": "recvrR7rYObKfV",
@@ -23643,6 +23673,9 @@ let appState = {
   currentView: 'review',
   editingField: null,
   editingPolicyId: null,
+  sidebarQuery: '',        // 侧边栏搜索关键词
+  sidebarCat: '03_自营',    // 当前一级分类 Tab
+  subFilter: '',           // 二级航司只看过滤
 };
 
 // Load from localStorage — merge status/edits INTO fresh REVIEW_POLICIES data
@@ -23692,133 +23725,260 @@ function render() {
   saveState();
 }
 
+// ===== 侧边栏：搜索 + 一级Tab + 二级航司组 =====
+const CATEGORY_ORDER = ['03_自营', '02_旗舰店', '01_次卡'];
+const CATEGORY_NAMES = { '03_自营': '自营', '02_旗舰店': '旗舰店', '01_次卡': '次卡' };
+
+// 收起状态记忆（localStorage 持久化，默认全部展开）
+const EXPANDED_KEY = 'policy_review_collapsed_subs';
+function getExpandedSubs() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]'));
+  } catch(e) { return new Set(); }
+}
+function saveExpandedSubs(set) {
+  localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set]));
+}
+
 function renderSidebar() {
   const sidebar = document.getElementById('sidebar');
+  const query = appState.sidebarQuery.trim();
+
+  // 统计各一级分类数量
+  const catCount = {};
+  CATEGORY_ORDER.forEach(c => catCount[c] = 0);
+  appState.policies.forEach(p => {
+    const c = p.category || '03_自营';
+    catCount[c] = (catCount[c] || 0) + 1;
+  });
+
+  // 静态区：标题 + 搜索框 + 一级Tab（渲染后不随列表刷新，保持输入焦点）
   let html = '<h3>文件队列</h3>';
+  html += `<div class="sidebar-search">
+    <input id="sbSearchInput" type="text" placeholder="🔍 搜索文件 / 航司 / 产品（⌘K）"
+      value="${escapeHtml(appState.sidebarQuery)}"
+      oninput="onSidebarSearch(this.value)"
+      onkeydown="if(event.key==='Enter')event.target.blur();if(event.key==='Escape'&&this.value){clearSidebarSearch()}">
+    ${query ? `<button class="sb-clear" onclick="clearSidebarSearch()" title="清除搜索">×</button>` : ''}
+  </div>`;
+  html += `<div class="sidebar-tabs">`;
+  CATEGORY_ORDER.forEach(c => {
+    const active = appState.sidebarCat === c ? ' active' : '';
+    html += `<div class="sidebar-tab${active}" onclick="setSidebarCat('${c}')" data-cat="${c}">
+      ${CATEGORY_NAMES[c] || c}<span class="n">${catCount[c] || 0}</span>
+    </div>`;
+  });
+  html += `</div>`;
+  html += `<div class="sidebar-list" id="sidebarList"></div>`;
 
-  // 一级分类：自营 / 旗舰店 / 次卡
-  const categoryOrder = ['03_自营', '02_旗舰店', '01_次卡'];
-  const categoryNames = {
-    '03_自营': '自营',
-    '02_旗舰店': '旗舰店',
-    '01_次卡': '次卡',
-  };
+  sidebar.innerHTML = html;
+  renderSidebarList();
+}
 
-  // 按 一级分类 → 航司 两级分组
+// 只重绘列表区（搜索框/Tab保持不动，不丢焦点）
+function renderSidebarList() {
+  const list = document.getElementById('sidebarList');
+  if (!list) return;
+  const query = appState.sidebarQuery.trim().toLowerCase();
+
+  let html = '';
+  // 航司只看过滤提示条
+  if (appState.subFilter) {
+    const sub = appState.subFilter;
+    const n = appState.policies.filter(p =>
+      (p.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+      (p.subcategory || '未标注航司') === sub).length;
+    html += `<div class="sub-filter-bar">仅显示：${escapeHtml(sub)} (${n}) <button class="sub-filter-clear" onclick="clearSubFilter()" title="显示全部航司">✕</button></div>`;
+  }
+
+  if (query) {
+    html += renderSearchResults(query);
+  } else {
+    html += renderGroups();
+  }
+  list.innerHTML = html;
+
+  // 滚动定位当前文件
+  const activeEl = list.querySelector('.file-item.active');
+  if (activeEl && activeEl.scrollIntoView) {
+    activeEl.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// 搜索匹配：文件名 / 产品名 / 航司 / 业务类型 / PAT(product_type) / 舱位 / 分类
+function policyMatches(p, q) {
+  if (!q) return true;
+  const d = p.data || {};
+  const haystack = [
+    p.file_name,
+    d.product_name, d.carrier_name, d.business_type, d.scenario,
+    p.category, p.subcategory,
+    d.product_type, d.pat, d.cabin,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(String(q).toLowerCase());
+}
+
+// 高亮关键词（已转义文本上替换）
+function highlightMatch(text, q) {
+  const esc = escapeHtml(text);
+  if (!q) return esc;
+  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    return esc.replace(new RegExp('(' + escQ.replace(/&/g, '&amp;').replace(/</g, '&lt;') + ')', 'ig'),
+      '<mark>$1</mark>');
+  } catch(e) { return esc; }
+}
+
+function renderSearchResults(q) {
+  const subFilter = appState.subFilter;
+  const matches = appState.policies.filter(p =>
+    policyMatches(p, q) &&
+    (!subFilter || (p.subcategory || '未标注航司') === subFilter));
+  if (matches.length === 0) {
+    return `<div class="search-empty">未找到匹配「${escapeHtml(appState.sidebarQuery.trim())}」的文件</div>`;
+  }
+  let html = `<div class="search-count">找到 ${matches.length} 个文件</div>`;
+  matches.forEach(p => {
+    const activeCls = p.id === appState.currentFileId ? ' active' : '';
+    const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+    const statusBadge = p.status === 'confirmed'
+      ? `<div class="badge badge-confirmed">✓ 已确认</div>`
+      : `<div class="badge badge-reviewing">审核中</div>`;
+    const path = `${CATEGORY_NAMES[p.category] || p.category || '自营'} · ${p.subcategory || '未标注航司'}`;
+    html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
+      <div class="name">${highlightMatch(p.file_name, q)}</div>
+      <div class="sub">${highlightMatch([p.data.business_type, p.data.product_name].filter(Boolean).join(' · '), q)}</div>
+      <div class="sb-path">${escapeHtml(path)}</div>
+      <div class="badge-row">${statusBadge}${modBadge}</div>
+    </div>`;
+  });
+  return html;
+}
+
+function renderGroups() {
+  const cat = appState.sidebarCat || '03_自营';
+  const subFilter = appState.subFilter || '';
+  const expanded = getExpandedSubs();
   const groups = {};
   appState.policies.forEach(p => {
-    const cat = p.category || '03_自营';
+    const c = p.category || '03_自营';
     const sub = p.subcategory || '未标注航司';
-    if (!groups[cat]) groups[cat] = {};
-    if (!groups[cat][sub]) groups[cat][sub] = [];
-    groups[cat][sub].push(p);
+    if (c !== cat) return;
+    if (subFilter && sub !== subFilter) return;
+    if (!groups[sub]) groups[sub] = [];
+    groups[sub].push(p);
   });
 
-  // 一级排序
-  const sortedCats = Object.keys(groups).sort((a, b) => {
-    const ai = categoryOrder.indexOf(a);
-    const bi = categoryOrder.indexOf(b);
-    if (ai >= 0 && bi >= 0) return ai - bi;
-    if (ai >= 0) return -1;
-    if (bi >= 0) return 1;
-    return a.localeCompare(b, 'zh-CN');
+  // 航司排序：数量降序，未标注航司放最后
+  const sortedSubs = Object.keys(groups).sort((a, b) => {
+    if (a === '未标注航司') return 1;
+    if (b === '未标注航司') return -1;
+    return groups[b].length - groups[a].length;
   });
 
-  sortedCats.forEach(cat => {
-    const subMap = groups[cat];
-    const catItems = appState.policies.filter(p => (p.category || '03_自营') === cat);
-    const catConfirmed = catItems.filter(p => p.status === 'confirmed').length;
-    const catActive = catItems.some(p => p.id === appState.currentFileId);
+  let html = '';
+  sortedSubs.forEach(sub => {
+    const items = groups[sub];
+    const confirmed = items.filter(p => p.status === 'confirmed');
+    const unconfirmed = items.filter(p => p.status !== 'confirmed');
+    const subKey = cat + '||' + sub;
+    const subActive = items.some(p => p.id === appState.currentFileId);
+    const subFiltered = subFilter === sub;
 
-    html += `<div class="sidebar-group">`;
-    html += `<div class="sidebar-group-header collapsed" onclick="toggleGroup(this)" data-group="${cat}">
-      <span><span class="arrow">▼</span> ${categoryNames[cat] || cat} (${catItems.length})</span>
-      <span style="font-size:10px;color:var(--muted);font-weight:normal">${catConfirmed}已确认</span>
+    // 默认全部展开；当前文件所在组强制展开；仅被用户手动收起的组折叠
+    const isOpen = subActive || !expanded.has(subKey);
+
+    html += `<div class="sidebar-subgroup">`;
+    html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''}${isOpen ? '' : ' collapsed'}" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
+      <span class="sb-sg-left"><span class="arrow">▼</span><span class="sg-name">${escapeHtml(sub)} (${items.length})</span></span>
+      <span class="sb-sg-right">
+        <span style="font-size:10px;color:var(--muted);font-weight:normal">${confirmed.length}已确认</span>
+        <button class="sb-filter-btn${subFiltered ? ' active' : ''}" onclick="event.stopPropagation();filterSubgroup('${subKey}')" title="只看此航司的文件">只看</button>
+      </span>
     </div>`;
-    html += `<div class="sidebar-group-body collapsed" data-group="${cat}">`;
+    html += `<div class="sidebar-subgroup-body${isOpen ? '' : ' collapsed'}" data-subgroup="${subKey}">`;
 
-    // 航司排序：数量降序，未标注航司放最后
-    const sortedSubs = Object.keys(subMap).sort((a, b) => {
-      if (a === '未标注航司') return 1;
-      if (b === '未标注航司') return -1;
-      return subMap[b].length - subMap[a].length;
+    unconfirmed.forEach(p => {
+      const activeCls = p.id === appState.currentFileId ? ' active' : '';
+      const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+      const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
+      html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
+        <div class="name">${escapeHtml(p.file_name)}</div>
+        <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
+        <div class="badge-row"><div class="badge badge-reviewing">审核中</div>${modBadge}</div>
+      </div>`;
     });
 
-    sortedSubs.forEach(sub => {
-      const items = subMap[sub];
-      const confirmed = items.filter(p => p.status === 'confirmed');
-      const unconfirmed = items.filter(p => p.status !== 'confirmed');
-      const subActive = items.some(p => p.id === appState.currentFileId);
-      const subKey = cat + '||' + sub;
-
-      html += `<div class="sidebar-subgroup">`;
-      html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''} collapsed" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
-        <span><span class="arrow">▼</span> ${escapeHtml(sub)} (${items.length})</span>
-        <span style="font-size:10px;color:var(--muted);font-weight:normal">${confirmed.length}已确认</span>
+    // 已确认文件：组内折叠，当前文件在其中时自动展开
+    if (confirmed.length > 0) {
+      const curInConfirmed = confirmed.some(p => p.id === appState.currentFileId);
+      html += `<div class="sidebar-confirmed-toggle" onclick="toggleConfirmed('${subKey}')" data-group="${subKey}">
+        ▶ 显示 <span class="count">${confirmed.length}</span> 个已确认文件
       </div>`;
-      html += `<div class="sidebar-subgroup-body collapsed" data-subgroup="${subKey}">`;
-
-      // 未确认文件（始终可见）
-      unconfirmed.forEach(p => {
+      confirmed.forEach(p => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
         const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+        const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
         const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
-        html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
+        const hiddenCls = (!isOpen || !curInConfirmed) ? ' collapsed-item' : '';
+        html += `<div class="file-item confirmed-item${hiddenCls}${activeCls}" data-confirmed-group="${subKey}" onclick="selectFile('${p.id}')">
           <div class="name">${escapeHtml(p.file_name)}</div>
           <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
-          <div class="badge-row"><div class="badge badge-reviewing">审核中</div>${modBadge}</div>
+          <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${modBadge}</div>
+          ${byTag}
         </div>`;
       });
-
-      // 已确认文件（默认折叠）
-      if (confirmed.length > 0) {
-        html += `<div class="sidebar-confirmed-toggle" onclick="toggleConfirmed('${subKey}')" data-group="${subKey}">
-          ▶ 显示 <span class="count">${confirmed.length}</span> 个已确认文件
-        </div>`;
-        confirmed.forEach(p => {
-          const activeCls = p.id === appState.currentFileId ? ' active' : '';
-          const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-          const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
-          const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
-          html += `<div class="file-item confirmed-item collapsed-item${activeCls}" data-confirmed-group="${subKey}" onclick="selectFile('${p.id}')">
-            <div class="name">${escapeHtml(p.file_name)}</div>
-            <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
-            <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${modBadge}</div>
-            ${byTag}
-          </div>`;
-        });
-      }
-
-      html += `</div></div>`;
-    });
+    }
 
     html += `</div></div>`;
   });
 
-  sidebar.innerHTML = html;
+  if (!sortedSubs.length) {
+    html = `<div class="search-empty">该分类暂无文件</div>`;
+  }
+  return html;
+}
+
+function onSidebarSearch(value) {
+  appState.sidebarQuery = value;
+  renderSidebarList();
+}
+
+function clearSidebarSearch() {
+  appState.sidebarQuery = '';
+  renderSidebar();
+}
+
+function setSidebarCat(cat) {
+  if (appState.sidebarCat === cat) return;
+  appState.sidebarCat = cat;
+  renderSidebarList();
 }
 
 function toggleSubgroup(header) {
   const key = header.dataset.subgroup;
   const body = document.querySelector(`.sidebar-subgroup-body[data-subgroup="${key}"]`);
   if (!body) return;
-  const isCollapsed = body.classList.contains('collapsed');
-  body.classList.toggle('collapsed');
+  const nowCollapsed = body.classList.toggle('collapsed');
   header.classList.toggle('collapsed');
+  // 记忆收起状态（默认全部展开）
+  const collapsedSet = getExpandedSubs();
+  if (nowCollapsed) collapsedSet.add(key);
+  else collapsedSet.delete(key);
+  saveExpandedSubs(collapsedSet);
 }
 
-function toggleGroup(header) {
-  const group = header.dataset.group;
-  const body = document.querySelector(`.sidebar-group-body[data-group="${group}"]`);
-  if (!body) return;
-  const isCollapsed = body.classList.contains('collapsed');
-  if (isCollapsed) {
-    body.classList.remove('collapsed');
-    header.classList.remove('collapsed');
-  } else {
-    body.classList.add('collapsed');
-    header.classList.add('collapsed');
-  }
+// 只看某航司（可配合搜索叠加过滤）
+function filterSubgroup(subKey) {
+  const sub = subKey.split('||').slice(1).join('||');
+  if (appState.subFilter === sub) { clearSubFilter(); return; }
+  appState.subFilter = sub;
+  renderSidebarList();
+}
+
+function clearSubFilter() {
+  appState.subFilter = '';
+  renderSidebarList();
 }
 
 function toggleConfirmed(group) {
@@ -24035,6 +24195,16 @@ function updateProgress() {
 function selectFile(id) {
   appState.currentFileId = id;
   appState.currentView = 'review';
+  // 自动切换到文件所在的一级分类 Tab，保证当前文件永远可见
+  const p = appState.policies.find(x => x.id === id);
+  if (p) {
+    const cat = p.category || '03_自营';
+    if (appState.sidebarCat !== cat) {
+      appState.sidebarCat = cat;
+      // 切换分类时清空搜索，避免搜索结果与定位冲突
+      appState.sidebarQuery = '';
+    }
+  }
   render();
 }
 
@@ -24457,6 +24627,23 @@ async function startFeishuAuth() {
     showToast('无法获取授权地址: ' + e.message, 'error');
   }
 }
+
+// ===== 全局快捷键 =====
+document.addEventListener('keydown', (e) => {
+  // ⌘K / Ctrl+K：聚焦侧边栏搜索框
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const inp = document.getElementById('sbSearchInput');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  // Esc：清空搜索
+  if (e.key === 'Escape') {
+    const inp = document.getElementById('sbSearchInput');
+    if (inp && document.activeElement === inp && appState.sidebarQuery) {
+      clearSidebarSearch();
+    }
+  }
+});
 
 // ===== INIT =====
 if (appState.policies.length > 0 && !appState.currentFileId) {
