@@ -23731,11 +23731,11 @@ function renderSidebar() {
     const catActive = catItems.some(p => p.id === appState.currentFileId);
 
     html += `<div class="sidebar-group">`;
-    html += `<div class="sidebar-group-header${catActive ? '' : ''}" onclick="toggleGroup(this)" data-group="${cat}">
+    html += `<div class="sidebar-group-header collapsed" onclick="toggleGroup(this)" data-group="${cat}">
       <span><span class="arrow">▼</span> ${categoryNames[cat] || cat} (${catItems.length})</span>
       <span style="font-size:10px;color:var(--muted);font-weight:normal">${catConfirmed}已确认</span>
     </div>`;
-    html += `<div class="sidebar-group-body" data-group="${cat}">`;
+    html += `<div class="sidebar-group-body collapsed" data-group="${cat}">`;
 
     // 航司排序：数量降序，未标注航司放最后
     const sortedSubs = Object.keys(subMap).sort((a, b) => {
@@ -23752,11 +23752,11 @@ function renderSidebar() {
       const subKey = cat + '||' + sub;
 
       html += `<div class="sidebar-subgroup">`;
-      html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''}" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
+      html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''} collapsed" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
         <span><span class="arrow">▼</span> ${escapeHtml(sub)} (${items.length})</span>
         <span style="font-size:10px;color:var(--muted);font-weight:normal">${confirmed.length}已确认</span>
       </div>`;
-      html += `<div class="sidebar-subgroup-body" data-subgroup="${subKey}">`;
+      html += `<div class="sidebar-subgroup-body collapsed" data-subgroup="${subKey}">`;
 
       // 未确认文件（始终可见）
       unconfirmed.forEach(p => {
