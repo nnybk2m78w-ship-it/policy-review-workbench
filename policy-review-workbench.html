@@ -29,6 +29,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .file-item .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; margin-top:4px; }
 .badge-reviewing { background:#ffeaa7; color:#b58900; }
 .badge-confirmed { background:#00b894; color:#fff; }
+.badge-modified { background:#f39c12; color:#fff; }
+.file-item .badge-row { display:flex; gap:4px; align-items:center; }
+.file-item .badge-row .badge { margin-top:4px; }
+.file-modified-badge { display:inline-block; background:#f39c12; color:#fff; border-radius:10px; padding:2px 8px; font-size:11px; margin-left:8px; vertical-align:middle; }
+.confirmed-by-tag { font-size:11px; color:#00b894; margin-top:2px; }
 
 /* Main */
 .main { flex:1; overflow-y:auto; padding:24px; }
@@ -136,14 +141,30 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .field-modified .field-value::after { content:'✎'; font-size:10px; color:#f39c12; position:absolute; top:-2px; right:-2px; }
 .field-modified-indicator { display:inline-block; background:#f39c12; color:#fff; border-radius:10px; padding:1px 6px; font-size:10px; margin-left:6px; cursor:pointer; }
 .field-modified-indicator:hover { background:#e67e22; }
-.change-history-panel { margin-top:8px; padding:10px 12px; background:#fef9e7; border:1px solid #f9e79f; border-radius:6px; font-size:12px; max-height:120px; overflow-y:auto; display:none; }
+.change-history-panel { margin-top:8px; padding:10px 12px; background:#fef9e7; border:1px solid #f9e79f; border-radius:6px; font-size:12px; max-height:140px; overflow-y:auto; display:none; }
 .change-history-panel.visible { display:block; }
-.change-history-item { padding:4px 0; border-bottom:1px solid #fdebd0; display:flex; align-items:center; gap:8px; }
+.change-history-item { padding:4px 0; border-bottom:1px solid #fdebd0; }
 .change-history-item:last-child { border-bottom:none; }
-.change-history-item .ch-time { color:var(--muted); font-size:11px; min-width:130px; }
+.change-history-item .ch-head { display:flex; align-items:center; gap:8px; }
+.change-history-item .ch-time { color:var(--muted); font-size:11px; min-width:120px; }
+.change-history-item .ch-field { font-weight:500; font-size:12px; color:#8e6e00; }
+.change-history-item .ch-change { font-size:12px; margin-top:2px; }
 .change-history-item .ch-old { color:#e17055; text-decoration:line-through; font-size:11px; }
 .change-history-item .ch-arrow { color:var(--muted); font-size:11px; }
 .change-history-item .ch-new { color:#27ae60; font-weight:500; font-size:12px; }
+.change-history-item .ch-reason { color:#8e6e00; font-size:11px; margin-top:2px; background:#fdf2d1; border-radius:4px; padding:2px 6px; display:inline-block; }
+
+/* 修改原因弹窗 */
+.reason-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:999; }
+.reason-modal { background:#fff; border-radius:10px; padding:20px 24px; width:420px; max-width:90%; box-shadow:0 8px 30px rgba(0,0,0,0.2); }
+.reason-modal h4 { margin-bottom:10px; font-size:15px; }
+.reason-meta { font-size:12px; color:var(--muted); margin-bottom:10px; padding:8px 10px; background:#f5f6fa; border-radius:6px; line-height:1.6; }
+.reason-meta .rm-change { color:#e17055; text-decoration:line-through; }
+.reason-meta .rm-arrow { color:var(--muted); }
+.reason-meta .rm-new { color:#27ae60; font-weight:500; }
+.reason-modal textarea { width:100%; height:72px; border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:13px; resize:vertical; box-sizing:border-box; }
+.reason-modal textarea:focus { outline:none; border-color:var(--primary); }
+.reason-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 .ch-count { background:#f39c12; color:#fff; border-radius:10px; padding:1px 5px; font-size:9px; margin-left:2px; vertical-align:super; }
 
 /* Sync inline status (non-blocking) */
@@ -187,6 +208,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <button class="btn-sm btn-sm-confirm" id="authBtn" onclick="startFeishuAuth()">前往飞书授权</button>
     <button class="btn-sm btn-sm-nav" onclick="document.getElementById('authBanner').style.display='none'">稍后再说</button>
   </span>
+</div>
+
+<!-- 修改原因弹窗 -->
+<div id="reasonOverlay" class="reason-overlay" style="display:none">
+  <div class="reason-modal">
+    <h4>✏️ 填写修改原因</h4>
+    <div class="reason-meta" id="reasonMeta"></div>
+    <textarea id="reasonInput" placeholder="请输入修改原因（必填，用于追溯）"></textarea>
+    <div class="reason-actions">
+      <button class="btn-sm btn-sm-nav" onclick="cancelReason()">取消修改</button>
+      <button class="btn-sm btn-sm-confirm" onclick="submitReason()">保存修改</button>
+    </div>
+  </div>
 </div>
 
 <div class="layout">
@@ -21750,10 +21784,11 @@ function renderSidebar() {
     // Unconfirmed files (always visible)
     unconfirmed.forEach(p => {
       const activeCls = p.id === appState.currentFileId ? ' active' : '';
+      const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
       html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
-        <div class="name">${p.file_name}</div>
-        <div class="sub">${p.data.carrier_name} · ${p.data.product_name}</div>
-        <div class="badge badge-reviewing">审核中</div>
+        <div class="name">${escapeHtml(p.file_name)}</div>
+        <div class="sub">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')}</div>
+        <div class="badge-row"><div class="badge badge-reviewing">审核中</div>${modBadge}</div>
       </div>`;
     });
     
@@ -21764,10 +21799,13 @@ function renderSidebar() {
       </div>`;
       confirmed.forEach((p, i) => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
+        const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+        const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
         html += `<div class="file-item confirmed-item collapsed-item${activeCls}" data-confirmed-group="${key}" onclick="selectFile('${p.id}')">
-          <div class="name">${p.file_name}</div>
-          <div class="sub">${p.data.carrier_name} · ${p.data.product_name}</div>
-          <div class="badge badge-confirmed">✓ 已确认</div>
+          <div class="name">${escapeHtml(p.file_name)}</div>
+          <div class="sub">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')}</div>
+          <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${modBadge}</div>
+          ${byTag}
         </div>`;
       });
     }
@@ -21863,8 +21901,13 @@ function renderReview(main) {
 
   // Confirm button
   const confirmBtn = isConfirmed
-    ? `<button class="btn-sm btn-sm-confirmed" disabled>已确认 ✓</button>`
+    ? `<span><button class="btn-sm btn-sm-confirmed" disabled>已确认 ✓</button>${p.confirmed_by && p.confirmed_by.name ? `<span class="confirmed-by-tag" style="margin-left:8px">确认人：${escapeHtml(p.confirmed_by.name)}</span>` : ''}</span>`
     : `<button class="btn-sm btn-sm-confirm" onclick="confirmFile('${p.id}')">✓ 确认此文件</button>`;
+
+  // File-level modified badge
+  const fileModBadge = hasFileChanges(p)
+    ? `<span class="file-modified-badge" title="该文件有字段被修改，点击右侧字段旁的 ✎ 查看详情">✎ 已修改</span>`
+    : '';
 
   // Navigation
   const navHtml = `<button class="btn-sm btn-sm-nav" onclick="navFile(-1)" ${!hasPrev ? 'disabled' : ''}>← 上一个</button>
@@ -21874,14 +21917,14 @@ function renderReview(main) {
   main.innerHTML = `<div class="review-panel">
     <div class="review-left">
       <div class="review-header-actions">
-        <h4>📄 原始文件 — ${p.file_name}</h4>
+        <h4>📄 原始文件 — ${escapeHtml(p.file_name)}${fileModBadge}</h4>
         <div class="actions-row">${navHtml}</div>
       </div>
       <div class="source-text">${sourceText}</div>
     </div>
     <div class="review-right">
       <div class="review-header-actions">
-        <h4>🔍 解析结果 — ${p.data.scenario || ''} | ${p.data.carrier_name} ${p.data.product_name}</h4>
+        <h4>🔍 解析结果 — ${escapeHtml(p.data.scenario || '')} | ${escapeHtml(p.data.carrier_name || '')} ${escapeHtml(p.data.product_name || '')}</h4>
         <div class="actions-row">${confirmBtn}</div>
       </div>
       ${fieldsHtml}
@@ -21922,10 +21965,10 @@ function renderConfirm(main) {
 
     html += `<div class="confirm-card${cardCls}" id="card_${p.id}">
       <div class="card-header">
-        <div class="card-title">${p.file_name}</div>
+        <div class="card-title">${escapeHtml(p.file_name)}${hasFileChanges(p) ? ' <span class="file-modified-badge">✎ 已修改</span>' : ''}</div>
         <div class="card-status ${statusCls}">${statusTxt}</div>
       </div>
-      <div class="card-meta">${p.data.carrier_name} · ${p.data.product_name} · 解析时间 ${p.parsed_at}</div>
+      <div class="card-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')} · 解析时间 ${escapeHtml(p.parsed_at || '')}${p.confirmed_by && p.confirmed_by.name ? ` · 确认人：${escapeHtml(p.confirmed_by.name)}` : ''}</div>
       <div class="card-fields">${kvHtml}</div>`;
 
     if (!isConfirmed) {
@@ -21958,12 +22001,14 @@ function renderResult(main) {
       file_name: p.file_name,
       parsed_at: p.parsed_at,
       confirmed_at: p.confirmed_at || p.parsed_at,
+      confirmed_by: p.confirmed_by || null,
       scenario: p.data.scenario,
       carrier: p.data.carrier,
       carrier_name: p.data.carrier_name,
       product_name: p.data.product_name,
       data: p.data,
       audit: p.audit || {},
+      change_history: p._change_history || [],
     }))
   };
 
@@ -22032,44 +22077,144 @@ function startEdit(policyId, field) {
   if (inp) { setTimeout(() => inp.focus(), 50); }
 }
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function hasFileChanges(p) {
+  return !!(p.audit && p.audit.edited_fields && p.audit.edited_fields.length > 0);
+}
+
+function formatTime(now) {
+  return now.getFullYear() + '-' + 
+    String(now.getMonth()+1).padStart(2,'0') + '-' + 
+    String(now.getDate()).padStart(2,'0') + ' ' +
+    String(now.getHours()).padStart(2,'0') + ':' + 
+    String(now.getMinutes()).padStart(2,'0') + ':' + 
+    String(now.getSeconds()).padStart(2,'0');
+}
+
+let pendingEdit = null; // {policyId, field, oldVal, newVal}
+
 function saveEdit(policyId, field) {
   const inp = document.getElementById('edit_input');
   if (!inp) return;
   const newVal = inp.value;
   const p = appState.policies.find(x => x.id === policyId);
-  if (p) {
-    const oldVal = String(p.data[field] ?? '');
-    p.data[field] = newVal;
-    
-    // Track edited fields
-    if (!p.audit) p.audit = {};
-    if (!p.audit.edited_fields) p.audit.edited_fields = [];
-    if (!p.audit.edited_fields.includes(field)) {
-      p.audit.edited_fields.push(field);
-    }
-    
-    // Record change history
-    if (!p._change_history) p._change_history = [];
-    const now = new Date();
-    const timeStr = now.getFullYear() + '-' + 
-      String(now.getMonth()+1).padStart(2,'0') + '-' + 
-      String(now.getDate()).padStart(2,'0') + ' ' +
-      String(now.getHours()).padStart(2,'0') + ':' + 
-      String(now.getMinutes()).padStart(2,'0') + ':' + 
-      String(now.getSeconds()).padStart(2,'0');
-    p._change_history.push({
-      field: field,
-      oldValue: oldVal,
-      newValue: newVal,
-      time: timeStr,
-    });
-    
-    saveState();
-  }
   appState.editingField = null;
   appState.editingPolicyId = null;
+  if (!p) { render(); return; }
+
+  const oldVal = String(p.data[field] ?? '');
+
+  // 内容未变化：不记录、不弹窗、不打修改标识
+  if (oldVal === newVal) {
+    render();
+    showToast('内容未变化，未保存', '');
+    return;
+  }
+
+  // 内容有变化：弹出原因填写框
+  pendingEdit = { policyId, field, oldVal, newVal };
+  promptChangeReason(policyId, field, oldVal, newVal);
+}
+
+function promptChangeReason(policyId, field, oldVal, newVal) {
+  const p = appState.policies.find(x => x.id === policyId);
+  const fieldLabel = LABELS[field] || field;
+  document.getElementById('reasonMeta').innerHTML =
+    `<b>${escapeHtml(fieldLabel)}</b>：<span class="rm-change">${escapeHtml(oldVal || '(空)')}</span> <span class="rm-arrow">→</span> <span class="rm-new">${escapeHtml(newVal || '(空)')}</span><br>` +
+    `<span>文件：${p ? escapeHtml(p.file_name) : ''}</span>`;
+  document.getElementById('reasonInput').value = '';
+  document.getElementById('reasonOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('reasonInput').focus(), 50);
+}
+
+function cancelReason() {
+  pendingEdit = null;
+  document.getElementById('reasonOverlay').style.display = 'none';
   render();
-  showToast('字段已保存', 'success');
+  showToast('已取消修改', '');
+}
+
+async function submitReason() {
+  if (!pendingEdit) { document.getElementById('reasonOverlay').style.display = 'none'; return; }
+  const reason = document.getElementById('reasonInput').value.trim();
+  if (!reason) {
+    showToast('请填写修改原因（必填）', 'error');
+    document.getElementById('reasonInput').focus();
+    return;
+  }
+
+  const { policyId, field, oldVal, newVal } = pendingEdit;
+  pendingEdit = null;
+  document.getElementById('reasonOverlay').style.display = 'none';
+
+  await doSaveField(policyId, field, oldVal, newVal, reason);
+}
+
+async function doSaveField(policyId, field, oldVal, newVal, reason) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p) return;
+
+  p.data[field] = newVal;
+
+  // 标记已修改字段
+  if (!p.audit) p.audit = {};
+  if (!p.audit.edited_fields) p.audit.edited_fields = [];
+  if (!p.audit.edited_fields.includes(field)) p.audit.edited_fields.push(field);
+
+  // 记录修改历史（含原因）
+  if (!p._change_history) p._change_history = [];
+  const timeStr = formatTime(new Date());
+  p._change_history.push({
+    field: field,
+    oldValue: oldVal,
+    newValue: newVal,
+    time: timeStr,
+    reason: reason,
+  });
+
+  saveState();
+  render();
+  showToast('字段已保存并记录修改原因', 'success');
+
+  // 同步到飞书
+  try {
+    const resp = await fetch('/api/save-field', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recordId: policyId,
+        fieldLabel: LABELS[field] || field,
+        newValue: newVal,
+        reason: reason,
+        changeEntry: {
+          time: timeStr,
+          fieldLabel: LABELS[field] || field,
+          oldValue: oldVal,
+          newValue: newVal,
+          reason: reason,
+        },
+      }),
+    });
+    const result = await resp.json();
+    if (result.success) {
+      showToast('已保存并同步到飞书', 'success');
+    } else if (result.needAuth) {
+      const authResp = await fetch('/api/auth-url');
+      const authData = await authResp.json();
+      showInlineSyncBar('字段已保存，需要飞书授权才能同步到表格',
+        `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
+    } else {
+      showInlineSyncBar('飞书同步失败: ' + (result.error || '未知错误'),
+        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+    }
+  } catch (err) {
+    showInlineSyncBar('飞书同步暂不可用（修改已保存在本地）',
+      `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
+       <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+  }
 }
 
 function cancelEdit() {
@@ -22100,6 +22245,7 @@ async function confirmFile(id) {
     if (result.success) {
       p.status = 'confirmed';
       p.confirmed_at = result.confirmedAt || new Date().toLocaleString('zh-CN');
+      p.confirmed_by = result.confirmedBy || p.confirmed_by || null;
       delete p._syncing;
       saveState();
       showToast(`「${p.file_name}」已确认并同步到飞书`, 'success');
@@ -22179,10 +22325,16 @@ function toggleChangeHistory(policyId, field) {
   } else {
     panel.innerHTML = changes.map(h => 
       `<div class="change-history-item">
-        <span class="ch-time">${h.time}</span>
-        <span class="ch-old">${h.oldValue || '(空)'}</span>
-        <span class="ch-arrow">→</span>
-        <span class="ch-new">${h.newValue}</span>
+        <div class="ch-head">
+          <span class="ch-time">${escapeHtml(h.time)}</span>
+          <span class="ch-field">${escapeHtml(LABELS[h.field] || h.field)}</span>
+        </div>
+        <div class="ch-change">
+          <span class="ch-old">${escapeHtml(h.oldValue || '(空)')}</span>
+          <span class="ch-arrow"> → </span>
+          <span class="ch-new">${escapeHtml(h.newValue || '(空)')}</span>
+        </div>
+        <div class="ch-reason">📝 原因：${escapeHtml(h.reason || '未填写')}</div>
       </div>`
     ).join('');
   }
