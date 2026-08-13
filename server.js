@@ -174,6 +174,7 @@ const EXTRA_FIELDS = [
   { field_name: '确认人ID', type: 1 },
   { field_name: '已修改', type: 1 },
   { field_name: '修改历史', type: 1 },
+  { field_name: '问题标记', type: 1 },
 ];
 
 async function ensureTableFields() {
@@ -482,6 +483,48 @@ app.post('/api/save-field', async (req, res) => {
     res.json({ success: true, historyCount: existingHistory.length });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+// ---- 标记解析问题（含同步到飞书「问题标记」字段） ----
+app.post('/api/mark-problem', async (req, res) => {
+  const { recordId, entry } = req.body;
+
+  if (!recordId || !entry) {
+    return res.status(400).json({ success: false, error: '缺少 recordId 或 entry' });
+  }
+
+  try {
+    // 确保扩展字段存在
+    try { await ensureTableFields(); } catch (e) { console.warn('[标记问题] 检查字段失败:', e.message); }
+
+    // 读取现有问题标记，追加一行
+    let existingLines = [];
+    try {
+      const record = await getFeishuRecord(recordId);
+      const raw = (record.fields || {})['问题标记'];
+      if (typeof raw === 'string' && raw.trim()) {
+        existingLines = raw.split('\n').filter(Boolean);
+      }
+    } catch (e) {
+      console.warn('[标记问题] 读取现有问题失败:', e.message);
+    }
+
+    const line = `[${entry.created_at || ''}] ${entry.created_by || ''} | ${entry.field_label || '文件整体'}: ${entry.desc || ''}`;
+    existingLines.push(line);
+    const problemText = existingLines.join('\n');
+
+    await updateFeishuRecord(recordId, { '问题标记': problemText });
+
+    console.log(`[标记问题] ✓ ${recordId} 问题 ${existingLines.length} 条`);
+    res.json({ success: true, count: existingLines.length });
+  } catch (err) {
+    console.error(`[标记问题] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
     } else {

@@ -10,15 +10,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 :root { --primary:#0984e3; --success:#00b894; --warning:#fdcb6e; --danger:#d63031; --bg:#f5f6fa; --card:#fff; --border:#dfe6e9; --text:#2d3436; --muted:#636e72; }
 
 /* Header */
-.header { background: linear-gradient(135deg, #0984e3, #6c5ce7); color:#fff; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; }
-.header h1 { font-size:20px; font-weight:600; }
-.header .meta { font-size:13px; opacity:0.85; }
-.progress-bar { height:4px; background:rgba(255,255,255,0.3); border-radius:2px; margin-top:8px; overflow:hidden; }
+.header { background:#fff; border-bottom:1px solid var(--border); padding:10px 20px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+.header-left { display:flex; flex-direction:column; gap:2px; min-width:170px; }
+.header-title { font-size:16px; font-weight:700; color:var(--text); display:flex; align-items:center; }
+.header .meta { font-size:12px; color:var(--muted); }
+.header-center { flex:1; display:flex; flex-direction:column; gap:6px; max-width:420px; min-width:200px; }
+.stat-chips { display:flex; gap:8px; }
+.stat-chip { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); background:#f5f6fa; border:1px solid var(--border); border-radius:12px; padding:2px 10px; }
+.stat-chip b { font-weight:600; }
+.stat-chip.stat-reviewing b { color:#0984e3; }
+.stat-chip.stat-problem b { color:#d63031; }
+.stat-chip.stat-confirmed b { color:#00b894; }
+.progress-bar { height:4px; background:#eef1f5; border-radius:2px; overflow:hidden; }
 .progress-bar .fill { height:100%; background:#00b894; transition: width 0.4s ease; border-radius:2px; }
 .progress-text { font-size:12px; margin-top:4px; opacity:0.8; }
 
 /* Layout */
-.layout { display:flex; height:calc(100vh - 80px); }
+.layout { display:flex; height:calc(100vh - 60px); }
 .sidebar { width:260px; background:#fff; border-right:1px solid var(--border); overflow-y:auto; flex-shrink:0; }
 .sidebar h3 { padding:16px 16px 8px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
 .file-item { padding:12px 16px; cursor:pointer; border-left:3px solid transparent; transition:all 0.2s; border-bottom:1px solid #f1f2f6; }
@@ -30,6 +38,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .badge-reviewing { background:#ffeaa7; color:#b58900; }
 .badge-confirmed { background:#00b894; color:#fff; }
 .badge-modified { background:#f39c12; color:#fff; }
+.badge-problem { background:#d63031; color:#fff; }
 .file-item .badge-row { display:flex; gap:4px; align-items:center; }
 .file-item .badge-row .badge { margin-top:4px; }
 .file-modified-badge { display:inline-block; background:#f39c12; color:#fff; border-radius:10px; padding:2px 8px; font-size:11px; margin-left:8px; vertical-align:middle; }
@@ -56,16 +65,73 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .field-row .field-value textarea { width:100%; border:1px solid var(--primary); border-radius:3px; padding:4px 6px; font-size:13px; outline:none; resize:vertical; min-height:60px; }
 .evidence-tag { display:inline-block; background:#e8f5e9; color:#2e7d32; padding:1px 6px; border-radius:3px; font-size:11px; margin-left:6px; cursor:pointer; }
 
+/* 状态标签 */
+.status-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; margin-left:8px; vertical-align:middle; font-weight:600; }
+.status-badge.reviewing { background:#ffeaa7; color:#b58900; }
+.status-badge.problem { background:#d63031; color:#fff; }
+.status-badge.confirmed { background:#00b894; color:#fff; }
+
+/* 字段问题标记 */
+.field-problem .field-value { border-left:3px solid #d63031; padding-left:8px; background:#fff5f5; }
+.field-problem-indicator { display:inline-block; background:#d63031; color:#fff; border-radius:8px; padding:0 5px; font-size:10px; margin-left:6px; cursor:pointer; }
+.field-actions { flex-shrink:0; margin-left:6px; opacity:0; transition:opacity 0.15s; }
+.field-row:hover .field-actions { opacity:1; }
+.field-problem-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:4px; font-size:13px; cursor:pointer; color:#999; background:transparent; border:1px solid transparent; }
+.field-problem-btn:hover { background:#fff3f3; color:#d63031; border-color:#f5c6c6; }
+
+/* 文件级问题面板 */
+.problems-panel { background:#fff5f5; border:1px solid #f5c6c6; border-radius:8px; padding:12px 14px; margin-bottom:16px; }
+.problems-panel-title { font-size:13px; font-weight:600; color:#d63031; margin-bottom:8px; }
+.problems-panel-item { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:6px 0; border-bottom:1px dashed #f0d0d0; font-size:12px; }
+.problems-panel-item:last-child { border-bottom:none; }
+.pp-desc { flex:1; color:#333; }
+.pp-meta { font-size:11px; color:var(--muted); white-space:nowrap; }
+.prob-field-tag { display:inline-block; background:#d63031; color:#fff; border-radius:4px; padding:0 6px; font-size:11px; margin-right:6px; }
+.prob-resolve { background:transparent; border:1px solid #d63031; color:#d63031; border-radius:4px; padding:1px 8px; font-size:11px; cursor:pointer; margin-left:8px; }
+.prob-resolve:hover { background:#d63031; color:#fff; }
+.prob-resolve:disabled { opacity:0.4; cursor:default; }
+
+/* 问题按钮 */
+.btn-sm-problem { background:#fff; border:1px solid #d63031; color:#d63031; }
+.btn-sm-problem:hover { background:#d63031; color:#fff; }
+.btn-sm-danger { background:#d63031; color:#fff; border:none; padding:8px 18px; border-radius:4px; cursor:pointer; font-size:13px; }
+.btn-sm-danger:hover { background:#c0392b; }
+
+/* 问题清单视图 */
+.problems-view { }
+.problems-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:16px; flex-wrap:wrap; }
+.problems-header h3 { font-size:16px; }
+.prob-total { font-size:12px; color:var(--muted); margin-left:8px; font-weight:normal; }
+.problems-hint { font-size:12px; color:var(--muted); }
+.prob-file { background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:all 0.15s; }
+.prob-file:hover { border-color:#d63031; box-shadow:0 2px 8px rgba(214,48,49,0.08); }
+.prob-file-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:12px; }
+.prob-file-name { font-size:14px; font-weight:600; }
+.prob-badge { display:inline-block; background:#d63031; color:#fff; border-radius:10px; padding:0 7px; font-size:11px; margin-left:6px; }
+.prob-file-meta { font-size:12px; color:var(--muted); }
+.prob-item { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:6px 0; border-bottom:1px dashed #f1f2f6; font-size:13px; }
+.prob-item:last-child { border-bottom:none; }
+.prob-desc { flex:1; }
+.prob-meta { font-size:11px; color:var(--muted); white-space:nowrap; }
+
+/* 分类信息条问题计数 */
+.cat-problem-count { color:#d63031; margin-right:8px; font-weight:600; }
+
 /* Confirm view */
 .confirm-view { }
 .confirm-view h3 { margin-bottom:16px; }
 .confirm-card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:12px; transition:all 0.3s; }
 .confirm-card.confirmed { border-color:var(--success); background:#f0fff4; }
+.confirm-card.has-problem { border-color:#d63031; background:#fff9f9; }
 .confirm-card .card-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
 .confirm-card .card-title { font-size:15px; font-weight:600; }
 .confirm-card .card-status { font-size:12px; padding:3px 10px; border-radius:12px; }
 .confirm-card .card-status.waiting { background:#ffeaa7; color:#b58900; }
 .confirm-card .card-status.done { background:#00b894; color:#fff; }
+.confirm-card .card-status.problem { background:#d63031; color:#fff; }
+.confirm-card .card-problems { margin:10px 0 4px; padding:8px 10px; background:#fff; border:1px dashed #f0b8b8; border-radius:6px; }
+.confirm-card .card-problem { font-size:12px; padding:3px 0; display:flex; align-items:center; gap:6px; }
+.confirm-card .card-problem-meta { font-size:11px; color:var(--muted); margin-left:auto; white-space:nowrap; }
 .confirm-card .card-meta { font-size:12px; color:var(--muted); margin-bottom:10px; }
 .confirm-card .card-fields { display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:12px; }
 .confirm-card .card-fields .kv { }
@@ -109,9 +175,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .empty-state p { font-size:14px; }
 
 /* Top nav buttons */
-.nav-btns { display:flex; gap:8px; align-items:center; }
-.nav-btns button { padding:6px 16px; border:1px solid rgba(255,255,255,0.4); border-radius:4px; background:rgba(255,255,255,0.15); color:#fff; cursor:pointer; font-size:13px; transition:all 0.2s; }
-.nav-btns button:hover { background:rgba(255,255,255,0.25); }
+.nav-btns { display:flex; gap:4px; background:#f1f3f7; border-radius:8px; padding:3px; }
+.seg-btn { border:none; background:transparent; color:var(--muted); font-size:13px; padding:6px 14px; border-radius:6px; cursor:pointer; transition:all 0.15s; font-weight:500; display:inline-flex; align-items:center; }
+.seg-btn:hover { color:var(--text); }
+.seg-btn.active { background:#fff; color:var(--primary); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+.seg-btn .seg-count { display:inline-block; min-width:16px; background:#d63031; color:#fff; border-radius:8px; font-size:10px; line-height:16px; padding:0 5px; margin-left:4px; text-align:center; }
 .nav-btns button:disabled { opacity:0.5; cursor:not-allowed; }
 
 /* Toast */
@@ -217,9 +285,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sync-inline-bar .btn-sm { margin-left:12px; }
 
 /* Sync indicator in header */
-.sync-indicator { display:inline-flex; align-items:center; gap:4px; background:rgba(255,255,255,0.2); padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer; margin-left:10px; transition:all 0.2s; }
-.sync-indicator:hover { background:rgba(255,255,255,0.35); }
-.sync-indicator.dirty { background:rgba(253,203,110,0.3); }
+.sync-indicator { display:inline-flex; align-items:center; gap:4px; background:#f0f4ff; padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer; margin-left:10px; transition:all 0.2s; border:1px solid var(--border); }
+.sync-indicator:hover { background:#e3ecff; }
+.sync-indicator.dirty { background:rgba(253,203,110,0.35); }
 
 /* Responsive */
 @media (max-width:768px) {
@@ -232,16 +300,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <body>
 
 <div class="header">
-  <div>
-    <h1>政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></h1>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:58:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:50:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 16:23:39</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:30:12</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:38</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:29:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:28:44</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:27:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:25:47</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:24:36</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 15:21:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 12:04:32</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:57:03</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:46:02</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:41:05</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:39:57</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-11 11:38:51</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-10 09:48:34</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:19:25</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 18:01:46</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:59:01</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-07 17:58:15</div><div class="meta" style="display:none" id="headerMetaOld">3 份待审核文件</div>
-    <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
-    <div class="progress-text" id="progressText">已确认 0/3</div>
+  <div class="header-left">
+    <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
   </div>
-  <div class="nav-btns">
-    <button id="btnReview" onclick="switchView('review')">审核视图</button>
-    <button id="btnConfirm" onclick="switchView('confirm')">逐文件确认</button>
-    <button id="btnResult" onclick="switchView('result')">最终结果</button>
+  <div class="header-center">
+    <div class="stat-chips">
+      <span class="stat-chip stat-reviewing" id="statReviewing" title="待审核文件数">待审 <b>0</b></span>
+      <span class="stat-chip stat-problem" id="statProblem" title="标记了解析问题的文件数">有问题 <b>0</b></span>
+      <span class="stat-chip stat-confirmed" id="statConfirmed" title="已确认文件数">已确认 <b>0</b></span>
+    </div>
+    <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+  </div>
+  <div class="nav-btns" id="viewSeg">
+    <button class="seg-btn" data-view="review" onclick="switchView('review')">审核</button>
+    <button class="seg-btn" data-view="problems" onclick="switchView('problems')">问题清单<span class="seg-count" id="segProblemCount"></span></button>
+    <button class="seg-btn" data-view="confirm" onclick="switchView('confirm')">逐文件确认</button>
+    <button class="seg-btn" data-view="result" onclick="switchView('result')">最终结果</button>
   </div>
 </div>
 
@@ -262,6 +337,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelReason()">取消修改</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitReason()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- 问题标记弹窗 -->
+<div id="problemOverlay" class="reason-overlay" style="display:none">
+  <div class="reason-modal">
+    <h4>⚠️ 标记解析问题</h4>
+    <div class="reason-meta" id="problemMeta"></div>
+    <textarea id="problemInput" placeholder="请描述解析中存在的问题（如：产品名称解析缺失、行李额未识别等）"></textarea>
+    <div class="reason-actions">
+      <button class="btn-sm btn-sm-nav" onclick="cancelProblem()">取消</button>
+      <button class="btn-sm btn-sm-danger" onclick="submitProblem()">标记问题</button>
     </div>
   </div>
 </div>
@@ -23846,15 +23934,15 @@ function renderSearchResults(q) {
   matches.forEach(p => {
     const activeCls = p.id === appState.currentFileId ? ' active' : '';
     const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-    const statusBadge = p.status === 'confirmed'
-      ? `<div class="badge badge-confirmed">✓ 已确认</div>`
-      : `<div class="badge badge-reviewing">审核中</div>`;
+    const probBadge = hasProblems(p) ? `<div class="badge badge-problem">⚠ ${p.problems.length}</div>` : '';
+    const st = getStatusInfo(p);
+    const statusBadge = `<div class="badge badge-${st.cls}">${st.text}</div>`;
     const path = `${CATEGORY_NAMES[p.category] || p.category || '自营'} · ${p.subcategory || '未标注航司'}`;
     html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
       <div class="name">${highlightMatch(p.file_name, q)}</div>
       <div class="sub">${highlightMatch([p.data.business_type, p.data.product_name].filter(Boolean).join(' · '), q)}</div>
       <div class="sb-path">${escapeHtml(path)}</div>
-      <div class="badge-row">${statusBadge}${modBadge}</div>
+      <div class="badge-row">${statusBadge}${probBadge}${modBadge}</div>
     </div>`;
   });
   return html;
@@ -23884,9 +23972,10 @@ function renderGroups() {
   // 一级分类信息条（强化 Tab 切换反馈）
   const catAll = appState.policies.filter(p => (p.category || '03_自营') === cat);
   const catConfirmed = catAll.filter(p => p.status === 'confirmed').length;
+  const catProblem = catAll.filter(hasProblems).length;
   let html = `<div class="cat-info-bar">
     <span class="cat-name">${CATEGORY_NAMES[cat] || cat}</span>
-    <span class="cat-meta">${catAll.length}份 · ${catConfirmed}已确认</span>
+    <span class="cat-meta">${catAll.length}份 · ${catProblem > 0 ? `<span class="cat-problem-count">${catProblem}有问题</span>` : ''}${catConfirmed}已确认</span>
   </div>`;
 
   sortedSubs.forEach(sub => {
@@ -23913,11 +24002,13 @@ function renderGroups() {
     unconfirmed.forEach(p => {
       const activeCls = p.id === appState.currentFileId ? ' active' : '';
       const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+      const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="标记有解析问题">⚠ ${p.problems.length}</div>` : '';
+      const st = getStatusInfo(p);
       const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
       html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
         <div class="name">${escapeHtml(p.file_name)}</div>
         <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
-        <div class="badge-row"><div class="badge badge-reviewing">审核中</div>${modBadge}</div>
+        <div class="badge-row"><div class="badge badge-${st.cls}">${st.text}</div>${probBadge}${modBadge}</div>
       </div>`;
     });
 
@@ -23930,13 +24021,14 @@ function renderGroups() {
       confirmed.forEach(p => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
         const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${p.problems.length}</div>` : '';
         const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
         const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
         const hiddenCls = (!isOpen || !curInConfirmed) ? ' collapsed-item' : '';
         html += `<div class="file-item confirmed-item${hiddenCls}${activeCls}" data-confirmed-group="${subKey}" onclick="selectFile('${p.id}')">
           <div class="name">${escapeHtml(p.file_name)}</div>
           <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
-          <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${modBadge}</div>
+          <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${probBadge}${modBadge}</div>
           ${byTag}
         </div>`;
       });
@@ -24017,8 +24109,44 @@ function toggleConfirmed(group) {
 function renderMain() {
   const main = document.getElementById('mainContent');
   if (appState.currentView === 'review') renderReview(main);
+  else if (appState.currentView === 'problems') renderProblems(main);
   else if (appState.currentView === 'confirm') renderConfirm(main);
   else if (appState.currentView === 'result') renderResult(main);
+}
+
+// ===== 问题清单视图 =====
+function renderProblems(main) {
+  const problemPolicies = appState.policies.filter(hasProblems);
+  if (problemPolicies.length === 0) {
+    main.innerHTML = `<div class="empty-state"><div class="icon">🎉</div><p>暂无解析问题，继续审核吧</p></div>`;
+    return;
+  }
+  let html = '<div class="problems-view">';
+  html += `<div class="problems-header">
+    <h3>解析问题清单 <span class="prob-total">${problemPolicies.length} 个文件</span></h3>
+    <span class="problems-hint">点击文件可跳转审核 · 问题已同步到飞书表格「问题标记」字段</span>
+  </div>`;
+
+  problemPolicies.forEach(p => {
+    const probCount = p.problems.length;
+    html += `<div class="prob-file" onclick="selectFile('${p.id}')">
+      <div class="prob-file-head">
+        <div class="prob-file-name">${escapeHtml(p.file_name)}<span class="prob-badge">${probCount}</span></div>
+        <div class="prob-file-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')}</div>
+      </div>
+      <div class="prob-list">`;
+    p.problems.forEach((pr, i) => {
+      html += `<div class="prob-item">
+        <div class="prob-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
+        <div class="prob-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
+          <button class="prob-resolve" onclick="event.stopPropagation();removeProblem('${p.id}',${i})" title="标记为已解决">✓ 已解决</button>
+        </div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  });
+  html += '</div>';
+  main.innerHTML = html;
 }
 
 function renderReview(main) {
@@ -24049,9 +24177,16 @@ function renderReview(main) {
         ? `<span class="field-modified-indicator" onclick="toggleChangeHistory('${p.id}','${f}')" title="已人工修改，点击查看历史">✎</span>`
         : '';
       const modClass = isModified ? ' field-modified' : '';
-      groupRows += `<div class="field-row${modClass}">
-        <div class="field-label">${LABELS[f] || f}${modIndicator}</div>
+      // Field-level problems
+      const fieldProblems = (p.problems || []).filter(pr => pr.field === f);
+      const probIndicator = fieldProblems.length
+        ? `<span class="field-problem-indicator" title="该字段存在 ${fieldProblems.length} 个问题：${fieldProblems.map(x=>x.desc).join('；')}">⚠${fieldProblems.length}</span>`
+        : '';
+      const probClass = fieldProblems.length ? ' field-problem' : '';
+      groupRows += `<div class="field-row${modClass}${probClass}">
+        <div class="field-label">${LABELS[f] || f}${modIndicator}${probIndicator}</div>
         <div class="field-value" ondblclick="startEdit('${p.id}', '${f}')" id="fv_${f}">${displayVal}${evidence}</div>
+        <div class="field-actions"><span class="field-problem-btn" onclick="openProblem('${p.id}','${f}')" title="标记该字段的解析问题">⚠</span></div>
       </div>`;
       // Add change history panel
       if (isModified) {
@@ -24064,7 +24199,28 @@ function renderReview(main) {
     }
   });
 
+  // File-level problems panel
+  const fileProblems = p.problems || [];
+  let problemsHtml = '';
+  if (fileProblems.length > 0) {
+    problemsHtml = `<div class="problems-panel">
+      <div class="problems-panel-title">⚠ 已标记问题（${fileProblems.length}）</div>`;
+    fileProblems.forEach((pr, i) => {
+      problemsHtml += `<div class="problems-panel-item">
+        <div class="pp-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
+        <div class="pp-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
+          <button class="prob-resolve" onclick="removeProblem('${p.id}',${i})">✓ 已解决</button>
+        </div>
+      </div>`;
+    });
+    problemsHtml += '</div>';
+  }
+
   const sourceText = (p.source_text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Status badge
+  const statusInfo = getStatusInfo(p);
+  const statusBadge = `<span class="status-badge ${statusInfo.cls}">${statusInfo.text}</span>`;
 
   // Confirm button
   const confirmBtn = isConfirmed
@@ -24076,6 +24232,9 @@ function renderReview(main) {
     ? `<span class="file-modified-badge" title="该文件有字段被修改，点击右侧字段旁的 ✎ 查看详情">✎ 已修改</span>`
     : '';
 
+  // File-level problem button
+  const problemBtn = `<button class="btn-sm btn-sm-problem" onclick="openProblem('${p.id}','')">⚠ 标记问题</button>`;
+
   // Navigation
   const navHtml = `<button class="btn-sm btn-sm-nav" onclick="navFile(-1)" ${!hasPrev ? 'disabled' : ''}>← 上一个</button>
     <span class="file-nav-info">${idx+1}/${total}</span>
@@ -24084,7 +24243,7 @@ function renderReview(main) {
   main.innerHTML = `<div class="review-panel">
     <div class="review-left">
       <div class="review-header-actions">
-        <h4>📄 原始文件 — ${escapeHtml(p.file_name)}${fileModBadge}</h4>
+        <h4>📄 原始文件 — ${escapeHtml(p.file_name)}${statusBadge}${fileModBadge}</h4>
         <div class="actions-row">${navHtml}</div>
       </div>
       <div class="source-text">${sourceText}</div>
@@ -24092,8 +24251,9 @@ function renderReview(main) {
     <div class="review-right">
       <div class="review-header-actions">
         <h4>🔍 解析结果 — ${escapeHtml(p.data.scenario || '')} | ${escapeHtml(p.data.carrier_name || '')} ${escapeHtml(p.data.product_name || '')}</h4>
-        <div class="actions-row">${confirmBtn}</div>
+        <div class="actions-row">${problemBtn}${confirmBtn}</div>
       </div>
+      ${problemsHtml}
       ${fieldsHtml}
     </div>
   </div>`;
@@ -24116,9 +24276,10 @@ function renderConfirm(main) {
 
   appState.policies.forEach(p => {
     const isConfirmed = p.status === 'confirmed';
-    const cardCls = isConfirmed ? ' confirmed' : '';
-    const statusCls = isConfirmed ? 'done' : 'waiting';
-    const statusTxt = isConfirmed ? '✓ 已确认' : '待确认';
+    const hasProb = hasProblems(p);
+    const cardCls = isConfirmed ? ' confirmed' : (hasProb ? ' has-problem' : '');
+    const statusCls = isConfirmed ? 'done' : (hasProb ? 'problem' : 'waiting');
+    const statusTxt = isConfirmed ? (hasProb ? `已确认 ⚠${p.problems.length}` : '✓ 已确认') : (hasProb ? `有问题(${p.problems.length})` : '待审核');
     
     // Build key fields summary
     let kvHtml = '';
@@ -24137,6 +24298,14 @@ function renderConfirm(main) {
       </div>
       <div class="card-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')} · 解析时间 ${escapeHtml(p.parsed_at || '')}${p.confirmed_by && p.confirmed_by.name ? ` · 确认人：${escapeHtml(p.confirmed_by.name)}` : ''}</div>
       <div class="card-fields">${kvHtml}</div>`;
+
+    if (hasProb) {
+      html += `<div class="card-problems">`;
+      p.problems.forEach((pr, i) => {
+        html += `<div class="card-problem"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}<span class="card-problem-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</span></div>`;
+      });
+      html += '</div>';
+    }
 
     if (!isConfirmed) {
       html += `<button class="btn-confirm ready" onclick="confirmFile('${p.id}')">确认此文件</button>`;
@@ -24198,13 +24367,39 @@ function renderResult(main) {
   window._apiPayload = apiPayload;
 }
 
+// ===== 状态派生工具 =====
+function hasProblems(p) {
+  return !!(p.problems && p.problems.length > 0);
+}
+function getStatusInfo(p) {
+  if (hasProblems(p)) return { text: '有问题', cls: 'problem' };
+  if (p.status === 'confirmed') return { text: '已确认', cls: 'confirmed' };
+  return { text: '待审核', cls: 'reviewing' };
+}
+
 function updateProgress() {
   const confirmed = appState.policies.filter(p => p.status === 'confirmed').length;
+  const problem = appState.policies.filter(hasProblems).length;
   const total = appState.policies.length;
+  const reviewing = total - confirmed;
   const pct = total > 0 ? Math.round(confirmed / total * 100) : 0;
+
+  const setText = (id, n) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = el.dataset.prefix + ' <b>' + n + '</b>';
+  };
+  const st = document.getElementById('statReviewing');
+  if (st) { st.dataset.prefix = '待审'; st.innerHTML = '待审 <b>' + Math.max(reviewing - problem, 0) + '</b>'; }
+  const sp = document.getElementById('statProblem');
+  if (sp) { sp.dataset.prefix = '有问题'; sp.innerHTML = '有问题 <b>' + problem + '</b>'; }
+  const sc = document.getElementById('statConfirmed');
+  if (sc) { sc.dataset.prefix = '已确认'; sc.innerHTML = '已确认 <b>' + confirmed + '</b>'; }
+
   document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressText').textContent = `已确认 ${confirmed}/${total}`;
-  document.getElementById('headerMeta').textContent = `${total} 份文件（${appState.policies.filter(p=>p.status==='reviewing').length} 待审核）`;
+  const seg = document.getElementById('segProblemCount');
+  if (seg) seg.textContent = problem > 0 ? problem : '';
+  const metaEl = document.getElementById('headerMeta');
+  if (metaEl) metaEl.textContent = `${total} 份文件 · 待审 ${Math.max(reviewing - problem, 0)} · 有问题 ${problem} · 已确认 ${confirmed}`;
 }
 
 // ===== ACTIONS =====
@@ -24229,6 +24424,10 @@ function switchView(view) {
     appState.currentFileId = appState.policies[0].id;
   }
   appState.currentView = view;
+  // 同步 segmented 高亮
+  document.querySelectorAll('.seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
   render();
 }
 
@@ -24349,6 +24548,91 @@ async function submitReason() {
   document.getElementById('reasonOverlay').style.display = 'none';
 
   await doSaveField(policyId, field, oldVal, newVal, reason);
+}
+
+// ===== 问题标记 =====
+let pendingProblem = null; // { policyId, field }
+
+function openProblem(policyId, field) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p) return;
+  pendingProblem = { policyId, field: field || '' };
+  const fieldLabel = field ? (LABELS[field] || field) : '文件整体';
+  document.getElementById('problemMeta').innerHTML =
+    `<b>${escapeHtml(fieldLabel)}</b><br><span>文件：${escapeHtml(p.file_name)}</span>`;
+  document.getElementById('problemInput').value = '';
+  document.getElementById('problemOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('problemInput').focus(), 50);
+}
+
+function cancelProblem() {
+  pendingProblem = null;
+  document.getElementById('problemOverlay').style.display = 'none';
+}
+
+async function submitProblem() {
+  if (!pendingProblem) { document.getElementById('problemOverlay').style.display = 'none'; return; }
+  const desc = document.getElementById('problemInput').value.trim();
+  if (!desc) {
+    showToast('请填写问题描述（必填）', 'error');
+    document.getElementById('problemInput').focus();
+    return;
+  }
+  const { policyId, field } = pendingProblem;
+  pendingProblem = null;
+  document.getElementById('problemOverlay').style.display = 'none';
+
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p) return;
+  if (!p.problems) p.problems = [];
+  p.problems.push({
+    field: field,
+    field_label: field ? (LABELS[field] || field) : '文件整体',
+    desc: desc,
+    created_by: (appState.user && appState.user.name) || '',
+    created_at: formatTime(new Date()),
+  });
+  saveState();
+  render();
+  showToast('已标记问题', 'success');
+
+  // 同步到飞书
+  try {
+    const resp = await fetch('/api/mark-problem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recordId: policyId,
+        entry: p.problems[p.problems.length - 1],
+      }),
+    });
+    const result = await resp.json();
+    if (result.success) {
+      showToast('问题已同步到飞书', 'success');
+    } else if (result.needAuth) {
+      const authResp = await fetch('/api/auth-url');
+      const authData = await authResp.json();
+      showInlineSyncBar('问题已标记，需要飞书授权才能同步',
+        `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
+    } else {
+      showInlineSyncBar('问题同步失败: ' + (result.error || '未知错误'),
+        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+    }
+  } catch (err) {
+    showInlineSyncBar('飞书同步暂不可用（问题已保存在本地）',
+      `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
+       <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+  }
+}
+
+function removeProblem(policyId, idx) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p || !p.problems) return;
+  if (!confirm('确认该问题已解决？将从问题清单中移除。')) return;
+  p.problems.splice(idx, 1);
+  saveState();
+  render();
+  showToast('问题已标记为解决', 'success');
 }
 
 async function doSaveField(policyId, field, oldVal, newVal, reason) {
@@ -24594,12 +24878,13 @@ function downloadJson() {
   showToast('JSON 文件已下载', 'success');
 }
 
-function showToast(msg, type) {
+function showToast(msg, type, duration) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.className = 'toast ' + type;
   toast.style.display = 'block';
-  setTimeout(() => { toast.style.display = 'none'; }, 2000);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { toast.style.display = 'none'; }, duration || 2000);
 }
 
 // ===== 飞书授权状态检查 =====
@@ -24614,6 +24899,7 @@ async function checkAuthStatus() {
       banner.style.display = 'flex';
     } else {
       banner.style.display = 'none';
+      if (result.user) appState.user = result.user;
     }
     return !!result.authorized;
   } catch (e) {
@@ -24645,19 +24931,62 @@ async function startFeishuAuth() {
 }
 
 // ===== 全局快捷键 =====
+function showShortcutHelp() {
+  showToast('快捷键：←/→ 切换文件 · Enter 确认 · Q 标记问题 · ⌘K 搜索 · Esc 清空', '', 4000);
+}
 document.addEventListener('keydown', (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  const inEditor = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  const isSegBtn = !!document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('seg-btn');
+
   // ⌘K / Ctrl+K：聚焦侧边栏搜索框
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     const inp = document.getElementById('sbSearchInput');
     if (inp) { inp.focus(); inp.select(); }
+    return;
   }
-  // Esc：清空搜索
+  // Esc：清空搜索 / 关闭弹窗
   if (e.key === 'Escape') {
+    if (document.getElementById('problemOverlay').style.display !== 'none') { cancelProblem(); return; }
+    if (document.getElementById('reasonOverlay').style.display !== 'none') { cancelReason(); return; }
     const inp = document.getElementById('sbSearchInput');
     if (inp && document.activeElement === inp && appState.sidebarQuery) {
       clearSidebarSearch();
     }
+    return;
+  }
+  // 编辑态不拦截
+  if (inEditor) return;
+
+  // ?：快捷键帮助
+  if (e.key === '?') { showShortcutHelp(); return; }
+
+  // 以下快捷键仅在审核视图生效
+  if (appState.currentView !== 'review') return;
+  if (!appState.currentFileId) return;
+
+  // ← / →：切换文件
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const step = e.key === 'ArrowRight' ? 1 : -1;
+    const idx = appState.policies.findIndex(x => x.id === appState.currentFileId);
+    const target = appState.policies[idx + step];
+    if (target) { selectFile(target.id); }
+    return;
+  }
+  // Enter：确认当前文件
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const p = appState.policies.find(x => x.id === appState.currentFileId);
+    if (p && p.status !== 'confirmed') confirmFile(p.id);
+    return;
+  }
+  // Q：快速标记问题
+  if (e.key.toLowerCase() === 'q') {
+    e.preventDefault();
+    const p = appState.policies.find(x => x.id === appState.currentFileId);
+    if (p) openProblem(p.id, '');
   }
 });
 
@@ -24665,6 +24994,10 @@ document.addEventListener('keydown', (e) => {
 if (appState.policies.length > 0 && !appState.currentFileId) {
   appState.currentFileId = appState.policies[0].id;
 }
+// 初始化 segmented 高亮
+document.querySelectorAll('.seg-btn').forEach(b => {
+  b.classList.toggle('active', b.dataset.view === appState.currentView);
+});
 render();
 checkAuthStatus();
 </script>
