@@ -324,6 +324,8 @@ app.get('/api/oauth/callback', async (req, res) => {
     state.userRefreshToken = data.data.refresh_token;
     state.tokenExpiresAt = Date.now() + (data.data.expires_in || 7200) * 1000;
     saveTokens();
+    // 授权成功后打印 refresh_token，供配置 FEISHU_REFRESH_TOKEN 环境变量使用（Render 日志可见，私密勿外泄）
+    console.log('[OAuth] refresh_token:', data.data.refresh_token);
 
     // 获取当前用户信息（open_id + 姓名）
     try {
