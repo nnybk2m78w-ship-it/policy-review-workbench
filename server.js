@@ -428,6 +428,41 @@ app.post('/api/confirm', async (req, res) => {
   }
 });
 
+// ---- 恢复为待确认 ----
+app.post('/api/reopen', async (req, res) => {
+  const { recordId, fileName } = req.body;
+
+  if (!recordId) {
+    return res.status(400).json({ success: false, error: '缺少 recordId' });
+  }
+
+  console.log(`[恢复待确认] ${fileName || recordId}`);
+
+  try {
+    // 确保扩展字段存在，便于清空确认人信息
+    try { await ensureTableFields(); } catch (e) { console.warn('[恢复待确认] 检查字段失败:', e.message); }
+
+    const fields = {
+      '审核状态': '待审核',
+      '确认时间': null,
+      '确认人': '',
+      '确认人ID': '',
+    };
+
+    await updateFeishuRecord(recordId, fields);
+
+    console.log(`[恢复待确认] ✓ ${fileName || recordId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(`[恢复待确认] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
 // ---- 保存字段修改（含修改原因 + 修改历史 + 已修改标识） ----
 app.post('/api/save-field', async (req, res) => {
   const { recordId, fieldLabel, newValue, reason, changeEntry } = req.body;
