@@ -26824,6 +26824,68 @@ const LABELS = {
   "use_code": "兑换标识"
 };
 
+const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(LABELS).map(([key, label]) => [label, key]));
+
+function normalizeFeishuValue(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) {
+    return value.map(normalizeFeishuValue).filter(v => v !== '').join('、');
+  }
+  if (typeof value === 'object') {
+    if (value.text !== undefined) return normalizeFeishuValue(value.text);
+    if (value.name !== undefined) return normalizeFeishuValue(value.name);
+    if (value.value !== undefined) return normalizeFeishuValue(value.value);
+    if (value.link !== undefined) return normalizeFeishuValue(value.link);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function parseProblemMarks(raw) {
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return [];
+  return text.split('\n').filter(Boolean).map(line => {
+    const m = line.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]*?)[:：]\s*(.*)$/);
+    if (m) {
+      const label = m[3].trim() || '文件整体';
+      return {
+        field: FIELD_LABEL_TO_KEY[label] || '',
+        field_label: label,
+        desc: m[4].trim(),
+        created_by: m[2].trim(),
+        created_at: m[1].trim(),
+      };
+    }
+    return { field: '', field_label: '文件整体', desc: line, created_by: '', created_at: '' };
+  });
+}
+
+function parseChangeHistoryText(raw) {
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+  } catch(e) {}
+  return text.split('\n').filter(Boolean).map(line => {
+    const m = line.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]*?)[:：]\s*(.*?)\s*→\s*(.*?)\s*\|\s*原因[:：]\s*(.*)$/);
+    if (m) {
+      const label = m[3].trim();
+      const field = FIELD_LABEL_TO_KEY[label] || label;
+      return {
+        field,
+        fieldLabel: label,
+        oldValue: m[4].trim() === '(空)' ? '' : m[4].trim(),
+        newValue: m[5].trim() === '(空)' ? '' : m[5].trim(),
+        time: m[1].trim(),
+        user: m[2].trim(),
+        reason: m[6].trim(),
+      };
+    }
+    return { field: '', fieldLabel: '', oldValue: '', newValue: '', time: '', user: '', reason: line };
+  });
+}
+
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
 
 // ===== STATE =====
@@ -27649,19 +27711,20 @@ async function submitProblem() {
   pendingProblem = null;
   document.getElementById('problemOverlay').style.display = 'none';
 
-  const p = appState.policies.find(x => x.id === policyId);
-  if (!p) return;
-  if (!p.problems) p.problems = [];
-  p.problems.push({
-    field: field,
-    field_label: field ? (LABELS[field] || field) : '文件整体',
-    desc: desc,
-    created_by: (appState.user && appState.user.name) || '',
-    created_at: formatTime(new Date()),
-  });
-  saveState();
-  render();
-  showToast('已标记问题', 'success');
+	  const p = appState.policies.find(x => x.id === policyId);
+	  if (!p) return;
+	  if (!p.problems) p.problems = [];
+	  const problemEntry = {
+	    field: field,
+	    field_label: field ? (LABELS[field] || field) : '文件整体',
+	    desc: desc,
+	    created_by: (appState.user && appState.user.name) || '',
+	    created_at: formatTime(new Date()),
+	  };
+	  p.problems.push(problemEntry);
+	  saveState();
+	  render();
+	  showToast('已标记问题', 'success');
 
   // 同步到飞书
   try {
@@ -27669,28 +27732,35 @@ async function submitProblem() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        recordId: policyId,
-        entry: p.problems[p.problems.length - 1],
-      }),
-    });
-    const result = await resp.json();
-    if (result.success) {
-      showToast('问题已同步到飞书', 'success');
-    } else if (result.needAuth) {
-      const authResp = await fetch('/api/auth-url');
-      const authData = await authResp.json();
-      showInlineSyncBar('问题已标记，需要飞书授权才能同步',
-        `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
-    } else {
-      showInlineSyncBar('问题同步失败: ' + (result.error || '未知错误'),
-        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-    }
-  } catch (err) {
-    showInlineSyncBar('飞书同步暂不可用（问题已保存在本地）',
-      `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
-       <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-  }
-}
+	        recordId: policyId,
+	        entry: problemEntry,
+	      }),
+	    });
+	    const result = await resp.json();
+	    if (result.success) {
+	      showToast('问题已同步到飞书', 'success');
+	      syncStatusesFromServer(false);
+	    } else if (result.needAuth) {
+	      p.problems = p.problems.filter(x => x !== problemEntry);
+	      saveState();
+	      render();
+	      showInlineSyncBar('飞书授权已失效，本次问题标记未生效',
+	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	    } else {
+	      p.problems = p.problems.filter(x => x !== problemEntry);
+	      saveState();
+	      render();
+	      showInlineSyncBar('问题同步失败: ' + (result.error || '未知错误'),
+	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	    }
+	  } catch (err) {
+	    p.problems = p.problems.filter(x => x !== problemEntry);
+	    saveState();
+	    render();
+	    showInlineSyncBar('飞书同步失败，本次问题标记未生效',
+	      `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	  }
+	}
 
 function removeProblem(policyId, idx) {
   const p = appState.policies.find(x => x.id === policyId);
@@ -27705,6 +27775,8 @@ function removeProblem(policyId, idx) {
 async function doSaveField(policyId, field, oldVal, newVal, reason) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
+  const oldAudit = JSON.parse(JSON.stringify(p.audit || {}));
+  const oldHistory = JSON.parse(JSON.stringify(p._change_history || []));
 
   p.data[field] = newVal;
 
@@ -27750,24 +27822,37 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
         },
       }),
     });
-    const result = await resp.json();
-    if (result.success) {
-      showToast('已保存并同步到飞书', 'success');
-    } else if (result.needAuth) {
-      const authResp = await fetch('/api/auth-url');
-      const authData = await authResp.json();
-      showInlineSyncBar('字段已保存，需要飞书授权才能同步到表格',
-        `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
-    } else {
-      showInlineSyncBar('飞书同步失败: ' + (result.error || '未知错误'),
-        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-    }
-  } catch (err) {
-    showInlineSyncBar('飞书同步暂不可用（修改已保存在本地）',
-      `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
-       <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-  }
-}
+	    const result = await resp.json();
+	    if (result.success) {
+	      showToast('已保存并同步到飞书', 'success');
+	      syncStatusesFromServer(false);
+	    } else if (result.needAuth) {
+	      p.data[field] = oldVal;
+	      p.audit = oldAudit;
+	      p._change_history = oldHistory;
+	      saveState();
+	      render();
+	      showInlineSyncBar('飞书授权已失效，本次字段修改未生效',
+	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	    } else {
+	      p.data[field] = oldVal;
+	      p.audit = oldAudit;
+	      p._change_history = oldHistory;
+	      saveState();
+	      render();
+	      showInlineSyncBar('飞书同步失败: ' + (result.error || '未知错误'),
+	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	    }
+	  } catch (err) {
+	    p.data[field] = oldVal;
+	    p.audit = oldAudit;
+	    p._change_history = oldHistory;
+	    saveState();
+	    render();
+	    showInlineSyncBar('飞书同步失败，本次字段修改未生效',
+	      `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+	  }
+	}
 
 function cancelEdit() {
   appState.editingField = null;
@@ -27802,6 +27887,7 @@ async function confirmFile(id) {
       saveState();
       showToast(`「${p.file_name}」已确认并同步到飞书`, 'success');
       render();
+      syncStatusesFromServer(false);
 
       // Auto-advance
       if (appState.currentView === 'review') {
@@ -27826,24 +27912,10 @@ async function confirmFile(id) {
     }
   } catch (err) {
     delete p._syncing;
-    // API unavailable — confirm locally and show inline notice
-    p.status = 'confirmed';
-    p.confirmed_at = new Date().toLocaleString('zh-CN');
-    saveState();
-    showInlineSyncBar('飞书同步暂不可用（请手动在表格中确认）',
-      `<button class="btn-sm btn-sm-nav" onclick="window.open('${FEISHU_BASE_URL}','_blank')">打开飞书表格</button>
-       <button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-    showToast('「' + p.file_name + '」已标记为确认(需手动同步飞书)', 'success');
+    showInlineSyncBar('飞书同步失败，本次确认未生效，请稍后重试',
+      `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+    showToast('确认失败，页面未改为已确认', 'error');
     render();
-
-    if (appState.currentView === 'review') {
-      setTimeout(() => {
-        const next = appState.policies.find(x => x.status !== 'confirmed' && x.id !== p.id);
-        const siblings = appState.policies.filter(x => x.category === p.category && x.subcategory === p.subcategory && x.status !== 'confirmed' && x.id !== p.id);
-        const target = siblings[0] || next;
-        if (target) { appState.currentFileId = target.id; render(); }
-      }, 600);
-    }
   }
 }
 
@@ -28007,9 +28079,59 @@ function formatSyncTs(ts) {
   return String(ts || '');
 }
 
+function applyFeishuFieldsToPolicy(p, fields) {
+  if (!p || !fields) return 0;
+  let changed = 0;
+
+  Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, label)) return;
+    const value = normalizeFeishuValue(fields[label]);
+    // 飞书表没有维护该字段值时，不用空值覆盖预解析结果；确认/问题/修改等状态字段单独处理。
+    if (value === '') return;
+    const old = normalizeFeishuValue(p.data && p.data[key]);
+    if (old !== value) {
+      if (!p.data) p.data = {};
+      p.data[key] = value;
+      changed++;
+    }
+  });
+
+  if (Object.prototype.hasOwnProperty.call(fields, '问题标记')) {
+    const nextProblems = parseProblemMarks(fields['问题标记']);
+    const oldProblems = JSON.stringify(p.problems || []);
+    const newProblems = JSON.stringify(nextProblems);
+    if (oldProblems !== newProblems) {
+      p.problems = nextProblems;
+      changed++;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(fields, '修改历史')) {
+    const nextHistory = parseChangeHistoryText(fields['修改历史']);
+    const oldHistory = JSON.stringify(p._change_history || []);
+    const newHistory = JSON.stringify(nextHistory);
+    if (oldHistory !== newHistory) {
+      p._change_history = nextHistory;
+      changed++;
+    }
+    if (!p.audit) p.audit = {};
+    const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
+    if (editedFields.length) p.audit.edited_fields = editedFields;
+    else if (normalizeFeishuValue(fields['已修改']) !== '是') delete p.audit.edited_fields;
+  } else if (Object.prototype.hasOwnProperty.call(fields, '已修改') && normalizeFeishuValue(fields['已修改']) !== '是') {
+    if (p.audit && p.audit.edited_fields) {
+      delete p.audit.edited_fields;
+      p._change_history = [];
+      changed++;
+    }
+  }
+
+  return changed;
+}
+
 async function syncStatusesFromServer(showTip) {
   try {
-    const resp = await fetch('/api/statuses');
+    const resp = await fetch('/api/statuses', { cache: 'no-store' });
     if (!resp.ok) return false;
     const result = await resp.json();
     if (!result.success || !result.statuses) return false;
@@ -28017,11 +28139,33 @@ async function syncStatusesFromServer(showTip) {
     appState.policies.forEach(p => {
       const s = result.statuses[p.id];
       if (!s || p._syncing) return;
-      if (s.status && s.status !== p.status) { p.status = s.status; changed++; }
-      if (s.confirmed_by) {
-        p.confirmed_by = typeof s.confirmed_by === 'object' ? s.confirmed_by : { name: s.confirmed_by };
+      if (s.status && s.status !== p.status) {
+        p.status = s.status;
+        changed++;
       }
-      if (s.confirmed_at) p.confirmed_at = formatSyncTs(s.confirmed_at);
+      if (s.status === 'confirmed') {
+        if (s.confirmed_by) {
+          const nextBy = typeof s.confirmed_by === 'object' ? s.confirmed_by : { name: normalizeFeishuValue(s.confirmed_by) };
+          if (JSON.stringify(p.confirmed_by || null) !== JSON.stringify(nextBy)) {
+            p.confirmed_by = nextBy;
+            changed++;
+          }
+        }
+        if (s.confirmed_at) {
+          const nextAt = formatSyncTs(s.confirmed_at);
+          if (p.confirmed_at !== nextAt) {
+            p.confirmed_at = nextAt;
+            changed++;
+          }
+        }
+      } else {
+        if (p.confirmed_at || p.confirmed_by) {
+          p.confirmed_at = null;
+          p.confirmed_by = null;
+          changed++;
+        }
+      }
+      changed += applyFeishuFieldsToPolicy(p, s.fields);
     });
     if (changed > 0) {
       saveState();

@@ -554,6 +554,7 @@ async function listAllRecordStatuses() {
   let offset = 0;
   const pageSize = 200; // base/v3 列表接口 limit 上限 200
   let guard = 0;
+  let hasMore = false;
   do {
     const url = `https://open.feishu.cn/open-apis/base/v3/bases/${BASE_TOKEN}/tables/${TABLE_ID}/records?limit=${pageSize}&offset=${offset}`;
     const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -578,11 +579,15 @@ async function listAllRecordStatuses() {
         confirmed_by: f['确认人'] || null,
         confirmed_at: f['确认时间'] || null,
         edited: f['已修改'] || null,
+        change_history: f['修改历史'] || null,
+        problem_marks: f['问题标记'] || null,
+        fields: f,
       };
     });
+    hasMore = !!inner.has_more && rows.length > 0;
     offset += rows.length;
     guard++;
-  } while (inner.has_more && guard < 10);
+  } while (hasMore && guard < 20);
   return statuses;
 }
 
