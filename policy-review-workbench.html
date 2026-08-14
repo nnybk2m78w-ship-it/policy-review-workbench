@@ -302,7 +302,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div class="header-left">
     <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
-    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:19:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:43:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
+    <div class="meta" id="headerMeta">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:31:06</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:19:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:43:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
   </div>
   <div class="header-center">
     <div class="stat-chips">
@@ -913,6 +913,12 @@ const REVIEW_POLICIES = [
         "出票要求": "不限出票张数，不得与优惠券同时使用",
         "产品类型": "折上折直减"
       },
+      "document_restrictions": "中国大陆居民身份证（购票和乘机须使用）",
+      "child_applicable": false,
+      "baby_applicable": false,
+      "realname_limit": true,
+      "membership_limit": "南航会员（购票人需注册为南航会员，且须为乘机人之一）",
+      "passenger_type": "成人",
       "file_name": "【合作方】X推机产品方案（直减7天内规则）10.28（最终）.doc",
       "category": "02_旗舰店",
       "subcategory": "南方航空",
@@ -26745,7 +26751,7 @@ const REVIEW_POLICIES = [
     "subcategory": "深圳航空"
   }
 ];
-const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
+const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
 const LABELS = {
   "scenario": "解析场景",
   "business_line": "业务线",
@@ -26808,6 +26814,7 @@ const LABELS = {
   "use_begin": "兑换开启时间",
   "wether_depart_today": "是否含起飞当日",
   "realname_limit": "实名限制",
+  "membership_limit": "会员限制",
   "refund_time": "未兑换退款日期",
   "luggage_amount": "行李额",
   "price_groups_summary": "价格组汇总",
