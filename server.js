@@ -543,6 +543,51 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ---- 拉取全部记录的最新状态（供前端多人同步确认状态/确认人）----
+async function listAllRecordStatuses() {
+  const token = await getUserAccessToken();
+  const statuses = {};
+  let pageToken = '';
+  let guard = 0;
+  do {
+    const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${BASE_TOKEN}/tables/${TABLE_ID}/records?page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    const data = await resp.json();
+    if (data.code !== 0) {
+      throw new Error(`读取记录失败: ${data.msg} (code=${data.code})`);
+    }
+    (data.data.items || []).forEach(item => {
+      const f = item.fields || {};
+      let st = f['审核状态'];
+      if (Array.isArray(st)) st = st[0];
+      if (st && typeof st === 'object') st = st.text || st.name || '';
+      statuses[item.record_id] = {
+        status: st === '已确认' ? 'confirmed' : 'reviewing',
+        confirmed_by: f['确认人'] || null,
+        confirmed_at: f['确认时间'] || null,
+        edited: f['已修改'] || null,
+      };
+    });
+    pageToken = data.data.has_more ? data.data.page_token : '';
+    guard++;
+  } while (pageToken && guard < 10);
+  return statuses;
+}
+
+app.get('/api/statuses', async (req, res) => {
+  try {
+    const statuses = await listAllRecordStatuses();
+    res.json({ success: true, count: Object.keys(statuses).length, statuses });
+  } catch (err) {
+    console.error(`[状态同步] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
 // ---- 启动 ----
 app.listen(PORT, () => {
   console.log(`\n🚀 政策审核工作台 (Render) 已启动`);
