@@ -544,33 +544,43 @@ app.get('/api/health', (req, res) => {
 });
 
 // ---- 拉取全部记录的最新状态（供前端多人同步确认状态/确认人）----
+// 说明：bitable/v1 列表接口需要 bitable:app 权限（OAuth 授权 scope 常缺失），
+// 改用 base/v3 列表接口（只需 base:record:read），返回列为 record_id_list + fields + data 行数组。
 async function listAllRecordStatuses() {
   const token = await getUserAccessToken();
   const statuses = {};
-  let pageToken = '';
+  let offset = 0;
+  const pageSize = 200; // base/v3 列表接口 limit 上限 200
   let guard = 0;
   do {
-    const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${BASE_TOKEN}/tables/${TABLE_ID}/records?page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+    const url = `https://open.feishu.cn/open-apis/base/v3/bases/${BASE_TOKEN}/tables/${TABLE_ID}/records?limit=${pageSize}&offset=${offset}`;
     const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-    const data = await resp.json();
-    if (data.code !== 0) {
-      throw new Error(`读取记录失败: ${data.msg} (code=${data.code})`);
+    const body = await resp.json();
+    if (body.code !== 0) {
+      throw new Error(`读取记录失败: ${body.msg} (code=${body.code})`);
     }
-    (data.data.items || []).forEach(item => {
-      const f = item.fields || {};
+    const inner = body.data || {};
+    const fields = inner.fields || [];
+    const ids = inner.record_id_list || [];
+    const rows = inner.data || [];
+    rows.forEach((row, i) => {
+      const recordId = ids[i];
+      if (!recordId) return;
+      const f = {};
+      fields.forEach((name, j) => { f[name] = row[j]; });
       let st = f['审核状态'];
       if (Array.isArray(st)) st = st[0];
       if (st && typeof st === 'object') st = st.text || st.name || '';
-      statuses[item.record_id] = {
+      statuses[recordId] = {
         status: st === '已确认' ? 'confirmed' : 'reviewing',
         confirmed_by: f['确认人'] || null,
         confirmed_at: f['确认时间'] || null,
         edited: f['已修改'] || null,
       };
     });
-    pageToken = data.data.has_more ? data.data.page_token : '';
+    offset += rows.length;
     guard++;
-  } while (pageToken && guard < 10);
+  } while (inner.has_more && guard < 10);
   return statuses;
 }
 
