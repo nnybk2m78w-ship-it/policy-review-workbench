@@ -85,10 +85,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .field-delete-btn:hover { background:#fff3f3; color:#d63031; border-color:#f5c6c6; }
 
 /* 文件级问题面板 */
-.problems-panel { background:#fff5f5; border:1px solid #f5c6c6; border-radius:8px; padding:12px 14px; margin-bottom:16px; }
-.problems-panel-title { font-size:13px; font-weight:600; color:#d63031; margin-bottom:8px; }
+.problems-panel { background:#fff5f5; border:1px solid #f5c6c6; border-radius:8px; padding:10px 12px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.problems-panel-title { font-size:13px; font-weight:600; color:#d63031; margin-bottom:0; }
 .problems-panel-item { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:6px 0; border-bottom:1px dashed #f0d0d0; font-size:12px; }
 .problems-panel-item:last-child { border-bottom:none; }
+.problems-panel-action { border:1px solid #d63031; color:#d63031; background:#fff; border-radius:4px; padding:4px 10px; font-size:12px; cursor:pointer; white-space:nowrap; }
+.problems-panel-action:hover { background:#d63031; color:#fff; }
 .pp-desc { flex:1; color:#333; }
 .pp-meta { font-size:11px; color:var(--muted); white-space:nowrap; }
 .prob-field-tag { display:inline-block; background:#d63031; color:#fff; border-radius:4px; padding:0 6px; font-size:11px; margin-right:6px; }
@@ -402,6 +404,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <div class="history-list" id="historyList"></div>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-confirm" onclick="closeChangeHistory()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 文件问题记录弹窗 -->
+<div id="fileProblemsOverlay" class="reason-overlay" style="display:none">
+  <div class="reason-modal">
+    <h4>问题记录</h4>
+    <div class="reason-meta" id="fileProblemsMeta"></div>
+    <div class="history-list" id="fileProblemsList"></div>
+    <div class="reason-actions">
+      <button class="btn-sm btn-sm-confirm" onclick="closeFileProblems()">关闭</button>
     </div>
   </div>
 </div>
@@ -27555,16 +27569,9 @@ function renderReview(main) {
   let problemsHtml = '';
   if (fileProblems.length > 0) {
     problemsHtml = `<div class="problems-panel">
-      <div class="problems-panel-title">⚠ 已标记问题（${fileProblems.length}）</div>`;
-    fileProblems.forEach((pr, i) => {
-      problemsHtml += `<div class="problems-panel-item">
-        <div class="pp-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
-        <div class="pp-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
-          <button class="prob-resolve" onclick="removeProblem('${p.id}',${i})">✓ 已解决</button>
-        </div>
-      </div>`;
-    });
-    problemsHtml += '</div>';
+      <div class="problems-panel-title">⚠ 已标记问题（${fileProblems.length}）</div>
+      <button class="problems-panel-action" onclick="openFileProblems('${jsArg(p.id)}')">查看/处理</button>
+    </div>`;
   }
 
   const sourceText = (p.source_text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -28011,7 +28018,37 @@ function removeProblem(policyId, idx) {
   p.problems.splice(idx, 1);
   saveState();
   render();
+  if (document.getElementById('fileProblemsOverlay').style.display !== 'none') {
+    if (p.problems.length) openFileProblems(policyId);
+    else closeFileProblems();
+  }
   showToast('问题已标记为解决', 'success');
+}
+
+function openFileProblems(policyId) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p) return;
+  const problems = p.problems || [];
+  document.getElementById('fileProblemsMeta').innerHTML =
+    `<b>${escapeHtml(p.file_name || '')}</b><br><span>共 ${problems.length} 条问题记录</span>`;
+  const list = document.getElementById('fileProblemsList');
+  if (!problems.length) {
+    list.innerHTML = '<div style="padding:12px;color:var(--muted)">暂无问题记录</div>';
+  } else {
+    list.innerHTML = problems.map((pr, i) => `
+      <div class="problems-panel-item">
+        <div class="pp-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
+        <div class="pp-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
+          <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${i})">✓ 已解决</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  document.getElementById('fileProblemsOverlay').style.display = 'flex';
+}
+
+function closeFileProblems() {
+  document.getElementById('fileProblemsOverlay').style.display = 'none';
 }
 
 function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
@@ -28690,6 +28727,7 @@ document.addEventListener('keydown', (e) => {
   }
   // Esc：清空搜索 / 关闭弹窗
   if (e.key === 'Escape') {
+    if (document.getElementById('fileProblemsOverlay').style.display !== 'none') { closeFileProblems(); return; }
     if (document.getElementById('historyOverlay').style.display !== 'none') { closeChangeHistory(); return; }
     if (document.getElementById('problemOverlay').style.display !== 'none') { cancelProblem(); return; }
     if (document.getElementById('reasonOverlay').style.display !== 'none') { cancelReason(); return; }
