@@ -344,6 +344,19 @@ function formatChangeHistory(entries) {
     .join('\n');
 }
 
+function normalizeChangeEntry(entry, fallback) {
+  const src = entry && typeof entry === 'object' ? entry : {};
+  return {
+    time: src.time || fallback.time || new Date().toLocaleString('zh-CN', { hour12: false }),
+    user: src.user || fallback.user || '',
+    fieldLabel: src.fieldLabel || src.field || fallback.fieldLabel || fallback.field || '',
+    field: src.field || fallback.field || src.fieldLabel || fallback.fieldLabel || '',
+    oldValue: src.oldValue !== undefined ? src.oldValue : (fallback.oldValue || ''),
+    newValue: src.newValue !== undefined ? src.newValue : (fallback.newValue || ''),
+    reason: src.reason || fallback.reason || '',
+  };
+}
+
 function normalizeFeishuValue(value) {
   if (value === undefined || value === null) return '';
   if (Array.isArray(value)) {
@@ -917,8 +930,9 @@ app.post('/api/save-field', async (req, res) => {
       console.warn('[保存字段] 读取现有历史失败，从头开始:', e.message);
     }
 
-    // 构造新变更条目
-    const entry = changeEntry || {
+    // 构造新变更条目。前端历史可能漏传 user，后端必须用当前飞书授权用户兜底，
+    // 否则页面/表格里会出现有修改但无法追溯修改人的空记录。
+    const entry = normalizeChangeEntry(changeEntry, {
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
       user: user ? user.name : '',
       fieldLabel: fieldLabel || '',
@@ -926,7 +940,7 @@ app.post('/api/save-field', async (req, res) => {
       oldValue: '',
       newValue: newValue !== undefined ? String(newValue) : '',
       reason: reason || '',
-    };
+    });
 
     existingHistory.push(entry);
     const historyText = formatChangeHistory(existingHistory);

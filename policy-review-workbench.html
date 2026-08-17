@@ -27792,9 +27792,11 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
   const timeStr = formatTime(new Date());
   p._change_history.push({
     field: field,
+    fieldLabel: LABELS[field] || field,
     oldValue: oldVal,
     newValue: newVal,
     time: timeStr,
+    user: (appState.user && appState.user.name) || '',
     reason: reason,
   });
 
@@ -27817,6 +27819,8 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
         reason: reason,
         changeEntry: {
           time: timeStr,
+          user: (appState.user && appState.user.name) || '',
+          field: field,
           fieldLabel: LABELS[field] || field,
           oldValue: oldVal,
           newValue: newVal,
