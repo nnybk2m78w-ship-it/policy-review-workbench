@@ -898,7 +898,7 @@ app.post('/api/reopen', async (req, res) => {
 
 // ---- 保存字段修改（含修改原因 + 修改历史 + 已修改标识） ----
 app.post('/api/save-field', async (req, res) => {
-  const { recordId, fieldLabel, newValue, reason, changeEntry } = req.body;
+  const { recordId, fieldLabel, fieldKey: requestedFieldKey, newValue, reason, changeEntry } = req.body;
 
   if (!recordId) {
     return res.status(400).json({ success: false, error: '缺少 recordId' });
@@ -918,7 +918,7 @@ app.post('/api/save-field', async (req, res) => {
     let sourceFields = {};
     let sourceParsed = null;
     let jsonFieldName = '';
-    const fieldKey = FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
+    const fieldKey = requestedFieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
     try {
       record = await getFeishuRecord(recordId);
       sourceFields = record.fields || {};

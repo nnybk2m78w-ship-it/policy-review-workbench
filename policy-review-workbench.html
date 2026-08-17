@@ -94,8 +94,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 /* 问题按钮 */
 .btn-sm-problem { background:#fff; border:1px solid #d63031; color:#d63031; }
 .btn-sm-problem:hover { background:#d63031; color:#fff; }
+.btn-sm-add-field { background:#fff; border:1px solid #00b894; color:#008f72; }
+.btn-sm-add-field:hover { background:#00b894; color:#fff; }
 .btn-sm-danger { background:#d63031; color:#fff; border:none; padding:8px 18px; border-radius:4px; cursor:pointer; font-size:13px; }
 .btn-sm-danger:hover { background:#c0392b; }
+.add-field-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+.add-field-grid label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+.add-field-grid input, .add-field-grid select, .add-field-value { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
+.add-field-grid input:focus, .add-field-grid select:focus, .add-field-value:focus { border-color:var(--primary); }
+.add-field-value { min-height:70px; resize:vertical; margin-top:10px; }
+.custom-field-hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
 
 /* 问题清单视图 */
 .problems-view { }
@@ -352,6 +360,35 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelProblem()">取消</button>
       <button class="btn-sm btn-sm-danger" onclick="submitProblem()">标记问题</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新增字段弹窗 -->
+<div id="addFieldOverlay" class="reason-overlay" style="display:none">
+  <div class="reason-modal">
+    <h4>➕ 增加解析字段</h4>
+    <div class="reason-meta" id="addFieldMeta"></div>
+    <div class="add-field-grid">
+      <label>标准字段（可选）
+        <select id="addFieldPreset" onchange="onAddFieldPresetChange()"></select>
+      </label>
+      <label>JSON key
+        <input id="addFieldKey" placeholder="如 sale_date / product_code">
+      </label>
+      <label>字段名称
+        <input id="addFieldLabel" placeholder="如 销售日期 / 产品代码">
+      </label>
+      <label>字段值
+        <input id="addFieldValueShort" placeholder="短值可填这里">
+      </label>
+    </div>
+    <textarea id="addFieldValue" class="add-field-value" placeholder="字段值较长时填这里；短值和长值都填写时，以这里为准"></textarea>
+    <textarea id="addFieldReason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这个字段？证据在哪？）"></textarea>
+    <div class="custom-field-hint">优先选择标准字段；没有合适标准字段时，可输入自定义字段名称和 JSON key。保存后会写入解析JSON、修改历史，并作为后续规则升级依据。</div>
+    <div class="reason-actions">
+      <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
+      <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
     </div>
   </div>
 </div>
@@ -26827,6 +26864,60 @@ const LABELS = {
 };
 
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(LABELS).map(([key, label]) => [label, key]));
+const GROUPED_FIELD_KEYS = new Set(FIELD_GROUPS.flatMap(g => g.fields));
+const EXTRA_FIELD_EXCLUDE = new Set([
+  'source_files', 'document_type', 'file_name', 'category', 'subcategory', 'business_type',
+  'evidence', 'audit', 'problems', '_change_history', 'parsed_at', 'status', 'confirmed_at',
+  'confirmed_by', 'manual_confirm_fields'
+]);
+
+function jsArg(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+}
+
+function fieldDomId(field) {
+  return 'fv_' + String(field ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function changeHistoryDomId(policyId, field) {
+  return 'ch_' + String(policyId ?? '').replace(/[^a-zA-Z0-9_-]/g, '_') + '_' + String(field ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function parseJsonText(raw) {
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch(e) {}
+  return null;
+}
+
+function mergeParsedJsonIntoPolicy(p, rawJson) {
+  const parsed = parseJsonText(rawJson);
+  if (!parsed) return 0;
+  const source = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
+  const data = source.data && typeof source.data === 'object' ? { ...source, ...source.data } : source;
+  if (!data || typeof data !== 'object') return 0;
+  let changed = 0;
+  if (!p.data) p.data = {};
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || EXTRA_FIELD_EXCLUDE.has(key)) return;
+    const old = normalizeFeishuValue(p.data[key]);
+    const next = normalizeFeishuValue(value);
+    if (next !== '' && old !== next) {
+      p.data[key] = value;
+      changed++;
+    }
+  });
+  return changed;
+}
+
+function getExtraFieldKeys(p) {
+  return Object.keys((p && p.data) || {}).filter(key => {
+    const value = p.data[key];
+    return !GROUPED_FIELD_KEYS.has(key) &&
+      !EXTRA_FIELD_EXCLUDE.has(key) &&
+      value !== undefined && value !== null && normalizeFeishuValue(value) !== '';
+  });
+}
 
 function normalizeFeishuValue(value) {
   if (value === undefined || value === null) return '';
@@ -27280,6 +27371,33 @@ function renderProblems(main) {
   main.innerHTML = html;
 }
 
+function renderFieldRow(p, f, isExtra) {
+  const val = p.data[f];
+  if (val === undefined || val === null || val === '') return '';
+  const displayVal = typeof val === 'boolean' ? (val ? '是' : '否') : String(val);
+  const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
+  const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
+  const modIndicator = isModified 
+    ? `<span class="field-modified-indicator" onclick="toggleChangeHistory('${jsArg(p.id)}','${jsArg(f)}')" title="已人工修改，点击查看历史">✎</span>`
+    : '';
+  const modClass = isModified ? ' field-modified' : '';
+  const fieldProblems = (p.problems || []).filter(pr => pr.field === f);
+  const probIndicator = fieldProblems.length
+    ? `<span class="field-problem-indicator" title="该字段存在 ${fieldProblems.length} 个问题：${escapeHtml(fieldProblems.map(x=>x.desc).join('；'))}">⚠${fieldProblems.length}</span>`
+    : '';
+  const probClass = fieldProblems.length ? ' field-problem' : '';
+  const customTag = isExtra ? '<span class="evidence-tag" title="人工补充或解析JSON额外字段">新增</span>' : '';
+  let html = `<div class="field-row${modClass}${probClass}">
+    <div class="field-label">${escapeHtml(LABELS[f] || f)}${modIndicator}${probIndicator}</div>
+    <div class="field-value" ondblclick="startEdit('${jsArg(p.id)}', '${jsArg(f)}')" id="${fieldDomId(f)}">${escapeHtml(displayVal)}${evidence}${customTag}</div>
+    <div class="field-actions"><span class="field-problem-btn" onclick="openProblem('${jsArg(p.id)}','${jsArg(f)}')" title="标记该字段的解析问题">⚠</span></div>
+  </div>`;
+  if (isModified) {
+    html += `<div class="change-history-panel" id="${changeHistoryDomId(p.id, f)}"></div>`;
+  }
+  return html;
+}
+
 function renderReview(main) {
   const p = appState.policies.find(x => x.id === appState.currentFileId);
   if (!p) {
@@ -27298,37 +27416,18 @@ function renderReview(main) {
   FIELD_GROUPS.forEach(group => {
     let groupRows = '';
     group.fields.forEach(f => {
-      const val = p.data[f];
-      if (val === undefined || val === null || val === '') return;
-      const displayVal = typeof val === 'boolean' ? (val ? '是' : '否') : String(val);
-      const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${p.evidence[f]}">证据</span>` : '';
-      // Check if field was modified
-      const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
-      const modIndicator = isModified 
-        ? `<span class="field-modified-indicator" onclick="toggleChangeHistory('${p.id}','${f}')" title="已人工修改，点击查看历史">✎</span>`
-        : '';
-      const modClass = isModified ? ' field-modified' : '';
-      // Field-level problems
-      const fieldProblems = (p.problems || []).filter(pr => pr.field === f);
-      const probIndicator = fieldProblems.length
-        ? `<span class="field-problem-indicator" title="该字段存在 ${fieldProblems.length} 个问题：${fieldProblems.map(x=>x.desc).join('；')}">⚠${fieldProblems.length}</span>`
-        : '';
-      const probClass = fieldProblems.length ? ' field-problem' : '';
-      groupRows += `<div class="field-row${modClass}${probClass}">
-        <div class="field-label">${LABELS[f] || f}${modIndicator}${probIndicator}</div>
-        <div class="field-value" ondblclick="startEdit('${p.id}', '${f}')" id="fv_${f}">${displayVal}${evidence}</div>
-        <div class="field-actions"><span class="field-problem-btn" onclick="openProblem('${p.id}','${f}')" title="标记该字段的解析问题">⚠</span></div>
-      </div>`;
-      // Add change history panel
-      if (isModified) {
-        const historyId = 'ch_' + p.id + '_' + f;
-        groupRows += `<div class="change-history-panel" id="${historyId}"></div>`;
-      }
+      groupRows += renderFieldRow(p, f, false);
     });
     if (groupRows) {
       fieldsHtml += `<div class="field-group"><div class="group-title">${group.title}</div>${groupRows}</div>`;
     }
   });
+
+  const extraFieldKeys = getExtraFieldKeys(p);
+  if (extraFieldKeys.length) {
+    const extraRows = extraFieldKeys.map(f => renderFieldRow(p, f, true)).join('');
+    fieldsHtml += `<div class="field-group"><div class="group-title">人工新增字段</div>${extraRows}</div>`;
+  }
 
   // File-level problems panel
   const fileProblems = p.problems || [];
@@ -27365,6 +27464,9 @@ function renderReview(main) {
 
   // File-level problem button
   const problemBtn = `<button class="btn-sm btn-sm-problem" onclick="openProblem('${p.id}','')">⚠ 标记问题</button>`;
+  const addFieldBtn = !isConfirmed
+    ? `<button class="btn-sm btn-sm-add-field" onclick="openAddField('${p.id}')">＋ 增加字段</button>`
+    : '';
 
   // Navigation
   const navHtml = `<button class="btn-sm btn-sm-nav" onclick="navFile(-1)" ${!hasPrev ? 'disabled' : ''}>← 上一个</button>
@@ -27382,7 +27484,7 @@ function renderReview(main) {
     <div class="review-right">
       <div class="review-header-actions">
         <h4>🔍 解析结果 — ${escapeHtml(p.data.scenario || '')} | ${escapeHtml(p.data.carrier_name || '')} ${escapeHtml(p.data.product_name || '')}</h4>
-        <div class="actions-row">${problemBtn}${confirmBtn}</div>
+        <div class="actions-row">${addFieldBtn}${problemBtn}${confirmBtn}</div>
       </div>
       ${problemsHtml}
       ${fieldsHtml}
@@ -27570,14 +27672,14 @@ function startEdit(policyId, field) {
   appState.editingField = field;
   appState.editingPolicyId = policyId;
   
-  const fv = document.getElementById('fv_' + field);
+  const fv = document.getElementById(fieldDomId(field));
   if (!fv) return;
   
   const currentVal = String(p.data[field] ?? '');
   const isLong = currentVal.length > 40;
   const inputHtml = isLong 
-    ? `<textarea id="edit_input" onblur="saveEdit('${policyId}','${field}')" onkeydown="if(event.key==='Escape')cancelEdit()">${currentVal.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`
-    : `<input id="edit_input" value="${currentVal.replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" onblur="saveEdit('${policyId}','${field}')" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape')cancelEdit()">`;
+    ? `<textarea id="edit_input" onblur="saveEdit('${jsArg(policyId)}','${jsArg(field)}')" onkeydown="if(event.key==='Escape')cancelEdit()">${escapeHtml(currentVal)}</textarea>`
+    : `<input id="edit_input" value="${escapeHtml(currentVal)}" onblur="saveEdit('${jsArg(policyId)}','${jsArg(field)}')" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape')cancelEdit()">`;
   
   fv.innerHTML = inputHtml;
   const inp = document.getElementById('edit_input');
@@ -27774,6 +27876,83 @@ function removeProblem(policyId, idx) {
   showToast('问题已标记为解决', 'success');
 }
 
+// ===== 新增字段 =====
+let pendingAddField = null; // { policyId }
+
+function buildAddFieldPresetOptions() {
+  const preferred = ['sale_date','redeem_date','use_date','depart_date','product_code','product_type','discount_per','age_limit','document_restrictions','od','booking_cabin','cabin','manual_confirm_fields'];
+  const keys = [...new Set([...preferred, ...Object.keys(LABELS)])];
+  return '<option value="">选择已有标准字段...</option>' + keys.map(key =>
+    `<option value="${escapeHtml(key)}">${escapeHtml(LABELS[key] || key)}（${escapeHtml(key)}）</option>`
+  ).join('');
+}
+
+function openAddField(policyId) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p || p.status === 'confirmed') return;
+  pendingAddField = { policyId };
+  document.getElementById('addFieldMeta').innerHTML =
+    `<span>文件：${escapeHtml(p.file_name)}</span>`;
+  document.getElementById('addFieldPreset').innerHTML = buildAddFieldPresetOptions();
+  document.getElementById('addFieldPreset').value = '';
+  document.getElementById('addFieldKey').value = '';
+  document.getElementById('addFieldLabel').value = '';
+  document.getElementById('addFieldValueShort').value = '';
+  document.getElementById('addFieldValue').value = '';
+  document.getElementById('addFieldReason').value = '';
+  document.getElementById('addFieldOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('addFieldPreset').focus(), 50);
+}
+
+function onAddFieldPresetChange() {
+  const key = document.getElementById('addFieldPreset').value;
+  if (!key) return;
+  document.getElementById('addFieldKey').value = key;
+  document.getElementById('addFieldLabel').value = LABELS[key] || key;
+}
+
+function cancelAddField() {
+  pendingAddField = null;
+  document.getElementById('addFieldOverlay').style.display = 'none';
+}
+
+async function submitAddField() {
+  if (!pendingAddField) return;
+  const { policyId } = pendingAddField;
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p) return;
+
+  const presetKey = document.getElementById('addFieldPreset').value.trim();
+  const keyInput = document.getElementById('addFieldKey').value.trim();
+  const labelInput = document.getElementById('addFieldLabel').value.trim();
+  const shortVal = document.getElementById('addFieldValueShort').value.trim();
+  const longVal = document.getElementById('addFieldValue').value.trim();
+  const reason = document.getElementById('addFieldReason').value.trim();
+  const field = keyInput || presetKey || FIELD_LABEL_TO_KEY[labelInput] || labelInput;
+  const label = labelInput || LABELS[field] || field;
+  const value = longVal || shortVal;
+
+  if (!field || !label) {
+    showToast('请填写字段名称或选择标准字段', 'error');
+    return;
+  }
+  if (!value) {
+    showToast('请填写字段值', 'error');
+    return;
+  }
+  if (!reason) {
+    showToast('请填写补充原因', 'error');
+    document.getElementById('addFieldReason').focus();
+    return;
+  }
+
+  pendingAddField = null;
+  document.getElementById('addFieldOverlay').style.display = 'none';
+  if (!LABELS[field]) LABELS[field] = label;
+  FIELD_LABEL_TO_KEY[label] = field;
+  await doSaveField(policyId, field, '', value, `新增字段：${reason}`);
+}
+
 async function doSaveField(policyId, field, oldVal, newVal, reason) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
@@ -27815,6 +27994,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
       body: JSON.stringify({
         recordId: policyId,
         fieldLabel: LABELS[field] || field,
+        fieldKey: field,
         newValue: newVal,
         reason: reason,
         changeEntry: {
@@ -27989,7 +28169,7 @@ function dismissSyncBar() {
 }
 
 function toggleChangeHistory(policyId, field) {
-  const historyId = 'ch_' + policyId + '_' + field;
+  const historyId = changeHistoryDomId(policyId, field);
   const panel = document.getElementById(historyId);
   if (!panel) return;
   
@@ -28140,6 +28320,10 @@ function formatSyncTs(ts) {
 function applyFeishuFieldsToPolicy(p, fields) {
   if (!p || !fields) return 0;
   let changed = 0;
+
+  if (Object.prototype.hasOwnProperty.call(fields, '解析JSON')) {
+    changed += mergeParsedJsonIntoPolicy(p, fields['解析JSON']);
+  }
 
   Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
     if (!Object.prototype.hasOwnProperty.call(fields, label)) return;
