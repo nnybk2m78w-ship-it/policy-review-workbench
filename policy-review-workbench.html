@@ -28557,13 +28557,6 @@ document.addEventListener('keydown', (e) => {
     if (target) { selectFile(target.id); }
     return;
   }
-  // Enter：确认当前文件
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const p = appState.policies.find(x => x.id === appState.currentFileId);
-    if (p && p.status !== 'confirmed') confirmFile(p.id);
-    return;
-  }
   // Q：快速标记问题
   if (e.key.toLowerCase() === 'q') {
     e.preventDefault();
