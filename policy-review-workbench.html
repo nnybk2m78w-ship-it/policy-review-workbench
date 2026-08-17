@@ -332,8 +332,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   </div>
   <div class="header-center">
     <div class="stat-chips">
-      <span class="stat-chip stat-reviewing" id="statReviewing" title="待审核文件数">待审 <b>0</b></span>
-      <span class="stat-chip stat-problem" id="statProblem" title="标记了解析问题的文件数">有问题 <b>0</b></span>
+      <span class="stat-chip stat-reviewing clickable" id="statReviewing" title="点击只看待审文件" onclick="toggleStatusFilter('reviewing')">待审 <b>0</b></span>
+      <span class="stat-chip stat-problem clickable" id="statProblem" title="点击只看有问题文件" onclick="toggleStatusFilter('problem')">有问题 <b>0</b></span>
       <span class="stat-chip stat-confirmed clickable" id="statConfirmed" title="点击只看已确认文件" onclick="toggleStatusFilter('confirmed')">已确认 <b>0</b></span>
     </div>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
@@ -27148,11 +27148,11 @@ function renderSidebarList() {
   const query = appState.sidebarQuery.trim().toLowerCase();
 
   let html = '';
-  if (appState.statusFilter === 'confirmed') {
+  if (appState.statusFilter) {
     const n = appState.policies.filter(p =>
-      p.status === 'confirmed' &&
+      policyMatchesStatusFilter(p) &&
       (p.category || '03_自营') === (appState.sidebarCat || '03_自营')).length;
-    html += `<div class="sub-filter-bar">仅显示：已确认文件 (${n}) <button class="sub-filter-clear" onclick="clearStatusFilter()" title="显示全部状态">✕</button></div>`;
+    html += `<div class="sub-filter-bar">仅显示：${getStatusFilterLabel(appState.statusFilter)} (${n}) <button class="sub-filter-clear" onclick="clearStatusFilter()" title="显示全部状态">✕</button></div>`;
   }
   // 航司只看过滤提示条
   if (appState.subFilter) {
@@ -27191,8 +27191,17 @@ function policyMatches(p, q) {
 }
 
 function policyMatchesStatusFilter(p) {
+  if (appState.statusFilter === 'reviewing') return p.status !== 'confirmed' && !hasProblems(p);
+  if (appState.statusFilter === 'problem') return hasProblems(p);
   if (appState.statusFilter === 'confirmed') return p.status === 'confirmed';
   return true;
+}
+
+function getStatusFilterLabel(status) {
+  if (status === 'reviewing') return '待审文件';
+  if (status === 'problem') return '有问题文件';
+  if (status === 'confirmed') return '已确认文件';
+  return '全部文件';
 }
 
 function policyDisplayKey(p) {
@@ -27363,7 +27372,7 @@ function renderGroups() {
   });
 
   if (!sortedSubs.length) {
-    html += `<div class="search-empty">${appState.statusFilter === 'confirmed' ? '该分类暂无已确认文件' : '该分类暂无文件'}</div>`;
+    html += `<div class="search-empty">${appState.statusFilter ? `该分类暂无${getStatusFilterLabel(appState.statusFilter)}` : '该分类暂无文件'}</div>`;
   }
   return html;
 }
@@ -27381,9 +27390,9 @@ function clearSidebarSearch() {
 function setSidebarCat(cat) {
   if (appState.sidebarCat === cat) return;
   appState.sidebarCat = cat;
-  if (appState.statusFilter === 'confirmed') {
+  if (appState.statusFilter) {
     const first = appState.policies.find(p =>
-      p.status === 'confirmed' &&
+      policyMatchesStatusFilter(p) &&
       (p.category || '03_自营') === cat &&
       (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
     if (first) appState.currentFileId = first.id;
@@ -27424,16 +27433,16 @@ function clearSubFilter() {
 function toggleStatusFilter(status) {
   const next = appState.statusFilter === status ? '' : status;
   appState.statusFilter = next;
-  if (next === 'confirmed') {
+  if (next) {
     appState.currentView = 'review';
     const current = appState.policies.find(p => p.id === appState.currentFileId);
     const currentVisible = current &&
-      current.status === 'confirmed' &&
+      policyMatchesStatusFilter(current) &&
       (current.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
       (!appState.subFilter || (current.subcategory || '未标注航司') === appState.subFilter);
     if (!currentVisible) {
       const first = appState.policies.find(p =>
-        p.status === 'confirmed' &&
+        policyMatchesStatusFilter(p) &&
         (p.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
         (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
       if (first) appState.currentFileId = first.id;
@@ -27750,9 +27759,19 @@ function updateProgress() {
     if (el) el.innerHTML = el.dataset.prefix + ' <b>' + n + '</b>';
   };
   const st = document.getElementById('statReviewing');
-  if (st) { st.dataset.prefix = '待审'; st.innerHTML = '待审 <b>' + Math.max(reviewing - problem, 0) + '</b>'; }
+  if (st) {
+    st.dataset.prefix = '待审';
+    st.innerHTML = '待审 <b>' + Math.max(reviewing - problem, 0) + '</b>';
+    st.classList.toggle('active-filter', appState.statusFilter === 'reviewing');
+    st.title = appState.statusFilter === 'reviewing' ? '当前只看待审文件，点击取消筛选' : '点击只看待审文件';
+  }
   const sp = document.getElementById('statProblem');
-  if (sp) { sp.dataset.prefix = '有问题'; sp.innerHTML = '有问题 <b>' + problem + '</b>'; }
+  if (sp) {
+    sp.dataset.prefix = '有问题';
+    sp.innerHTML = '有问题 <b>' + problem + '</b>';
+    sp.classList.toggle('active-filter', appState.statusFilter === 'problem');
+    sp.title = appState.statusFilter === 'problem' ? '当前只看有问题文件，点击取消筛选' : '点击只看有问题文件';
+  }
   const sc = document.getElementById('statConfirmed');
   if (sc) {
     sc.dataset.prefix = '已确认';
