@@ -383,7 +383,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <datalist id="addFieldLabelOptions"></datalist>
     <div class="add-field-list" id="addFieldRows"></div>
     <textarea id="addFieldReason" class="add-field-reason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这些字段？证据在哪？）"></textarea>
-    <div class="custom-field-hint">每行补一个字段，左侧为字段名称，右侧为字段内容；点击 + 可继续增加字段。优先使用已有标准字段名称，自定义字段会作为临时 JSON key 写入解析结果。</div>
+    <div class="custom-field-hint">每行补一个字段，左侧为字段名称，右侧为字段内容；点击 + 可继续增加字段。使用已有标准字段名称时会写入原始 JSON 英文 key；完全新增的字段会自动生成 custom_ 开头的 JSON 英文名称。</div>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
@@ -26869,6 +26869,20 @@ const EXTRA_FIELD_EXCLUDE = new Set([
   'confirmed_by', 'manual_confirm_fields'
 ]);
 
+const CUSTOM_FIELD_KEY_PREFIX = 'custom_';
+const FIELD_TERM_MAP = [
+  ['销售', 'sale'], ['售卖', 'sale'], ['出票', 'ticketing'], ['航班', 'flight'], ['旅行', 'travel'],
+  ['兑换', 'redeem'], ['使用', 'use'], ['日期', 'date'], ['时间', 'time'], ['开始', 'start'],
+  ['结束', 'end'], ['截止', 'end'], ['航司', 'carrier'], ['产品', 'product'], ['代码', 'code'],
+  ['名称', 'name'], ['类型', 'type'], ['航线', 'route'], ['舱位', 'cabin'], ['舱等', 'travel_class'],
+  ['价格', 'price'], ['金额', 'amount'], ['比例', 'rate'], ['折扣', 'discount'], ['直减', 'discount'],
+  ['限制', 'limit'], ['规则', 'rules'], ['证件', 'document'], ['年龄', 'age'], ['旅客', 'passenger'],
+  ['会员', 'membership'], ['儿童', 'child'], ['婴儿', 'infant'], ['行李', 'baggage'], ['退款', 'refund'],
+  ['退票', 'refund'], ['变更', 'change'], ['签转', 'transfer'], ['备注', 'note'], ['说明', 'note'],
+  ['渠道', 'channel'], ['业务线', 'business_line'], ['不适用', 'not_applicable'], ['适用', 'applicable'],
+  ['人数', 'people_count'], ['次数', 'usage_times'], ['库存', 'stock'], ['票证', 'ticket'],
+];
+
 function jsArg(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
 }
@@ -28057,12 +28071,66 @@ function refreshAddFieldRowActions() {
   });
 }
 
-function resolveAddFieldKey(label) {
+function normalizeJsonKey(text) {
+  return String(text || '')
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_{2,}/g, '_')
+    .toLowerCase();
+}
+
+function hashFieldLabel(label) {
+  let hash = 5381;
+  const text = String(label || '');
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash) + text.charCodeAt(i);
+    hash >>>= 0;
+  }
+  return hash.toString(36).slice(0, 6);
+}
+
+function generateCustomFieldKey(label, policy) {
+  const clean = String(label || '').trim();
+  const asciiKey = normalizeJsonKey(clean);
+  let base = '';
+  if (asciiKey && /[a-z]/.test(asciiKey)) {
+    base = asciiKey;
+  } else {
+    let rest = clean;
+    const parts = [];
+    FIELD_TERM_MAP.forEach(([cn, en]) => {
+      if (rest.includes(cn)) {
+        parts.push(en);
+        rest = rest.replaceAll(cn, '');
+      }
+    });
+    base = normalizeJsonKey(parts.join('_')) || `field_${hashFieldLabel(clean)}`;
+  }
+  if (!base.startsWith(CUSTOM_FIELD_KEY_PREFIX)) base = CUSTOM_FIELD_KEY_PREFIX + base;
+
+  const used = new Set([
+    ...Object.keys(LABELS),
+    ...Object.keys((policy && policy.data) || {}),
+  ]);
+  let candidate = base;
+  let seq = 2;
+  while (used.has(candidate) && LABELS[candidate] !== clean) {
+    candidate = `${base}_${seq++}`;
+  }
+  return candidate;
+}
+
+function resolveAddFieldKey(label, policy) {
   const clean = String(label || '').trim();
   if (!clean) return '';
   if (FIELD_LABEL_TO_KEY[clean]) return FIELD_LABEL_TO_KEY[clean];
   if (LABELS[clean]) return clean;
-  return clean;
+  const normalized = normalizeJsonKey(clean);
+  if (normalized && LABELS[normalized]) return normalized;
+  if (normalized && Object.prototype.hasOwnProperty.call((policy && policy.data) || {}, normalized)) return normalized;
+  return generateCustomFieldKey(clean, policy);
 }
 
 function openAddField(policyId) {
@@ -28097,7 +28165,7 @@ async function submitAddField() {
   const rows = [...document.querySelectorAll('#addFieldRows .add-field-row')].map(row => {
     const label = row.querySelector('.add-field-label-input').value.trim();
     const value = row.querySelector('.add-field-content-input').value.trim();
-    const field = resolveAddFieldKey(label);
+    const field = resolveAddFieldKey(label, p);
     return { field, label, value };
   }).filter(row => row.label || row.value);
 
