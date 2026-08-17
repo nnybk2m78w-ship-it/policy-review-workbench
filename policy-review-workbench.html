@@ -55,7 +55,28 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .review-left { flex:1; background:#fff; border-radius:8px; padding:16px; overflow-y:auto; border:1px solid var(--border); }
 .review-right { flex:1; background:#fff; border-radius:8px; padding:16px; overflow-y:auto; border:1px solid var(--border); }
 .review-left h4, .review-right h4 { font-size:14px; color:var(--muted); margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
-.source-text { white-space:pre-wrap; font-size:13px; line-height:1.8; color:var(--text); }
+.source-text { font-size:13px; line-height:1.75; color:var(--text); }
+.source-summary { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
+.source-pill { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--border); background:#f8f9ff; color:var(--muted); border-radius:12px; padding:2px 8px; font-size:11px; }
+.source-pill.warn { border-color:#f6c76d; background:#fff8e1; color:#8a6500; }
+.source-pill.ok { border-color:#bde8da; background:#effff9; color:#008f72; }
+.source-paths { margin:8px 0 10px; padding:8px 10px; background:#f8f9fa; border:1px solid #edf0f3; border-radius:6px; font-size:11px; color:var(--muted); word-break:break-all; }
+.source-empty-card { border:1px solid #f4c2c2; background:#fff7f7; border-radius:8px; padding:14px; color:#4b4f52; }
+.source-empty-card .title { color:#d63031; font-weight:700; margin-bottom:6px; }
+.source-pdf-frame { width:100%; height:520px; border:1px solid #edf0f3; border-radius:8px; background:#f8f9fa; margin:8px 0 12px; }
+.source-section { border:1px solid #edf0f3; border-radius:8px; margin-bottom:10px; overflow:hidden; background:#fff; }
+.source-section summary { cursor:pointer; list-style:none; padding:9px 12px; background:#f8f9ff; color:#2d3436; font-weight:650; border-bottom:1px solid #edf0f3; display:flex; justify-content:space-between; gap:12px; }
+.source-section summary::-webkit-details-marker { display:none; }
+.source-section summary .hint { color:var(--muted); font-weight:400; font-size:11px; white-space:nowrap; }
+.source-section-body { padding:10px 12px; }
+.source-line { padding:3px 0; border-bottom:1px dashed #f1f2f6; white-space:pre-wrap; word-break:break-word; }
+.source-line:last-child { border-bottom:none; }
+.source-line.important { background:#fffdf2; border-left:3px solid #fdcb6e; padding-left:8px; }
+.source-table-wrap { overflow:auto; max-height:360px; border:1px solid #edf0f3; border-radius:6px; margin:6px 0 10px; }
+.source-table { width:100%; border-collapse:collapse; font-size:12px; min-width:560px; }
+.source-table th, .source-table td { border:1px solid #edf0f3; padding:5px 7px; text-align:left; vertical-align:top; white-space:pre-wrap; }
+.source-table th { background:#f3f6ff; color:#4b5563; font-weight:650; position:sticky; top:0; }
+.source-table-note { color:var(--muted); font-size:11px; margin:-4px 0 8px; }
 
 /* Field groups */
 .field-group { margin-bottom:20px; }
@@ -27542,6 +27563,131 @@ function renderFieldRow(p, f, isExtra) {
   </div>`;
 }
 
+function getSourcePaths(p) {
+  const paths = [];
+  if (Array.isArray(p.source_files)) paths.push(...p.source_files);
+  if (p.data && Array.isArray(p.data.source_files)) paths.push(...p.data.source_files);
+  return [...new Set(paths.filter(Boolean))];
+}
+
+function getEmbeddableSourceUrl(paths) {
+  return (paths || []).find(path => /^https?:\/\//i.test(path) || /^\/[^/].*\.pdf($|\?)/i.test(path)) || '';
+}
+
+function getSourceKind(p) {
+  const name = String(p.file_name || '').toLowerCase();
+  const type = String(p.source_type || '').toLowerCase();
+  if (name.endsWith('.pdf') || type === 'pdf') return 'PDF';
+  if (name.endsWith('.xlsx') || name.endsWith('.xls') || type.includes('sheet') || type.includes('xls')) return 'Excel';
+  if (name.endsWith('.zip')) return 'ZIP';
+  if (name.endsWith('.doc') || name.endsWith('.docx')) return 'Word';
+  return type ? type.toUpperCase() : '文档';
+}
+
+function isPdfExtractionFailed(p, text) {
+  return /\.pdf$/i.test(p.file_name || '') && /pdf无可抽取文本|扫描件|图片版|OCR|未稳定识别/.test(text || '');
+}
+
+function sourceImportantLine(line) {
+  return /(销售日期|出票日期|航班日期|旅行日期|适用日期|产品代码|PAT[:：]?A|运价基础|舱位|航线|退票|变更|签转|渠道|证件|年龄|直减|折扣|金额|票证)/i.test(line || '');
+}
+
+function splitSourceSections(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const sections = [];
+  let current = { title: '正文', lines: [] };
+  const push = () => {
+    if (current.lines.join('').trim()) sections.push(current);
+  };
+  lines.forEach(line => {
+    const m = line.match(/^={3,}\s*(.*?)\s*={3,}$/);
+    if (m) {
+      push();
+      current = { title: m[1] || '片段', lines: [] };
+    } else {
+      current.lines.push(line);
+    }
+  });
+  push();
+  return sections.length ? sections : [{ title: '正文', lines }];
+}
+
+function renderSourceLines(lines) {
+  let html = '';
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i] && lines[i].includes('\t')) {
+      const tableLines = [];
+      while (i < lines.length && lines[i] && lines[i].includes('\t')) tableLines.push(lines[i++]);
+      html += renderSourceTable(tableLines);
+      continue;
+    }
+    const line = lines[i++];
+    if (!line || !line.trim()) {
+      html += '<div class="source-line" style="border-bottom:none;height:8px"></div>';
+      continue;
+    }
+    const cls = sourceImportantLine(line) ? ' source-line important' : ' source-line';
+    html += `<div class="${cls.trim()}">${escapeHtml(line)}</div>`;
+  }
+  return html;
+}
+
+function renderSourceTable(tableLines) {
+  const rows = tableLines.map(line => line.split('\t').map(cell => cell.trim()));
+  const maxCols = Math.min(Math.max(...rows.map(r => r.length)), 14);
+  const normalized = rows.map(r => r.slice(0, maxCols));
+  const header = normalized[0] || [];
+  const body = normalized.slice(1, 31);
+  let html = '<div class="source-table-wrap"><table class="source-table"><thead><tr>';
+  for (let c = 0; c < maxCols; c++) html += `<th>${escapeHtml(header[c] || `列${c + 1}`)}</th>`;
+  html += '</tr></thead><tbody>';
+  body.forEach(row => {
+    html += '<tr>';
+    for (let c = 0; c < maxCols; c++) html += `<td>${escapeHtml(row[c] || '')}</td>`;
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  if (rows.length > 31) html += `<div class="source-table-note">表格较长，仅展示前 30 行；完整内容请以原文件或原始抽取文本为准。</div>`;
+  return html;
+}
+
+function renderSourceDocument(p) {
+  const text = String(p.source_text || '').trim();
+  const kind = getSourceKind(p);
+  const paths = getSourcePaths(p);
+  const embeddableUrl = /\.pdf$/i.test(p.file_name || '') ? getEmbeddableSourceUrl(paths) : '';
+  const failedPdf = isPdfExtractionFailed(p, text);
+  let html = `<div class="source-summary">
+    <span class="source-pill">${escapeHtml(kind)}</span>
+    <span class="source-pill ${failedPdf ? 'warn' : 'ok'}">${failedPdf ? '需要 OCR/人工查看' : '已抽取文本'}</span>
+    <span class="source-pill">${text ? `${text.length} 字` : '无正文文本'}</span>
+  </div>`;
+  if (paths.length) {
+    html += `<div class="source-paths">源文件：${paths.map(escapeHtml).join('<br>')}</div>`;
+  }
+  if (embeddableUrl) {
+    html += `<iframe class="source-pdf-frame" src="${escapeHtml(embeddableUrl)}"></iframe>`;
+  }
+  if (!text || failedPdf) {
+    html += `<div class="source-empty-card">
+      <div class="title">PDF 原文未稳定抽取</div>
+      <div>${escapeHtml(text || '当前记录没有可展示的原文文本。')}</div>
+      <div style="margin-top:8px;color:var(--muted)">原因通常是扫描件/图片版 PDF，公网 Render 也无法读取你本机的 /Users/... 文件路径。需要把 PDF 文件上传到站点可访问存储后，再接入 OCR 抽取。</div>
+    </div>`;
+    return html;
+  }
+  const sections = splitSourceSections(text);
+  html += sections.map((section, idx) => {
+    const lineCount = section.lines.filter(x => x.trim()).length;
+    return `<details class="source-section" ${idx < 2 ? 'open' : ''}>
+      <summary><span>${escapeHtml(section.title || `片段 ${idx + 1}`)}</span><span class="hint">${lineCount} 行</span></summary>
+      <div class="source-section-body">${renderSourceLines(section.lines)}</div>
+    </details>`;
+  }).join('');
+  return html;
+}
+
 function renderReview(main) {
   const p = appState.policies.find(x => x.id === appState.currentFileId);
   if (!p) {
@@ -27583,7 +27729,7 @@ function renderReview(main) {
     </div>`;
   }
 
-  const sourceText = (p.source_text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const sourceHtml = renderSourceDocument(p);
 
   // Status badge
   const statusInfo = getStatusInfo(p);
@@ -27616,7 +27762,7 @@ function renderReview(main) {
         <h4>📄 原始文件 — ${escapeHtml(p.file_name)}${statusBadge}${fileModBadge}</h4>
         <div class="actions-row">${navHtml}</div>
       </div>
-      <div class="source-text">${sourceText}</div>
+      <div class="source-text">${sourceHtml}</div>
     </div>
     <div class="review-right">
       <div class="review-header-actions">
