@@ -28592,6 +28592,12 @@ function applyFeishuFieldsToPolicy(p, fields) {
       p._change_history = nextHistory;
       changed++;
     }
+    nextHistory.forEach(h => {
+      if (!/^删除字段[:：]/.test(h.reason || '')) return;
+      if (!h.field || !p.data || !Object.prototype.hasOwnProperty.call(p.data, h.field)) return;
+      delete p.data[h.field];
+      changed++;
+    });
     if (!p.audit) p.audit = {};
     const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
     if (editedFields.length) p.audit.edited_fields = editedFields;
