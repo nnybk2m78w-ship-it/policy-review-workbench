@@ -77,10 +77,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 /* 字段问题标记 */
 .field-problem .field-value { border-left:3px solid #d63031; padding-left:8px; background:#fff5f5; }
 .field-problem-indicator { display:inline-block; background:#d63031; color:#fff; border-radius:8px; padding:0 5px; font-size:10px; margin-left:6px; cursor:pointer; }
-.field-actions { flex-shrink:0; margin-left:6px; opacity:0; transition:opacity 0.15s; }
+.field-actions { flex-shrink:0; margin-left:6px; opacity:0; transition:opacity 0.15s; display:flex; gap:4px; }
 .field-row:hover .field-actions { opacity:1; }
 .field-problem-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:4px; font-size:13px; cursor:pointer; color:#999; background:transparent; border:1px solid transparent; }
 .field-problem-btn:hover { background:#fff3f3; color:#d63031; border-color:#f5c6c6; }
+.field-delete-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:4px; font-size:13px; cursor:pointer; color:#999; background:transparent; border:1px solid transparent; }
+.field-delete-btn:hover { background:#fff3f3; color:#d63031; border-color:#f5c6c6; }
 
 /* 文件级问题面板 */
 .problems-panel { background:#fff5f5; border:1px solid #f5c6c6; border-radius:8px; padding:12px 14px; margin-bottom:16px; }
@@ -350,7 +352,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <!-- 修改原因弹窗 -->
 <div id="reasonOverlay" class="reason-overlay" style="display:none">
   <div class="reason-modal">
-    <h4>✏️ 填写修改原因</h4>
+    <h4 id="reasonTitle">✏️ 填写修改原因</h4>
     <div class="reason-meta" id="reasonMeta"></div>
     <textarea id="reasonInput" placeholder="请输入修改原因（必填，用于追溯）"></textarea>
     <div class="reason-actions">
@@ -27482,7 +27484,10 @@ function renderFieldRow(p, f, isExtra) {
   let html = `<div class="field-row${modClass}${probClass}">
     <div class="field-label">${escapeHtml(LABELS[f] || f)}${modIndicator}${probIndicator}</div>
     <div class="field-value" ondblclick="startEdit('${jsArg(p.id)}', '${jsArg(f)}')" id="${fieldDomId(f)}">${escapeHtml(displayVal)}${evidence}${customTag}</div>
-    <div class="field-actions"><span class="field-problem-btn" onclick="openProblem('${jsArg(p.id)}','${jsArg(f)}')" title="标记该字段的解析问题">⚠</span></div>
+    <div class="field-actions">
+      <span class="field-problem-btn" onclick="openProblem('${jsArg(p.id)}','${jsArg(f)}')" title="标记该字段的解析问题">⚠</span>
+      <span class="field-delete-btn" onclick="openDeleteField('${jsArg(p.id)}','${jsArg(f)}')" title="删除该字段">×</span>
+    </div>
   </div>`;
   if (isModified) {
     html += `<div class="change-history-panel" id="${changeHistoryDomId(p.id, f)}"></div>`;
@@ -27849,12 +27854,24 @@ function saveEdit(policyId, field) {
 function promptChangeReason(policyId, field, oldVal, newVal) {
   const p = appState.policies.find(x => x.id === policyId);
   const fieldLabel = LABELS[field] || field;
+  const isDelete = pendingEdit && pendingEdit.deleteField;
+  document.getElementById('reasonTitle').textContent = isDelete ? '🗑️ 填写删除原因' : '✏️ 填写修改原因';
   document.getElementById('reasonMeta').innerHTML =
-    `<b>${escapeHtml(fieldLabel)}</b>：<span class="rm-change">${escapeHtml(oldVal || '(空)')}</span> <span class="rm-arrow">→</span> <span class="rm-new">${escapeHtml(newVal || '(空)')}</span><br>` +
+    `<b>${escapeHtml(fieldLabel)}</b>：<span class="rm-change">${escapeHtml(oldVal || '(空)')}</span> <span class="rm-arrow">→</span> <span class="rm-new">${escapeHtml(isDelete ? '(删除字段)' : (newVal || '(空)'))}</span><br>` +
     `<span>文件：${p ? escapeHtml(p.file_name) : ''}</span>`;
   document.getElementById('reasonInput').value = '';
+  document.getElementById('reasonInput').placeholder = isDelete ? '请输入删除原因（必填，用于追溯）' : '请输入修改原因（必填，用于追溯）';
   document.getElementById('reasonOverlay').style.display = 'flex';
   setTimeout(() => document.getElementById('reasonInput').focus(), 50);
+}
+
+function openDeleteField(policyId, field) {
+  const p = appState.policies.find(x => x.id === policyId);
+  if (!p || p.status === 'confirmed') return;
+  const oldVal = String(p.data[field] ?? '');
+  if (!oldVal) return;
+  pendingEdit = { policyId, field, oldVal, newVal: '', deleteField: true };
+  promptChangeReason(policyId, field, oldVal, '');
 }
 
 function cancelReason() {
@@ -27873,11 +27890,11 @@ async function submitReason() {
     return;
   }
 
-  const { policyId, field, oldVal, newVal } = pendingEdit;
+  const { policyId, field, oldVal, newVal, deleteField } = pendingEdit;
   pendingEdit = null;
   document.getElementById('reasonOverlay').style.display = 'none';
 
-  await doSaveField(policyId, field, oldVal, newVal, reason);
+  await doSaveField(policyId, field, oldVal, newVal, deleteField ? `删除字段：${reason}` : reason, { deleteField });
 }
 
 // ===== 问题标记 =====
@@ -27975,10 +27992,11 @@ function removeProblem(policyId, idx) {
 
 function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
   const isAddition = /^新增字段[:：]/.test(reason || '') || normalizeFeishuValue(oldVal) === '';
+  const isDeletion = /^删除字段[:：]/.test(reason || '');
   return {
     field: field,
     field_label: LABELS[field] || field,
-    desc: `${isAddition ? '新增字段' : '字段修改'}：${oldVal || '(空)'} → ${newVal || '(空)'}；原因：${reason || '未填写'}`,
+    desc: `${isDeletion ? '删除字段' : (isAddition ? '新增字段' : '字段修改')}：${oldVal || '(空)'} → ${newVal || '(空)'}；原因：${reason || '未填写'}`,
     created_by: (appState.user && appState.user.name) || '',
     created_at: timeStr,
     auto_from_change: true,
@@ -28114,11 +28132,13 @@ function enqueueFieldSave(task) {
   return fieldSaveQueue;
 }
 
-async function doSaveField(policyId, field, oldVal, newVal, reason) {
+async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
+  const opts = options || {};
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
 
-  p.data[field] = newVal;
+  if (opts.deleteField) delete p.data[field];
+  else p.data[field] = newVal;
 
   // 标记已修改字段
   if (!p.audit) p.audit = {};
@@ -28132,7 +28152,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
     field: field,
     fieldLabel: LABELS[field] || field,
     oldValue: oldVal,
-    newValue: newVal,
+    newValue: opts.deleteField ? '' : newVal,
     time: timeStr,
     user: (appState.user && appState.user.name) || '',
     reason: reason,
@@ -28143,8 +28163,10 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
     p.problems.push(buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr));
   }
 
-  // 保存后清理：若当前值已等于飞书原始值，则移除修改标识
-  refreshEditedFields(p);
+  if (!opts.deleteField) {
+    // 保存后清理：若当前值已等于飞书原始值，则移除修改标识
+    refreshEditedFields(p);
+  }
 
   saveState();
   render();
@@ -28160,13 +28182,14 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
         fieldKey: field,
         newValue: newVal,
         reason: reason,
+        deleteField: !!opts.deleteField,
         changeEntry: {
           time: timeStr,
           user: (appState.user && appState.user.name) || '',
           field: field,
           fieldLabel: LABELS[field] || field,
           oldValue: oldVal,
-          newValue: newVal,
+          newValue: opts.deleteField ? '' : newVal,
           reason: reason,
         },
       }),

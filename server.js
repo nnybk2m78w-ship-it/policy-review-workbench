@@ -426,6 +426,25 @@ function setParsedField(parsed, key, value) {
   return changed;
 }
 
+function deleteParsedField(parsed, key) {
+  if (!parsed || !key) return false;
+  let changed = false;
+  const applyOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      delete obj[key];
+      changed = true;
+    }
+    if (obj.data && typeof obj.data === 'object' && Object.prototype.hasOwnProperty.call(obj.data, key)) {
+      delete obj.data[key];
+      changed = true;
+    }
+  };
+  if (Array.isArray(parsed)) parsed.forEach(applyOne);
+  else applyOne(parsed);
+  return changed;
+}
+
 function getParsedValue(parsed, key) {
   if (!parsed || !key) return '';
   const first = Array.isArray(parsed) ? parsed[0] : parsed;
@@ -916,7 +935,7 @@ app.post('/api/reopen', async (req, res) => {
 
 // ---- 保存字段修改（含修改原因 + 修改历史 + 已修改标识） ----
 app.post('/api/save-field', async (req, res) => {
-  const { recordId, fieldLabel, fieldKey: requestedFieldKey, newValue, reason, changeEntry } = req.body;
+  const { recordId, fieldLabel, fieldKey: requestedFieldKey, newValue, reason, changeEntry, deleteField } = req.body;
 
   if (!recordId) {
     return res.status(400).json({ success: false, error: '缺少 recordId' });
@@ -963,9 +982,10 @@ app.post('/api/save-field', async (req, res) => {
     existingHistory.push(entry);
     const historyText = formatChangeHistory(existingHistory);
     const isFieldAddition = /^新增字段[:：]/.test(entry.reason || '') || isBlankish(entry.oldValue);
+    const isFieldDeletion = !!deleteField || /^删除字段[:：]/.test(entry.reason || '');
     const isEffectiveChange = normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue);
     const autoProblemLine = isEffectiveChange
-      ? `[${entry.time}] ${entry.user || (user ? user.name : '')} | ${entry.fieldLabel || fieldLabel || fieldKey}: ${isFieldAddition ? '新增字段' : '字段修改'}：${entry.oldValue || '(空)'} → ${entry.newValue || '(空)'}；原因：${entry.reason || '未填写'}`
+      ? `[${entry.time}] ${entry.user || (user ? user.name : '')} | ${entry.fieldLabel || fieldLabel || fieldKey}: ${isFieldDeletion ? '删除字段' : (isFieldAddition ? '新增字段' : '字段修改')}：${entry.oldValue || '(空)'} → ${entry.newValue || '(空)'}；原因：${entry.reason || '未填写'}`
       : '';
 
     // 更新飞书字段（仅更新表格中实际存在的字段）
@@ -983,7 +1003,9 @@ app.post('/api/save-field', async (req, res) => {
     }
 
     if (sourceParsed && fieldKey) {
-      const changedJson = setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '');
+      const changedJson = deleteField
+        ? deleteParsedField(sourceParsed, fieldKey)
+        : setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '');
       if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
         fields[jsonFieldName] = stringifyJsonField(sourceParsed);
       }
