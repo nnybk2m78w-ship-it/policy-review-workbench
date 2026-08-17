@@ -501,6 +501,12 @@ function inferDateRangeFromTitle(text, fieldKey) {
 
 function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
   const text = `${fieldKey} ${fieldLabel || ''} ${reason || ''} ${newValue || ''}`;
+  if (fieldKey === 'product_type' && /成人|儿童|CH|PAT[:：]?A/i.test(text) && /PAT[:：]?A/i.test(text)) {
+    return {
+      type: '自营PAT指令完整性规则',
+      rule: '自营场景 product_type 必须完整保留成人和儿童 PAT 指令；原文同时出现成人 PAT:A、儿童 PAT:A*CH 等指令时，应同时输出成人与儿童指令，不得只保留其中一项。',
+    };
+  }
   if (/证件|身份证|年龄|青年|长者|银发|学生/.test(text) && fieldKey === 'document_restrictions') {
     return {
       type: '年龄限制产品证件默认规则',
@@ -541,6 +547,12 @@ function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetPar
     const current = getParsedValue(targetParsed, fieldKey);
     if (!/旗舰店/.test(scenario || targetText)) return null;
     if (!/PAT[:：]?A|成人[:：]?PAT|出票指令|运价计算/i.test(current)) return null;
+    return newValue;
+  }
+  if (ruleType === '自营PAT指令完整性规则') {
+    const scenario = getParsedValue(targetParsed, 'scenario');
+    if (/旗舰店/.test(scenario || targetText)) return null;
+    if (!/PAT[:：]?A|出票指令|运价计算|成人|儿童|CH/i.test(targetText)) return null;
     return newValue;
   }
   if (ruleType === '次卡日期完整性规则') {
