@@ -221,6 +221,44 @@ async function updateFeishuRecord(recordId, fields) {
   return data;
 }
 
+// ---- 创建飞书记录 ----
+async function createFeishuRecord(fields) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${BASE_TOKEN}/tables/${TABLE_ID}/records`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields }),
+  });
+
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`创建飞书记录失败: ${data.msg} (code=${data.code})`);
+  }
+  return data.data.record;
+}
+
+// ---- 删除飞书记录 ----
+async function deleteFeishuRecord(recordId) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${BASE_TOKEN}/tables/${TABLE_ID}/records/${recordId}`;
+
+  const resp = await fetch(url, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`删除飞书记录失败: ${data.msg} (code=${data.code})`);
+  }
+  return data;
+}
+
 // ---- 读取飞书记录 ----
 async function getFeishuRecord(recordId) {
   const token = await getUserAccessToken();
@@ -1166,6 +1204,106 @@ app.get('/api/statuses', async (req, res) => {
     res.json({ success: true, count: Object.keys(statuses).length, statuses });
   } catch (err) {
     console.error(`[状态同步] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+function requireAdminConfirm(req, res, expected) {
+  const confirm = (req.body && req.body.confirm) || req.query.confirm || '';
+  if (confirm !== expected) {
+    res.status(400).json({ success: false, error: '缺少或错误的确认短语' });
+    return false;
+  }
+  return true;
+}
+
+function filterKnownFields(fields, knownFields) {
+  const filtered = {};
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    if (knownFields.includes(key)) filtered[key] = value;
+  });
+  return filtered;
+}
+
+async function runLimited(items, limit, worker) {
+  const results = [];
+  let index = 0;
+  async function next() {
+    while (index < items.length) {
+      const currentIndex = index++;
+      try {
+        results[currentIndex] = await worker(items[currentIndex], currentIndex);
+      } catch (e) {
+        results[currentIndex] = { success: false, error: e.message };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
+  return results;
+}
+
+// ---- 管理接口：分批清空飞书记录 ----
+// 用于重新解析上传前清理旧审核任务。必须传确认短语，避免误触。
+app.post('/api/admin/clear-records', async (req, res) => {
+  if (!requireAdminConfirm(req, res, 'DELETE_ALL_POLICY_RECORDS')) return;
+
+  try {
+    const limit = Math.max(1, Math.min(parseInt(req.body.limit || '80', 10) || 80, 120));
+    const records = await listAllFeishuRecords();
+    const target = records.slice(0, limit);
+    const results = await runLimited(target, 8, async item => {
+      await deleteFeishuRecord(item.recordId);
+      return { success: true, recordId: item.recordId };
+    });
+    const deleted = results.filter(x => x && x.success).length;
+    const errors = results.filter(x => x && !x.success);
+    res.json({
+      success: errors.length === 0,
+      deleted,
+      errors,
+      before: records.length,
+      remaining_estimate: Math.max(records.length - deleted, 0),
+    });
+  } catch (err) {
+    console.error(`[清空记录] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+// ---- 管理接口：批量导入新解析任务 ----
+app.post('/api/admin/import-records', async (req, res) => {
+  if (!requireAdminConfirm(req, res, 'IMPORT_POLICY_RECORDS')) return;
+
+  try {
+    const records = Array.isArray(req.body.records) ? req.body.records : [];
+    if (!records.length) {
+      return res.status(400).json({ success: false, error: 'records 为空' });
+    }
+    const tableFields = await ensureTableFields();
+    const created = [];
+    for (const item of records) {
+      const fields = filterKnownFields(item.fields || item, tableFields);
+      if (!fields['文件名称']) {
+        throw new Error('导入记录缺少 文件名称');
+      }
+      const record = await createFeishuRecord(fields);
+      created.push({
+        recordId: record.record_id,
+        fields: record.fields || fields,
+        fileName: fields['文件名称'],
+      });
+    }
+    res.json({ success: true, count: created.length, records: created });
+  } catch (err) {
+    console.error(`[导入记录] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
     } else {
