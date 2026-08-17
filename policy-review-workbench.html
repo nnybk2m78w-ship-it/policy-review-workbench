@@ -17,6 +17,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .header-center { flex:1; display:flex; flex-direction:column; gap:6px; max-width:420px; min-width:200px; }
 .stat-chips { display:flex; gap:8px; }
 .stat-chip { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); background:#f5f6fa; border:1px solid var(--border); border-radius:12px; padding:2px 10px; }
+.stat-chip.clickable { cursor:pointer; user-select:none; transition:all 0.15s; }
+.stat-chip.clickable:hover { background:#eef2ff; border-color:var(--primary); color:var(--primary); }
+.stat-chip.active-filter { background:#e8fff7; border-color:var(--success); color:#008f72; box-shadow:0 1px 4px rgba(0,184,148,0.18); }
 .stat-chip b { font-weight:600; }
 .stat-chip.stat-reviewing b { color:#0984e3; }
 .stat-chip.stat-problem b { color:#d63031; }
@@ -324,7 +327,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <div class="stat-chips">
       <span class="stat-chip stat-reviewing" id="statReviewing" title="待审核文件数">待审 <b>0</b></span>
       <span class="stat-chip stat-problem" id="statProblem" title="标记了解析问题的文件数">有问题 <b>0</b></span>
-      <span class="stat-chip stat-confirmed" id="statConfirmed" title="已确认文件数">已确认 <b>0</b></span>
+      <span class="stat-chip stat-confirmed clickable" id="statConfirmed" title="点击只看已确认文件" onclick="toggleStatusFilter('confirmed')">已确认 <b>0</b></span>
     </div>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
   </div>
@@ -26991,6 +26994,7 @@ let appState = {
   sidebarQuery: '',        // 侧边栏搜索关键词
   sidebarCat: '03_自营',    // 当前一级分类 Tab
   subFilter: '',           // 二级航司只看过滤
+  statusFilter: '',        // 快速状态过滤：confirmed
 };
 
 // Load from localStorage — merge status/edits INTO fresh REVIEW_POLICIES data
@@ -27000,6 +27004,7 @@ if (saved) {
     const parsed = JSON.parse(saved);
     appState.currentFileId = parsed.currentFileId || null;
     appState.currentView = parsed.currentView || 'review';
+    appState.statusFilter = parsed.statusFilter || '';
     // Merge: use REVIEW_POLICIES as base, carry over status/edits from saved state
     if (parsed.policies) {
       const savedById = new Map(parsed.policies.map(p => [p.id, p]));
@@ -27030,6 +27035,7 @@ function saveState() {
     policies: appState.policies,
     currentFileId: appState.currentFileId,
     currentView: appState.currentView,
+    statusFilter: appState.statusFilter || '',
   }));
 }
 
@@ -27098,6 +27104,12 @@ function renderSidebarList() {
   const query = appState.sidebarQuery.trim().toLowerCase();
 
   let html = '';
+  if (appState.statusFilter === 'confirmed') {
+    const n = appState.policies.filter(p =>
+      p.status === 'confirmed' &&
+      (p.category || '03_自营') === (appState.sidebarCat || '03_自营')).length;
+    html += `<div class="sub-filter-bar">仅显示：已确认文件 (${n}) <button class="sub-filter-clear" onclick="clearStatusFilter()" title="显示全部状态">✕</button></div>`;
+  }
   // 航司只看过滤提示条
   if (appState.subFilter) {
     const sub = appState.subFilter;
@@ -27132,6 +27144,11 @@ function policyMatches(p, q) {
     d.product_type, d.pat, d.cabin,
   ].filter(Boolean).join(' ').toLowerCase();
   return haystack.includes(String(q).toLowerCase());
+}
+
+function policyMatchesStatusFilter(p) {
+  if (appState.statusFilter === 'confirmed') return p.status === 'confirmed';
+  return true;
 }
 
 function policyDisplayKey(p) {
@@ -27172,6 +27189,7 @@ function renderSearchResults(q) {
   const subFilter = appState.subFilter;
   const matches = appState.policies.filter(p =>
     policyMatches(p, q) &&
+    policyMatchesStatusFilter(p) &&
     (!subFilter || (p.subcategory || '未标注航司') === subFilter));
   const displayMatches = dedupePoliciesForDisplay(matches);
   if (displayMatches.length === 0) {
@@ -27205,6 +27223,7 @@ function renderGroups() {
     const sub = p.subcategory || '未标注航司';
     if (c !== cat) return;
     if (subFilter && sub !== subFilter) return;
+    if (!policyMatchesStatusFilter(p)) return;
     if (!groups[sub]) groups[sub] = [];
     groups[sub].push(p);
   });
@@ -27229,13 +27248,14 @@ function renderGroups() {
   sortedSubs.forEach(sub => {
     const items = groups[sub];
     const confirmed = items.filter(p => p.status === 'confirmed');
-    const unconfirmed = items.filter(p => p.status !== 'confirmed');
+    const confirmedOnly = appState.statusFilter === 'confirmed';
+    const unconfirmed = confirmedOnly ? [] : items.filter(p => p.status !== 'confirmed');
     const subKey = cat + '||' + sub;
     const subActive = items.some(p => p.id === appState.currentFileId);
     const subFiltered = subFilter === sub;
 
     // 二级默认收起；当前文件所在组、只看过滤的组强制展开；手动展开的组持久化
-    const isOpen = subActive || subFiltered || expanded.has(subKey);
+    const isOpen = confirmedOnly || subActive || subFiltered || expanded.has(subKey);
 
     html += `<div class="sidebar-subgroup">`;
     html += `<div class="sidebar-subgroup-header${subActive ? ' active' : ''}${isOpen ? '' : ' collapsed'}" onclick="toggleSubgroup(this)" data-subgroup="${subKey}">
@@ -27260,8 +27280,21 @@ function renderGroups() {
       </div>`;
     });
 
-    // 已确认文件：组内折叠，当前文件在其中时自动展开
-    if (confirmed.length > 0) {
+    if (confirmedOnly) {
+      confirmed.forEach(p => {
+        const activeCls = p.id === appState.currentFileId ? ' active' : '';
+        const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
+        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${p.problems.length}</div>` : '';
+        const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
+        const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
+        html += `<div class="file-item confirmed-item${activeCls}" data-confirmed-group="${subKey}" onclick="selectFile('${p.id}')">
+          <div class="name">${escapeHtml(p.file_name)}</div>
+          <div class="sub">${escapeHtml(bizType + (p.data.product_name || ''))}</div>
+          <div class="badge-row"><div class="badge badge-confirmed">✓ 已确认</div>${probBadge}${modBadge}</div>
+          ${byTag}
+        </div>`;
+      });
+    } else if (confirmed.length > 0) {
       const curInConfirmed = confirmed.some(p => p.id === appState.currentFileId);
       html += `<div class="sidebar-confirmed-toggle" onclick="toggleConfirmed('${subKey}')" data-group="${subKey}">
         ▶ 显示 <span class="count">${confirmed.length}</span> 个已确认文件
@@ -27286,7 +27319,7 @@ function renderGroups() {
   });
 
   if (!sortedSubs.length) {
-    html = `<div class="search-empty">该分类暂无文件</div>`;
+    html += `<div class="search-empty">${appState.statusFilter === 'confirmed' ? '该分类暂无已确认文件' : '该分类暂无文件'}</div>`;
   }
   return html;
 }
@@ -27304,6 +27337,13 @@ function clearSidebarSearch() {
 function setSidebarCat(cat) {
   if (appState.sidebarCat === cat) return;
   appState.sidebarCat = cat;
+  if (appState.statusFilter === 'confirmed') {
+    const first = appState.policies.find(p =>
+      p.status === 'confirmed' &&
+      (p.category || '03_自营') === cat &&
+      (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
+    if (first) appState.currentFileId = first.id;
+  }
   // 增量更新 Tab 高亮（不重绘整个侧边栏，保留搜索框焦点）
   document.querySelectorAll('.sidebar-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.cat === cat);
@@ -27335,6 +27375,32 @@ function filterSubgroup(subKey) {
 function clearSubFilter() {
   appState.subFilter = '';
   renderSidebarList();
+}
+
+function toggleStatusFilter(status) {
+  const next = appState.statusFilter === status ? '' : status;
+  appState.statusFilter = next;
+  if (next === 'confirmed') {
+    appState.currentView = 'review';
+    const current = appState.policies.find(p => p.id === appState.currentFileId);
+    const currentVisible = current &&
+      current.status === 'confirmed' &&
+      (current.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+      (!appState.subFilter || (current.subcategory || '未标注航司') === appState.subFilter);
+    if (!currentVisible) {
+      const first = appState.policies.find(p =>
+        p.status === 'confirmed' &&
+        (p.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+        (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
+      if (first) appState.currentFileId = first.id;
+    }
+  }
+  render();
+}
+
+function clearStatusFilter() {
+  appState.statusFilter = '';
+  render();
 }
 
 function toggleConfirmed(group) {
@@ -27652,7 +27718,12 @@ function updateProgress() {
   const sp = document.getElementById('statProblem');
   if (sp) { sp.dataset.prefix = '有问题'; sp.innerHTML = '有问题 <b>' + problem + '</b>'; }
   const sc = document.getElementById('statConfirmed');
-  if (sc) { sc.dataset.prefix = '已确认'; sc.innerHTML = '已确认 <b>' + confirmed + '</b>'; }
+  if (sc) {
+    sc.dataset.prefix = '已确认';
+    sc.innerHTML = '已确认 <b>' + confirmed + '</b>';
+    sc.classList.toggle('active-filter', appState.statusFilter === 'confirmed');
+    sc.title = appState.statusFilter === 'confirmed' ? '当前只看已确认文件，点击取消筛选' : '点击只看已确认文件';
+  }
 
   document.getElementById('progressFill').style.width = pct + '%';
   const seg = document.getElementById('segProblemCount');
