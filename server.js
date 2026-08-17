@@ -344,6 +344,12 @@ function formatChangeHistory(entries) {
     .join('\n');
 }
 
+function appendProblemLine(rawProblemMarks, line) {
+  const lines = normalizeFeishuValue(rawProblemMarks).split('\n').filter(Boolean);
+  if (line && !lines.includes(line)) lines.push(line);
+  return lines.join('\n');
+}
+
 function normalizeChangeEntry(entry, fallback) {
   const src = entry && typeof entry === 'object' ? entry : {};
   return {
@@ -944,12 +950,20 @@ app.post('/api/save-field', async (req, res) => {
 
     existingHistory.push(entry);
     const historyText = formatChangeHistory(existingHistory);
+    const isFieldAddition = /^新增字段[:：]/.test(entry.reason || '') || isBlankish(entry.oldValue);
+    const isEffectiveChange = normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue);
+    const autoProblemLine = isEffectiveChange
+      ? `[${entry.time}] ${entry.user || (user ? user.name : '')} | ${entry.fieldLabel || fieldLabel || fieldKey}: ${isFieldAddition ? '新增字段' : '字段修改'}：${entry.oldValue || '(空)'} → ${entry.newValue || '(空)'}；原因：${entry.reason || '未填写'}`
+      : '';
 
     // 更新飞书字段（仅更新表格中实际存在的字段）
     const fields = {
       '已修改': '是',
       '修改历史': historyText,
     };
+    if (autoProblemLine) {
+      fields['问题标记'] = appendProblemLine(sourceFields['问题标记'], autoProblemLine);
+    }
     if (fieldLabel && state.tableFields && state.tableFields.includes(fieldLabel)) {
       fields[fieldLabel] = newValue !== undefined ? String(newValue) : '';
     } else if (fieldLabel) {

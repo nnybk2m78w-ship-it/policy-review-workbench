@@ -354,9 +354,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <!-- 问题标记弹窗 -->
 <div id="problemOverlay" class="reason-overlay" style="display:none">
   <div class="reason-modal">
-    <h4>⚠️ 标记解析问题</h4>
+    <h4>⚠️ 标记其他解析问题</h4>
     <div class="reason-meta" id="problemMeta"></div>
-    <textarea id="problemInput" placeholder="请描述解析中存在的问题（如：产品名称解析缺失、行李额未识别等）"></textarea>
+    <textarea id="problemInput" placeholder="字段修改和新增字段会自动标记为问题。这里用于记录无法直接通过改字段解决的其他问题。"></textarea>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelProblem()">取消</button>
       <button class="btn-sm btn-sm-danger" onclick="submitProblem()">标记问题</button>
@@ -27463,7 +27463,7 @@ function renderReview(main) {
     : '';
 
   // File-level problem button
-  const problemBtn = `<button class="btn-sm btn-sm-problem" onclick="openProblem('${p.id}','')">⚠ 标记问题</button>`;
+  const problemBtn = `<button class="btn-sm btn-sm-problem" onclick="openProblem('${p.id}','')">⚠ 其他问题</button>`;
   const addFieldBtn = !isConfirmed
     ? `<button class="btn-sm btn-sm-add-field" onclick="openAddField('${p.id}')">＋ 增加字段</button>`
     : '';
@@ -27876,6 +27876,18 @@ function removeProblem(policyId, idx) {
   showToast('问题已标记为解决', 'success');
 }
 
+function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
+  const isAddition = /^新增字段[:：]/.test(reason || '') || normalizeFeishuValue(oldVal) === '';
+  return {
+    field: field,
+    field_label: LABELS[field] || field,
+    desc: `${isAddition ? '新增字段' : '字段修改'}：${oldVal || '(空)'} → ${newVal || '(空)'}；原因：${reason || '未填写'}`,
+    created_by: (appState.user && appState.user.name) || '',
+    created_at: timeStr,
+    auto_from_change: true,
+  };
+}
+
 // ===== 新增字段 =====
 let pendingAddField = null; // { policyId }
 
@@ -27958,6 +27970,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
   if (!p) return;
   const oldAudit = JSON.parse(JSON.stringify(p.audit || {}));
   const oldHistory = JSON.parse(JSON.stringify(p._change_history || []));
+  const oldProblems = JSON.parse(JSON.stringify(p.problems || []));
 
   p.data[field] = newVal;
 
@@ -27978,6 +27991,11 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
     user: (appState.user && appState.user.name) || '',
     reason: reason,
   });
+
+  if (normalizeFeishuValue(oldVal) !== normalizeFeishuValue(newVal)) {
+    if (!p.problems) p.problems = [];
+    p.problems.push(buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr));
+  }
 
   // 保存后清理：若当前值已等于飞书原始值，则移除修改标识
   refreshEditedFields(p);
@@ -28021,6 +28039,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
 	      p.data[field] = oldVal;
 	      p.audit = oldAudit;
 	      p._change_history = oldHistory;
+	      p.problems = oldProblems;
 	      saveState();
 	      render();
 	      showInlineSyncBar('飞书授权已失效，本次字段修改未生效',
@@ -28029,6 +28048,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
 	      p.data[field] = oldVal;
 	      p.audit = oldAudit;
 	      p._change_history = oldHistory;
+	      p.problems = oldProblems;
 	      saveState();
 	      render();
 	      showInlineSyncBar('飞书同步失败: ' + (result.error || '未知错误'),
@@ -28038,6 +28058,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
 	    p.data[field] = oldVal;
 	    p.audit = oldAudit;
 	    p._change_history = oldHistory;
+	    p.problems = oldProblems;
 	    saveState();
 	    render();
 	    showInlineSyncBar('飞书同步失败，本次字段修改未生效',
