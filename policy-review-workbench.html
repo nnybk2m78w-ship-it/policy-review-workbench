@@ -27826,7 +27826,12 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
     });
 	    const result = await resp.json();
 	    if (result.success) {
-	      showToast('已保存并同步到飞书', 'success');
+        const autoN = result.autoCorrection && Number(result.autoCorrection.applied || 0);
+        if (autoN > 0) {
+          showToast(`已保存，并自动矫正 ${autoN} 个待审文件`, 'success', 4200);
+        } else {
+          showToast('已保存并同步到飞书', 'success');
+        }
 	      syncStatusesFromServer(false);
 	    } else if (result.needAuth) {
 	      p.data[field] = oldVal;

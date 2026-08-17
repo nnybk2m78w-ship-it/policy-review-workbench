@@ -14,6 +14,79 @@ const APP_ID = process.env.FEISHU_APP_ID || 'cli_aaace35ed1389cde';
 const APP_SECRET = process.env.FEISHU_APP_SECRET;
 const BASE_TOKEN = process.env.FEISHU_BASE_TOKEN || 'EpBObMv3GaBOe3slKxdcOwJwnWc';
 const TABLE_ID = process.env.FEISHU_TABLE_ID || 'tblYWwuBfs3oylsh';
+const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6xFCnAc4gKBnDc';
+const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
+
+const KEY_LABELS = {
+  scenario: '解析场景',
+  business_line: '业务线',
+  channel_note: '渠道备注',
+  carrier: '航司二字码',
+  carrier_name: '航司名称',
+  product_name: '产品名称',
+  product_family: '产品类型',
+  product_type: '出票指令',
+  product_code: '产品代码',
+  product_code_raw: '原始产品码',
+  product_category: '产品类别',
+  flight_type: '航程类型',
+  trip_type_note: '航程备注',
+  od: '航线范围',
+  od_note: '航线备注',
+  booking_cabin: '适用舱位',
+  cabin: '舱位代码',
+  cabin_count: '舱位数量',
+  sale_date: '销售日期',
+  redeem_date: '兑换日期',
+  use_date: '兑换日期(标准)',
+  depart_date: '旅行日期',
+  depart_date_note: '旅行日期备注',
+  advance_purchase_days: '提前购票',
+  ticket_type: '票证类型',
+  ticket_stock: '票证代码',
+  discount_type: '直减类型',
+  discount_per: '直减金额/比例',
+  passenger_type: '旅客类型',
+  customer_limit_group: '客群分组',
+  age_limit: '年龄限制',
+  child_applicable: '儿童适用',
+  baby_applicable: '婴儿适用',
+  realname_required: '实名要求',
+  realname_limit: '实名限制',
+  id_type_restriction: '证件类型限制',
+  document_restrictions: '证件限制',
+  sign_and_transfer_rules: '签转规则',
+  refund_rules: '退票规则',
+  refund_change_note: '退改说明',
+  change_rules: '变更规则',
+  commission_rate: '代理费率',
+  rounding_rule: '取整规则',
+  fc_fn_fp_note: 'FC/FN/FP备注',
+  manual_confirm_fields: '人工确认项',
+  office_scope: 'OFFICE范围',
+  office_count: 'OFFICE数量',
+  route_row_count: '航线行数',
+  unique_route_count: '唯一航线数',
+  flight_count: '航班数',
+  amount_tiers: '金额档位',
+  amount_range: '金额范围',
+  price_tiers_count: '价格档位数',
+  top_5_hubs: 'TOP5枢纽',
+  usage_times: '使用次数',
+  travel_class: '舱等',
+  product_show: '权益卡展示文案',
+  json_count: '拆分JSON数',
+  use_limit: '兑换限制',
+  use_begin: '兑换开启时间',
+  wether_depart_today: '是否含起飞当日',
+  membership_limit: '会员限制',
+  refund_time: '未兑换退款日期',
+  luggage_amount: '行李额',
+  price_groups_summary: '价格组汇总',
+  use_code: '兑换标识',
+};
+const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([key, label]) => [label, key]));
+const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 
 // ---- Token 存储 (文件 + 环境变量双备份) ----
 const TOKEN_FILE = path.join(__dirname, '.feishu_tokens.json');
@@ -271,6 +344,353 @@ function formatChangeHistory(entries) {
     .join('\n');
 }
 
+function normalizeFeishuValue(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) {
+    return value.map(normalizeFeishuValue).filter(Boolean).join('、');
+  }
+  if (typeof value === 'object') {
+    if (value.text !== undefined) return normalizeFeishuValue(value.text);
+    if (value.name !== undefined) return normalizeFeishuValue(value.name);
+    if (value.value !== undefined) return normalizeFeishuValue(value.value);
+    if (value.link !== undefined) return normalizeFeishuValue(value.link);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function getJsonFieldName(fields) {
+  if (!fields) return '';
+  return JSON_FIELD_CANDIDATES.find(name => Object.prototype.hasOwnProperty.call(fields, name)) || '';
+}
+
+function parseJsonField(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return null;
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    const match = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch (_) { /* ignore */ }
+    }
+  }
+  return null;
+}
+
+function stringifyJsonField(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function setParsedField(parsed, key, value) {
+  if (!parsed || !key) return false;
+  let changed = false;
+  const applyOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (normalizeFeishuValue(obj[key]) !== normalizeFeishuValue(value)) {
+      obj[key] = value;
+      changed = true;
+    }
+    if (obj.data && typeof obj.data === 'object' && normalizeFeishuValue(obj.data[key]) !== normalizeFeishuValue(value)) {
+      obj.data[key] = value;
+      changed = true;
+    }
+  };
+  if (Array.isArray(parsed)) parsed.forEach(applyOne);
+  else applyOne(parsed);
+  return changed;
+}
+
+function getParsedValue(parsed, key) {
+  if (!parsed || !key) return '';
+  const first = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!first || typeof first !== 'object') return '';
+  if (first[key] !== undefined) return normalizeFeishuValue(first[key]);
+  if (first.data && first.data[key] !== undefined) return normalizeFeishuValue(first.data[key]);
+  return '';
+}
+
+function appendManualNote(parsed, note) {
+  if (!parsed || !note) return false;
+  const appendOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return false;
+    const prev = normalizeFeishuValue(obj.manual_confirm_fields);
+    if (prev.includes(note)) return false;
+    obj.manual_confirm_fields = prev ? `${prev}；${note}` : note;
+    return true;
+  };
+  if (Array.isArray(parsed)) return parsed.map(appendOne).some(Boolean);
+  return appendOne(parsed);
+}
+
+function isPendingReview(fields) {
+  const st = normalizeFeishuValue(fields && fields['审核状态']);
+  return st !== '已确认';
+}
+
+function getFileName(fields, parsed) {
+  return normalizeFeishuValue((fields && (fields['文件名称'] || fields['文件名'])) || getParsedValue(parsed, 'file_name'));
+}
+
+function getPolicyText(fields, parsed) {
+  return [
+    getFileName(fields, parsed),
+    normalizeFeishuValue(fields && (fields['原始文本'] || fields['源文本'] || fields['文件内容'] || fields['解析文本'])),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_name')),
+    normalizeFeishuValue(getParsedValue(parsed, 'scenario')),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_family')),
+  ].filter(Boolean).join('\n');
+}
+
+function isBlankish(value) {
+  const text = normalizeFeishuValue(value).trim();
+  return !text || ['null', 'undefined', '待确认', '需人工确认', '(空)', '空'].includes(text);
+}
+
+function sameScope(sourceParsed, targetParsed) {
+  const sourceScenario = getParsedValue(sourceParsed, 'scenario');
+  const targetScenario = getParsedValue(targetParsed, 'scenario');
+  if (sourceScenario && targetScenario && sourceScenario !== targetScenario) return false;
+
+  const sourceCarrier = getParsedValue(sourceParsed, 'carrier') || getParsedValue(sourceParsed, 'carrier_name');
+  const targetCarrier = getParsedValue(targetParsed, 'carrier') || getParsedValue(targetParsed, 'carrier_name');
+  if (sourceCarrier && targetCarrier && sourceCarrier !== targetCarrier) return false;
+
+  return true;
+}
+
+function inferDateRangeFromTitle(text, fieldKey) {
+  if (!text) return '';
+  const yearMatch = text.match(/(20\d{2})/);
+  if (!yearMatch) return '';
+  const year = Number(yearMatch[1]);
+  const rangeMatch = text.match(/[（(]\s*(\d{1,2})[.\-/月](\d{1,2})日?\s*[-~至—]\s*(\d{1,2})[.\-/月](\d{1,2})日?\s*[）)]/);
+  if (!rangeMatch) return '';
+  const [, sm, sd, em, ed] = rangeMatch.map(String);
+  const start = `${year}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
+  const endYear = Number(em) < Number(sm) ? year + 1 : year;
+  const end = `${endYear}-${em.padStart(2, '0')}-${ed.padStart(2, '0')}`;
+  if (fieldKey === 'sale_date') return `需人工确认至${end}`;
+  return `${start}至${end}`;
+}
+
+function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
+  const text = `${fieldKey} ${fieldLabel || ''} ${reason || ''} ${newValue || ''}`;
+  if (/证件|身份证|年龄|青年|长者|银发|学生/.test(text) && fieldKey === 'document_restrictions') {
+    return {
+      type: '年龄限制产品证件默认规则',
+      rule: '存在年龄限制的供应平台产品，证件限制默认补为居民身份证，除非原文明确允许其他证件。',
+    };
+  }
+  if (/旗舰店|出票指令|PAT[:：]?A|pata/i.test(text) && ['product_type', 'product_code', 'manual_confirm_fields'].includes(fieldKey)) {
+    return {
+      type: '旗舰店忽略出票指令规则',
+      rule: '旗舰店 code 场景不把 PAT:A/出票指令作为录入字段，也不因为缺少出票指令标记待确认。',
+    };
+  }
+  if (/次卡|销售日期|售卖日期|购卡日期|航班日期|旅行日期|出行日期|结束时间|结束日期/.test(text) && ['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) {
+    return {
+      type: '次卡日期完整性规则',
+      rule: '次卡必须分别输出销售/兑换/航班日期；只识别到截止日时不得留空，标题期间可用于补齐旅行日期并保留人工复核说明。',
+    };
+  }
+  return {
+    type: '字段修改原因沉淀规则',
+    rule: `当同场景、同航司待审文件命中相同字段问题，且当前值为空或等于旧值时，按人工修改原因修正「${fieldLabel || fieldKey}」。`,
+  };
+}
+
+function reasonLooksGeneral(reason) {
+  return /默认|统一|所有|只要|一律|应该|必须|不应该|不能|缺少|漏|补齐|字段|规则|旗舰店|次卡/.test(reason || '');
+}
+
+function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetParsed }) {
+  const targetText = getPolicyText(targetFields, targetParsed);
+  if (ruleType === '年龄限制产品证件默认规则') {
+    const age = getParsedValue(targetParsed, 'age_limit');
+    if (!age && !/青年|长者|银发|学生|年龄|周岁|身份证第7-14位/.test(targetText)) return null;
+    return '居民身份证';
+  }
+  if (ruleType === '旗舰店忽略出票指令规则') {
+    const scenario = getParsedValue(targetParsed, 'scenario');
+    const current = getParsedValue(targetParsed, fieldKey);
+    if (!/旗舰店/.test(scenario || targetText)) return null;
+    if (!/PAT[:：]?A|成人[:：]?PAT|出票指令|运价计算/i.test(current)) return null;
+    return newValue;
+  }
+  if (ruleType === '次卡日期完整性规则') {
+    if (!/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(targetText)) return null;
+    const inferred = inferDateRangeFromTitle(targetText, fieldKey);
+    return inferred || null;
+  }
+  return newValue;
+}
+
+async function listAllFeishuRecords() {
+  const token = await getUserAccessToken();
+  const records = [];
+  let offset = 0;
+  const pageSize = 200;
+  let guard = 0;
+  let hasMore = false;
+  do {
+    const url = `https://open.feishu.cn/open-apis/base/v3/bases/${BASE_TOKEN}/tables/${TABLE_ID}/records?limit=${pageSize}&offset=${offset}`;
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    const body = await resp.json();
+    if (body.code !== 0) {
+      throw new Error(`读取记录失败: ${body.msg} (code=${body.code})`);
+    }
+    const inner = body.data || {};
+    const fieldNames = inner.fields || [];
+    const ids = inner.record_id_list || [];
+    const rows = inner.data || [];
+    rows.forEach((row, i) => {
+      const recordId = ids[i];
+      if (!recordId) return;
+      const fields = {};
+      fieldNames.forEach((name, j) => { fields[name] = row[j]; });
+      records.push({ recordId, fields });
+    });
+    hasMore = !!inner.has_more && rows.length > 0;
+    offset += rows.length;
+    guard++;
+  } while (hasMore && guard < 20);
+  return records;
+}
+
+function textDocBlock(content, blockType = 2) {
+  return {
+    block_type: blockType,
+    text: {
+      elements: [
+        { text_run: { content: String(content || ''), text_element_style: {} } },
+      ],
+      style: {},
+    },
+  };
+}
+
+async function appendKnowledgeGraphRecord(record) {
+  if (!KNOWLEDGE_DOC_ID) return { ok: false, skipped: true };
+  try {
+    const token = await getUserAccessToken();
+    const lines = [
+      `版本更新记录｜${record.time || new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      `触发文件：${record.fileName || ''}`,
+      `规则类型：${record.ruleType || ''}`,
+      `字段：${record.fieldLabel || ''}`,
+      `修改：${record.oldValue || '(空)'} -> ${record.newValue || '(空)'}`,
+      `修改原因：${record.reason || ''}`,
+      `优化规则：${record.rule || ''}`,
+      `自动矫正：${record.autoApplied || 0} 份待审核文件`,
+      record.autoFiles && record.autoFiles.length ? `命中文件：${record.autoFiles.join('；')}` : '',
+    ].filter(Boolean);
+    const body = {
+      index: -1,
+      children: [
+        textDocBlock(lines[0], 4),
+        ...lines.slice(1).map(line => textDocBlock(line, 2)),
+      ],
+    };
+    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${KNOWLEDGE_DOC_ID}/blocks/${KNOWLEDGE_DOC_ID}/children`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.code !== 0) {
+      throw new Error(`${data.msg || 'unknown'} (code=${data.code})`);
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn('[知识图谱] 写入版本记录失败:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceParsed, fieldKey, fieldLabel, oldValue, newValue, reason, userName }) {
+  if (!fieldKey || !reasonLooksGeneral(reason)) {
+    return { applied: 0, files: [], skipped: true, reason: '修改原因不是可泛化规则' };
+  }
+
+  const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+  const all = await listAllFeishuRecords();
+  const applied = [];
+
+  for (const item of all) {
+    if (applied.length >= AUTO_CORRECTION_LIMIT) break;
+    if (item.recordId === sourceRecordId) continue;
+    if (!isPendingReview(item.fields)) continue;
+
+    const jsonFieldName = getJsonFieldName(item.fields);
+    const targetParsed = parseJsonField(jsonFieldName ? item.fields[jsonFieldName] : null);
+    if (!targetParsed || !sameScope(sourceParsed, targetParsed)) continue;
+
+    const current = getParsedValue(targetParsed, fieldKey) || normalizeFeishuValue(item.fields[fieldLabel]);
+    const canOverwrite = isBlankish(current) || normalizeFeishuValue(current) === normalizeFeishuValue(oldValue) || rule.type !== '字段修改原因沉淀规则';
+    if (!canOverwrite) continue;
+
+    const autoValue = deriveAutoValue({ ruleType: rule.type, fieldKey, newValue, targetFields: item.fields, targetParsed });
+    if (autoValue === null || autoValue === undefined || normalizeFeishuValue(autoValue) === normalizeFeishuValue(current)) continue;
+
+    const changedJson = setParsedField(targetParsed, fieldKey, autoValue);
+    if (!changedJson) continue;
+    if (rule.type === '次卡日期完整性规则') {
+      appendManualNote(targetParsed, `${fieldLabel}由标题/文件名期间自动补齐，需人工复核`);
+    }
+
+    const rawHistory = item.fields['修改历史'];
+    const history = parseChangeHistory(rawHistory);
+    const entry = {
+      time: new Date().toLocaleString('zh-CN', { hour12: false }),
+      user: 'AUTO_RULE',
+      fieldLabel,
+      oldValue: current,
+      newValue: autoValue,
+      reason: `自动矫正：基于「${getFileName(sourceFields, sourceParsed) || sourceRecordId}」的修改原因「${reason}」；规则=${rule.type}`,
+    };
+    history.push(entry);
+
+    const fieldsToUpdate = {
+      '已修改': '是',
+      '修改历史': formatChangeHistory(history),
+    };
+    if (jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
+      fieldsToUpdate[jsonFieldName] = stringifyJsonField(targetParsed);
+    }
+    if (fieldLabel && state.tableFields && state.tableFields.includes(fieldLabel)) {
+      fieldsToUpdate[fieldLabel] = normalizeFeishuValue(autoValue);
+    }
+    if (rule.type === '次卡日期完整性规则' && state.tableFields && state.tableFields.includes('人工确认项')) {
+      fieldsToUpdate['人工确认项'] = getParsedValue(targetParsed, 'manual_confirm_fields');
+    }
+
+    await updateFeishuRecord(item.recordId, fieldsToUpdate);
+    applied.push({
+      recordId: item.recordId,
+      fileName: getFileName(item.fields, targetParsed),
+      newValue: normalizeFeishuValue(autoValue),
+    });
+  }
+
+  return {
+    applied: applied.length,
+    files: applied.map(x => x.fileName || x.recordId),
+    ruleType: rule.type,
+    rule: rule.rule,
+  };
+}
+
 // ---- 中间件 ----
 app.use(express.json());
 
@@ -479,12 +899,20 @@ app.post('/api/save-field', async (req, res) => {
     let user = null;
     try { user = await getCurrentUser(); } catch (e) { /* 忽略 */ }
 
-    // 读取现有记录，合并修改历史
+    // 读取现有记录，合并修改历史，并同步修正解析JSON
     let existingHistory = [];
+    let record = null;
+    let sourceFields = {};
+    let sourceParsed = null;
+    let jsonFieldName = '';
+    const fieldKey = FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
     try {
-      const record = await getFeishuRecord(recordId);
-      const rawHistory = (record.fields || {})['修改历史'];
+      record = await getFeishuRecord(recordId);
+      sourceFields = record.fields || {};
+      const rawHistory = sourceFields['修改历史'];
       existingHistory = parseChangeHistory(rawHistory);
+      jsonFieldName = getJsonFieldName(sourceFields);
+      sourceParsed = parseJsonField(jsonFieldName ? sourceFields[jsonFieldName] : null);
     } catch (e) {
       console.warn('[保存字段] 读取现有历史失败，从头开始:', e.message);
     }
@@ -514,10 +942,66 @@ app.post('/api/save-field', async (req, res) => {
       console.warn(`[保存字段] 表格中不存在字段「${fieldLabel}」，仅记录修改历史`);
     }
 
+    if (sourceParsed && fieldKey) {
+      const changedJson = setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '');
+      if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
+        fields[jsonFieldName] = stringifyJsonField(sourceParsed);
+      }
+    }
+
     await updateFeishuRecord(recordId, fields);
 
-    console.log(`[保存字段] ✓ ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条`);
-    res.json({ success: true, historyCount: existingHistory.length });
+    let autoCorrection = { applied: 0, files: [] };
+    const knowledge = {
+      ok: false,
+      skipped: true,
+    };
+    try {
+      if (sourceParsed) {
+        autoCorrection = await autoCorrectPendingRecords({
+          sourceRecordId: recordId,
+          sourceFields,
+          sourceParsed,
+          fieldKey,
+          fieldLabel,
+          oldValue: entry.oldValue || '',
+          newValue: newValue !== undefined ? String(newValue) : '',
+          reason: reason || '',
+          userName: user ? user.name : '',
+        });
+      }
+    } catch (e) {
+      autoCorrection = { applied: 0, files: [], error: e.message };
+      console.warn('[自动矫正] 失败:', e.message);
+    }
+
+    try {
+      const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+      Object.assign(knowledge, await appendKnowledgeGraphRecord({
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+        fileName: getFileName(sourceFields, sourceParsed),
+        fieldLabel,
+        oldValue: entry.oldValue || '',
+        newValue: newValue !== undefined ? String(newValue) : '',
+        reason: reason || '',
+        ruleType: autoCorrection.ruleType || rule.type,
+        rule: autoCorrection.rule || rule.rule,
+        autoApplied: autoCorrection.applied || 0,
+        autoFiles: autoCorrection.files || [],
+      }));
+    } catch (e) {
+      knowledge.ok = false;
+      knowledge.error = e.message;
+      console.warn('[知识图谱] 记录生成失败:', e.message);
+    }
+
+    console.log(`[保存字段] ✓ ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条 自动矫正${autoCorrection.applied || 0}条`);
+    res.json({
+      success: true,
+      historyCount: existingHistory.length,
+      autoCorrection,
+      knowledge,
+    });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
@@ -584,45 +1068,22 @@ app.get('/api/health', (req, res) => {
 // 说明：bitable/v1 列表接口需要 bitable:app 权限（OAuth 授权 scope 常缺失），
 // 改用 base/v3 列表接口（只需 base:record:read），返回列为 record_id_list + fields + data 行数组。
 async function listAllRecordStatuses() {
-  const token = await getUserAccessToken();
   const statuses = {};
-  let offset = 0;
-  const pageSize = 200; // base/v3 列表接口 limit 上限 200
-  let guard = 0;
-  let hasMore = false;
-  do {
-    const url = `https://open.feishu.cn/open-apis/base/v3/bases/${BASE_TOKEN}/tables/${TABLE_ID}/records?limit=${pageSize}&offset=${offset}`;
-    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-    const body = await resp.json();
-    if (body.code !== 0) {
-      throw new Error(`读取记录失败: ${body.msg} (code=${body.code})`);
-    }
-    const inner = body.data || {};
-    const fields = inner.fields || [];
-    const ids = inner.record_id_list || [];
-    const rows = inner.data || [];
-    rows.forEach((row, i) => {
-      const recordId = ids[i];
-      if (!recordId) return;
-      const f = {};
-      fields.forEach((name, j) => { f[name] = row[j]; });
-      let st = f['审核状态'];
-      if (Array.isArray(st)) st = st[0];
-      if (st && typeof st === 'object') st = st.text || st.name || '';
-      statuses[recordId] = {
-        status: st === '已确认' ? 'confirmed' : 'reviewing',
-        confirmed_by: f['确认人'] || null,
-        confirmed_at: f['确认时间'] || null,
-        edited: f['已修改'] || null,
-        change_history: f['修改历史'] || null,
-        problem_marks: f['问题标记'] || null,
-        fields: f,
-      };
-    });
-    hasMore = !!inner.has_more && rows.length > 0;
-    offset += rows.length;
-    guard++;
-  } while (hasMore && guard < 20);
+  const records = await listAllFeishuRecords();
+  records.forEach(({ recordId, fields: f }) => {
+    let st = f['审核状态'];
+    if (Array.isArray(st)) st = st[0];
+    if (st && typeof st === 'object') st = st.text || st.name || '';
+    statuses[recordId] = {
+      status: st === '已确认' ? 'confirmed' : 'reviewing',
+      confirmed_by: f['确认人'] || null,
+      confirmed_at: f['确认时间'] || null,
+      edited: f['已修改'] || null,
+      change_history: f['修改历史'] || null,
+      problem_marks: f['问题标记'] || null,
+      fields: f,
+    };
+  });
   return statuses;
 }
 
