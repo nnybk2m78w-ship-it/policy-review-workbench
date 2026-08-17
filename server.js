@@ -991,56 +991,67 @@ app.post('/api/save-field', async (req, res) => {
 
     await updateFeishuRecord(recordId, fields);
 
-    let autoCorrection = { applied: 0, files: [] };
-    const knowledge = {
-      ok: false,
-      skipped: true,
-    };
-    try {
-      if (sourceParsed) {
-        autoCorrection = await autoCorrectPendingRecords({
-          sourceRecordId: recordId,
-          sourceFields,
-          sourceParsed,
-          fieldKey,
-          fieldLabel,
-          oldValue: entry.oldValue || '',
-          newValue: newValue !== undefined ? String(newValue) : '',
-          reason: reason || '',
-          userName: user ? user.name : '',
-        });
-      }
-    } catch (e) {
-      autoCorrection = { applied: 0, files: [], error: e.message };
-      console.warn('[自动矫正] 失败:', e.message);
-    }
-
-    try {
-      const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
-      Object.assign(knowledge, await appendKnowledgeGraphRecord({
-        time: new Date().toLocaleString('zh-CN', { hour12: false }),
-        fileName: getFileName(sourceFields, sourceParsed),
-        fieldLabel,
-        oldValue: entry.oldValue || '',
-        newValue: newValue !== undefined ? String(newValue) : '',
-        reason: reason || '',
-        ruleType: autoCorrection.ruleType || rule.type,
-        rule: autoCorrection.rule || rule.rule,
-        autoApplied: autoCorrection.applied || 0,
-        autoFiles: autoCorrection.files || [],
-      }));
-    } catch (e) {
-      knowledge.ok = false;
-      knowledge.error = e.message;
-      console.warn('[知识图谱] 记录生成失败:', e.message);
-    }
-
-    console.log(`[保存字段] ✓ ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条 自动矫正${autoCorrection.applied || 0}条`);
+    console.log(`[保存字段] ✓ 主记录已保存 ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条，后台继续自动矫正/知识沉淀`);
     res.json({
       success: true,
       historyCount: existingHistory.length,
-      autoCorrection,
-      knowledge,
+      savedToFeishu: true,
+      background: {
+        autoCorrection: !!sourceParsed,
+        knowledge: true,
+      },
+    });
+
+    setImmediate(() => {
+      (async () => {
+        let autoCorrection = { applied: 0, files: [] };
+        const knowledge = {
+          ok: false,
+          skipped: true,
+        };
+        try {
+          if (sourceParsed) {
+            autoCorrection = await autoCorrectPendingRecords({
+              sourceRecordId: recordId,
+              sourceFields,
+              sourceParsed,
+              fieldKey,
+              fieldLabel,
+              oldValue: entry.oldValue || '',
+              newValue: newValue !== undefined ? String(newValue) : '',
+              reason: reason || '',
+              userName: user ? user.name : '',
+            });
+          }
+        } catch (e) {
+          autoCorrection = { applied: 0, files: [], error: e.message };
+          console.warn('[自动矫正] 失败:', e.message);
+        }
+
+        try {
+          const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+          Object.assign(knowledge, await appendKnowledgeGraphRecord({
+            time: new Date().toLocaleString('zh-CN', { hour12: false }),
+            fileName: getFileName(sourceFields, sourceParsed),
+            fieldLabel,
+            oldValue: entry.oldValue || '',
+            newValue: newValue !== undefined ? String(newValue) : '',
+            reason: reason || '',
+            ruleType: autoCorrection.ruleType || rule.type,
+            rule: autoCorrection.rule || rule.rule,
+            autoApplied: autoCorrection.applied || 0,
+            autoFiles: autoCorrection.files || [],
+          }));
+        } catch (e) {
+          knowledge.ok = false;
+          knowledge.error = e.message;
+          console.warn('[知识图谱] 记录生成失败:', e.message);
+        }
+
+        console.log(`[保存字段后台] ✓ ${fieldLabel || ''} 自动矫正${autoCorrection.applied || 0}条 知识图谱${knowledge.ok ? '已写入' : '未写入'}`);
+      })().catch(e => {
+        console.warn('[保存字段后台] 异常:', e.message);
+      });
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);

@@ -28032,16 +28032,20 @@ async function submitAddField() {
   for (const row of rows) {
     if (!LABELS[row.field]) LABELS[row.field] = row.label;
     FIELD_LABEL_TO_KEY[row.label] = row.field;
-    await doSaveField(policyId, row.field, '', row.value, `新增字段：${reason}`);
+    doSaveField(policyId, row.field, '', row.value, `新增字段：${reason}`);
   }
+}
+
+let fieldSaveQueue = Promise.resolve();
+
+function enqueueFieldSave(task) {
+  fieldSaveQueue = fieldSaveQueue.catch(() => {}).then(task);
+  return fieldSaveQueue;
 }
 
 async function doSaveField(policyId, field, oldVal, newVal, reason) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
-  const oldAudit = JSON.parse(JSON.stringify(p.audit || {}));
-  const oldHistory = JSON.parse(JSON.stringify(p._change_history || []));
-  const oldProblems = JSON.parse(JSON.stringify(p.problems || []));
 
   p.data[field] = newVal;
 
@@ -28073,11 +28077,10 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
 
   saveState();
   render();
-  showToast('字段已保存并记录修改原因', 'success');
+  showToast('字段已保存，后台同步中', 'success');
 
-  // 同步到飞书
-  try {
-    const resp = await fetch('/api/save-field', {
+  // 后台同步到飞书。页面先完成修改，慢任务（自动矫正/知识图谱）由后端继续处理。
+  enqueueFieldSave(() => fetch('/api/save-field', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -28096,45 +28099,24 @@ async function doSaveField(policyId, field, oldVal, newVal, reason) {
           reason: reason,
         },
       }),
+    }))
+    .then(resp => resp.json())
+    .then(result => {
+      if (result.success) {
+        showToast('字段已同步到飞书，后台继续沉淀规则', 'success', 2600);
+        syncStatusesFromServer(false);
+      } else if (result.needAuth) {
+        showInlineSyncBar('飞书授权已失效，页面已保留修改，请授权后刷新核对',
+          `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+      } else {
+        showInlineSyncBar('飞书同步失败，页面已保留修改: ' + (result.error || '未知错误'),
+          `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+      }
+    })
+    .catch(() => {
+      showInlineSyncBar('飞书同步失败，页面已保留修改，请稍后刷新核对',
+        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
     });
-	    const result = await resp.json();
-	    if (result.success) {
-        const autoN = result.autoCorrection && Number(result.autoCorrection.applied || 0);
-        if (autoN > 0) {
-          showToast(`已保存，并自动矫正 ${autoN} 个待审文件`, 'success', 4200);
-        } else {
-          showToast('已保存并同步到飞书', 'success');
-        }
-	      syncStatusesFromServer(false);
-	    } else if (result.needAuth) {
-	      p.data[field] = oldVal;
-	      p.audit = oldAudit;
-	      p._change_history = oldHistory;
-	      p.problems = oldProblems;
-	      saveState();
-	      render();
-	      showInlineSyncBar('飞书授权已失效，本次字段修改未生效',
-	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-	    } else {
-	      p.data[field] = oldVal;
-	      p.audit = oldAudit;
-	      p._change_history = oldHistory;
-	      p.problems = oldProblems;
-	      saveState();
-	      render();
-	      showInlineSyncBar('飞书同步失败: ' + (result.error || '未知错误'),
-	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-	    }
-	  } catch (err) {
-	    p.data[field] = oldVal;
-	    p.audit = oldAudit;
-	    p._change_history = oldHistory;
-	    p.problems = oldProblems;
-	    saveState();
-	    render();
-	    showInlineSyncBar('飞书同步失败，本次字段修改未生效',
-	      `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
-	  }
 	}
 
 function cancelEdit() {
