@@ -285,6 +285,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .change-history-item .ch-arrow { color:var(--muted); font-size:11px; }
 .change-history-item .ch-new { color:#27ae60; font-weight:500; font-size:12px; }
 .change-history-item .ch-reason { color:#8e6e00; font-size:11px; margin-top:2px; background:#fdf2d1; border-radius:4px; padding:2px 6px; display:inline-block; }
+.history-list { max-height:60vh; overflow-y:auto; border-top:1px solid #f1f2f6; margin-top:8px; }
+.history-list .change-history-item { padding:10px 0; }
+.history-list .ch-reason { display:block; margin-top:6px; }
 
 /* 修改原因弹窗 */
 .reason-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:999; }
@@ -387,6 +390,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
+    </div>
+  </div>
+</div>
+
+<!-- 修改记录弹窗 -->
+<div id="historyOverlay" class="reason-overlay" style="display:none">
+  <div class="reason-modal">
+    <h4>修改记录</h4>
+    <div class="reason-meta" id="historyMeta"></div>
+    <div class="history-list" id="historyList"></div>
+    <div class="reason-actions">
+      <button class="btn-sm btn-sm-confirm" onclick="closeChangeHistory()">关闭</button>
     </div>
   </div>
 </div>
@@ -26932,8 +26947,7 @@ function getExtraFieldKeys(p) {
     const value = p.data[key];
     return !GROUPED_FIELD_KEYS.has(key) &&
       !EXTRA_FIELD_EXCLUDE.has(key) &&
-      addedFields.has(key) &&
-      editedFields.has(key) &&
+      (addedFields.has(key) || editedFields.has(key) || String(key).startsWith(CUSTOM_FIELD_KEY_PREFIX)) &&
       value !== undefined && value !== null && normalizeFeishuValue(value) !== '';
   });
 }
@@ -27495,7 +27509,7 @@ function renderFieldRow(p, f, isExtra) {
     : '';
   const probClass = fieldProblems.length ? ' field-problem' : '';
   const customTag = isExtra ? '<span class="evidence-tag" title="人工补充或解析JSON额外字段">新增</span>' : '';
-  let html = `<div class="field-row${modClass}${probClass}">
+  return `<div class="field-row${modClass}${probClass}">
     <div class="field-label">${escapeHtml(LABELS[f] || f)}${modIndicator}${probIndicator}</div>
     <div class="field-value" ondblclick="startEdit('${jsArg(p.id)}', '${jsArg(f)}')" id="${fieldDomId(f)}">${escapeHtml(displayVal)}${evidence}${customTag}</div>
     <div class="field-actions">
@@ -27503,10 +27517,6 @@ function renderFieldRow(p, f, isExtra) {
       <span class="field-delete-btn" onclick="openDeleteField('${jsArg(p.id)}','${jsArg(f)}')" title="删除该字段">×</span>
     </div>
   </div>`;
-  if (isModified) {
-    html += `<div class="change-history-panel" id="${changeHistoryDomId(p.id, f)}"></div>`;
-  }
-  return html;
 }
 
 function renderReview(main) {
@@ -28405,23 +28415,17 @@ function dismissSyncBar() {
 }
 
 function toggleChangeHistory(policyId, field) {
-  const historyId = changeHistoryDomId(policyId, field);
-  const panel = document.getElementById(historyId);
-  if (!panel) return;
-  
-  if (panel.classList.contains('visible')) {
-    panel.classList.remove('visible');
-    return;
-  }
-  
   const p = appState.policies.find(x => x.id === policyId);
   if (!p || !p._change_history) return;
-  
   const changes = p._change_history.filter(h => h.field === field);
+  const fieldLabel = LABELS[field] || field;
+  document.getElementById('historyMeta').innerHTML =
+    `<b>${escapeHtml(fieldLabel)}</b><br><span>文件：${escapeHtml(p.file_name || '')}</span>`;
+  const list = document.getElementById('historyList');
   if (changes.length === 0) {
-    panel.innerHTML = '<div style="padding:4px;color:var(--muted)">无修改记录</div>';
+    list.innerHTML = '<div style="padding:12px;color:var(--muted)">无修改记录</div>';
   } else {
-    panel.innerHTML = changes.map(h => 
+    list.innerHTML = changes.map(h =>
       `<div class="change-history-item">
         <div class="ch-head">
           <span class="ch-time">${escapeHtml(h.time)}</span>
@@ -28436,8 +28440,14 @@ function toggleChangeHistory(policyId, field) {
       </div>`
     ).join('');
   }
-  panel.classList.add('visible');
-}function showSyncOverlay(title, msg, fileName, statusTip) {
+  document.getElementById('historyOverlay').style.display = 'flex';
+}
+
+function closeChangeHistory() {
+  document.getElementById('historyOverlay').style.display = 'none';
+}
+
+function showSyncOverlay(title, msg, fileName, statusTip) {
   document.getElementById('syncModalTitle').textContent = title;
   document.getElementById('syncModalMsg').textContent = msg;
   document.getElementById('syncFileName').textContent = fileName ? '📄 ' + fileName : '';
@@ -28680,6 +28690,7 @@ document.addEventListener('keydown', (e) => {
   }
   // Esc：清空搜索 / 关闭弹窗
   if (e.key === 'Escape') {
+    if (document.getElementById('historyOverlay').style.display !== 'none') { closeChangeHistory(); return; }
     if (document.getElementById('problemOverlay').style.display !== 'none') { cancelProblem(); return; }
     if (document.getElementById('reasonOverlay').style.display !== 'none') { cancelReason(); return; }
     const inp = document.getElementById('sbSearchInput');
