@@ -98,11 +98,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm-add-field:hover { background:#00b894; color:#fff; }
 .btn-sm-danger { background:#d63031; color:#fff; border:none; padding:8px 18px; border-radius:4px; cursor:pointer; font-size:13px; }
 .btn-sm-danger:hover { background:#c0392b; }
-.add-field-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
-.add-field-grid label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
-.add-field-grid input, .add-field-grid select, .add-field-value { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
-.add-field-grid input:focus, .add-field-grid select:focus, .add-field-value:focus { border-color:var(--primary); }
-.add-field-value { min-height:70px; resize:vertical; margin-top:10px; }
+.add-field-list { margin-top:10px; border-top:1px solid #f1f2f6; }
+.add-field-row { display:grid; grid-template-columns:130px minmax(0,1fr) 30px; gap:8px; align-items:start; padding:8px 0; border-bottom:1px solid #f1f2f6; }
+.add-field-row input, .add-field-row textarea { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
+.add-field-row input:focus, .add-field-row textarea:focus { border-color:var(--primary); }
+.add-field-row textarea { min-height:38px; resize:vertical; }
+.add-field-plus { width:28px; height:28px; border-radius:50%; border:1px solid #00b894; color:#008f72; background:#fff; cursor:pointer; font-size:18px; line-height:24px; margin-top:2px; }
+.add-field-plus:hover { background:#00b894; color:#fff; }
+.add-field-remove { width:28px; height:28px; border-radius:50%; border:1px solid #dfe6e9; color:#636e72; background:#fff; cursor:pointer; font-size:16px; line-height:24px; margin-top:2px; }
+.add-field-remove:hover { border-color:#d63031; color:#d63031; }
+.add-field-reason { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; resize:vertical; min-height:64px; margin-top:10px; }
+.add-field-reason:focus { border-color:var(--primary); }
 .custom-field-hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
 
 /* 问题清单视图 */
@@ -369,23 +375,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="reason-modal">
     <h4>➕ 增加解析字段</h4>
     <div class="reason-meta" id="addFieldMeta"></div>
-    <div class="add-field-grid">
-      <label>标准字段（可选）
-        <select id="addFieldPreset" onchange="onAddFieldPresetChange()"></select>
-      </label>
-      <label>JSON key
-        <input id="addFieldKey" placeholder="如 sale_date / product_code">
-      </label>
-      <label>字段名称
-        <input id="addFieldLabel" placeholder="如 销售日期 / 产品代码">
-      </label>
-      <label>字段值
-        <input id="addFieldValueShort" placeholder="短值可填这里">
-      </label>
-    </div>
-    <textarea id="addFieldValue" class="add-field-value" placeholder="字段值较长时填这里；短值和长值都填写时，以这里为准"></textarea>
-    <textarea id="addFieldReason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这个字段？证据在哪？）"></textarea>
-    <div class="custom-field-hint">优先选择标准字段；没有合适标准字段时，可输入自定义字段名称和 JSON key。保存后会写入解析JSON、修改历史，并作为后续规则升级依据。</div>
+    <datalist id="addFieldLabelOptions"></datalist>
+    <div class="add-field-list" id="addFieldRows"></div>
+    <textarea id="addFieldReason" class="add-field-reason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这些字段？证据在哪？）"></textarea>
+    <div class="custom-field-hint">每行补一个字段，左侧为字段名称，右侧为字段内容；点击 + 可继续增加字段。优先使用已有标准字段名称，自定义字段会作为临时 JSON key 写入解析结果。</div>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
@@ -26911,10 +26904,17 @@ function mergeParsedJsonIntoPolicy(p, rawJson) {
 }
 
 function getExtraFieldKeys(p) {
+  const addedFields = new Set((p && p._change_history || [])
+    .filter(h => /^新增字段[:：]/.test(h.reason || '') || normalizeFeishuValue(h.oldValue) === '')
+    .map(h => h.field)
+    .filter(Boolean));
+  const editedFields = new Set((p && p.audit && p.audit.edited_fields) || []);
   return Object.keys((p && p.data) || {}).filter(key => {
     const value = p.data[key];
     return !GROUPED_FIELD_KEYS.has(key) &&
       !EXTRA_FIELD_EXCLUDE.has(key) &&
+      addedFields.has(key) &&
+      editedFields.has(key) &&
       value !== undefined && value !== null && normalizeFeishuValue(value) !== '';
   });
 }
@@ -27002,9 +27002,10 @@ if (saved) {
     appState.currentView = parsed.currentView || 'review';
     // Merge: use REVIEW_POLICIES as base, carry over status/edits from saved state
     if (parsed.policies) {
-      const savedMap = new Map(parsed.policies.map(p => [p.file_name, p]));
+      const savedById = new Map(parsed.policies.map(p => [p.id, p]));
+      const savedByFile = new Map(parsed.policies.map(p => [p.file_name, p]));
       appState.policies = REVIEW_POLICIES.map(p => {
-        const savedEntry = savedMap.get(p.file_name);
+        const savedEntry = savedById.get(p.id) || savedByFile.get(p.file_name);
         if (savedEntry) {
           const merged = {
             ...p,
@@ -27133,6 +27134,29 @@ function policyMatches(p, q) {
   return haystack.includes(String(q).toLowerCase());
 }
 
+function policyDisplayKey(p) {
+  const name = String(p.file_name || '').trim().toLowerCase().replace(/\s+/g, '');
+  // 处理导入批次中偶发的近重复文件名，如 2026.3.doc 与 2026.30.doc。
+  return name.replace(/(\d+\.\d)0(?=\.[a-z0-9]+$)/i, '$1');
+}
+
+function policyDisplayScore(p) {
+  return (p.id === appState.currentFileId ? 1000 : 0) +
+    (hasProblems(p) ? 100 : 0) +
+    (hasFileChanges(p) ? 50 : 0) +
+    (p.status === 'confirmed' ? 10 : 0);
+}
+
+function dedupePoliciesForDisplay(list) {
+  const selected = new Map();
+  list.forEach(p => {
+    const key = policyDisplayKey(p);
+    const current = selected.get(key);
+    if (!current || policyDisplayScore(p) > policyDisplayScore(current)) selected.set(key, p);
+  });
+  return list.filter(p => selected.get(policyDisplayKey(p)) === p);
+}
+
 // 高亮关键词（已转义文本上替换）
 function highlightMatch(text, q) {
   const esc = escapeHtml(text);
@@ -27149,11 +27173,12 @@ function renderSearchResults(q) {
   const matches = appState.policies.filter(p =>
     policyMatches(p, q) &&
     (!subFilter || (p.subcategory || '未标注航司') === subFilter));
-  if (matches.length === 0) {
+  const displayMatches = dedupePoliciesForDisplay(matches);
+  if (displayMatches.length === 0) {
     return `<div class="search-empty">未找到匹配「${escapeHtml(appState.sidebarQuery.trim())}」的文件</div>`;
   }
-  let html = `<div class="search-count">找到 ${matches.length} 个文件</div>`;
-  matches.forEach(p => {
+  let html = `<div class="search-count">找到 ${displayMatches.length} 个文件</div>`;
+  displayMatches.forEach(p => {
     const activeCls = p.id === appState.currentFileId ? ' active' : '';
     const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
     const probBadge = hasProblems(p) ? `<div class="badge badge-problem">⚠ ${p.problems.length}</div>` : '';
@@ -27183,6 +27208,7 @@ function renderGroups() {
     if (!groups[sub]) groups[sub] = [];
     groups[sub].push(p);
   });
+  Object.keys(groups).forEach(sub => { groups[sub] = dedupePoliciesForDisplay(groups[sub]); });
 
   // 航司排序：数量降序，未标注航司放最后
   const sortedSubs = Object.keys(groups).sort((a, b) => {
@@ -27890,13 +27916,64 @@ function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
 
 // ===== 新增字段 =====
 let pendingAddField = null; // { policyId }
+let addFieldRowSeq = 0;
 
 function buildAddFieldPresetOptions() {
   const preferred = ['sale_date','redeem_date','use_date','depart_date','product_code','product_type','discount_per','age_limit','document_restrictions','od','booking_cabin','cabin','manual_confirm_fields'];
   const keys = [...new Set([...preferred, ...Object.keys(LABELS)])];
-  return '<option value="">选择已有标准字段...</option>' + keys.map(key =>
-    `<option value="${escapeHtml(key)}">${escapeHtml(LABELS[key] || key)}（${escapeHtml(key)}）</option>`
+  return keys.map(key =>
+    `<option value="${escapeHtml(LABELS[key] || key)}" data-key="${escapeHtml(key)}"></option>`
   ).join('');
+}
+
+function addAddFieldRow(label, value) {
+  const rows = document.getElementById('addFieldRows');
+  if (!rows) return;
+  const rowId = 'afr_' + (++addFieldRowSeq);
+  const row = document.createElement('div');
+  row.className = 'add-field-row';
+  row.dataset.rowId = rowId;
+  row.innerHTML = `
+    <input class="add-field-label-input" list="addFieldLabelOptions" placeholder="字段名称" value="${escapeHtml(label || '')}">
+    <textarea class="add-field-content-input" placeholder="字段内容">${escapeHtml(value || '')}</textarea>
+    <button class="add-field-plus" type="button" onclick="addAddFieldRow()" title="继续增加字段">+</button>
+  `;
+  rows.appendChild(row);
+  refreshAddFieldRowActions();
+}
+
+function removeAddFieldRow(btn) {
+  const row = btn && btn.closest ? btn.closest('.add-field-row') : null;
+  if (row) row.remove();
+  if (!document.querySelectorAll('#addFieldRows .add-field-row').length) addAddFieldRow();
+  refreshAddFieldRowActions();
+}
+
+function refreshAddFieldRowActions() {
+  const rows = [...document.querySelectorAll('#addFieldRows .add-field-row')];
+  rows.forEach((row, idx) => {
+    const action = row.querySelector('button');
+    if (!action) return;
+    if (idx === rows.length - 1) {
+      action.className = 'add-field-plus';
+      action.textContent = '+';
+      action.title = '继续增加字段';
+      action.setAttribute('onclick', 'addAddFieldRow()');
+    } else {
+      action.className = 'add-field-remove';
+      action.textContent = '×';
+      action.title = '删除该字段';
+      action.setAttribute('onclick', 'removeAddFieldRow(this)');
+    }
+  });
+}
+
+function resolveAddFieldKey(label) {
+  const clean = String(label || '').trim();
+  if (!clean) return '';
+  if (FIELD_LABEL_TO_KEY[clean]) return FIELD_LABEL_TO_KEY[clean];
+  if (LABELS[clean]) return clean;
+  return clean;
 }
 
 function openAddField(policyId) {
@@ -27905,22 +27982,15 @@ function openAddField(policyId) {
   pendingAddField = { policyId };
   document.getElementById('addFieldMeta').innerHTML =
     `<span>文件：${escapeHtml(p.file_name)}</span>`;
-  document.getElementById('addFieldPreset').innerHTML = buildAddFieldPresetOptions();
-  document.getElementById('addFieldPreset').value = '';
-  document.getElementById('addFieldKey').value = '';
-  document.getElementById('addFieldLabel').value = '';
-  document.getElementById('addFieldValueShort').value = '';
-  document.getElementById('addFieldValue').value = '';
+  document.getElementById('addFieldLabelOptions').innerHTML = buildAddFieldPresetOptions();
+  document.getElementById('addFieldRows').innerHTML = '';
+  addAddFieldRow();
   document.getElementById('addFieldReason').value = '';
   document.getElementById('addFieldOverlay').style.display = 'flex';
-  setTimeout(() => document.getElementById('addFieldPreset').focus(), 50);
-}
-
-function onAddFieldPresetChange() {
-  const key = document.getElementById('addFieldPreset').value;
-  if (!key) return;
-  document.getElementById('addFieldKey').value = key;
-  document.getElementById('addFieldLabel').value = LABELS[key] || key;
+  setTimeout(() => {
+    const first = document.querySelector('#addFieldRows .add-field-label-input');
+    if (first) first.focus();
+  }, 50);
 }
 
 function cancelAddField() {
@@ -27934,22 +28004,21 @@ async function submitAddField() {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
 
-  const presetKey = document.getElementById('addFieldPreset').value.trim();
-  const keyInput = document.getElementById('addFieldKey').value.trim();
-  const labelInput = document.getElementById('addFieldLabel').value.trim();
-  const shortVal = document.getElementById('addFieldValueShort').value.trim();
-  const longVal = document.getElementById('addFieldValue').value.trim();
   const reason = document.getElementById('addFieldReason').value.trim();
-  const field = keyInput || presetKey || FIELD_LABEL_TO_KEY[labelInput] || labelInput;
-  const label = labelInput || LABELS[field] || field;
-  const value = longVal || shortVal;
+  const rows = [...document.querySelectorAll('#addFieldRows .add-field-row')].map(row => {
+    const label = row.querySelector('.add-field-label-input').value.trim();
+    const value = row.querySelector('.add-field-content-input').value.trim();
+    const field = resolveAddFieldKey(label);
+    return { field, label, value };
+  }).filter(row => row.label || row.value);
 
-  if (!field || !label) {
-    showToast('请填写字段名称或选择标准字段', 'error');
+  if (!rows.length) {
+    showToast('请至少填写一个字段', 'error');
     return;
   }
-  if (!value) {
-    showToast('请填写字段值', 'error');
+  const invalid = rows.find(row => !row.field || !row.label || !row.value);
+  if (invalid) {
+    showToast('每一行都需要填写字段名称和字段内容', 'error');
     return;
   }
   if (!reason) {
@@ -27960,9 +28029,11 @@ async function submitAddField() {
 
   pendingAddField = null;
   document.getElementById('addFieldOverlay').style.display = 'none';
-  if (!LABELS[field]) LABELS[field] = label;
-  FIELD_LABEL_TO_KEY[label] = field;
-  await doSaveField(policyId, field, '', value, `新增字段：${reason}`);
+  for (const row of rows) {
+    if (!LABELS[row.field]) LABELS[row.field] = row.label;
+    FIELD_LABEL_TO_KEY[row.label] = row.field;
+    await doSaveField(policyId, row.field, '', row.value, `新增字段：${reason}`);
+  }
 }
 
 async function doSaveField(policyId, field, oldVal, newVal, reason) {
