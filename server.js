@@ -582,6 +582,12 @@ function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
       rule: '次卡必须分别输出销售/兑换/航班日期；只识别到截止日时不得留空，标题期间可用于补齐旅行日期并保留人工复核说明。',
     };
   }
+  if (['sign_and_transfer_rules', 'refund_rules', 'change_rules'].includes(fieldKey)) {
+    return {
+      type: '退改签原文拆分规则',
+      rule: '退票、变更、签转必须从当前文件原文逐条拆分：改期/变更/升舱进入变更规则，签转/外航/EI不签转进入签转规则，退票/退款/权益取消进入退票规则；合并标题不得作为字段值，也不得跨文件自动套用。',
+    };
+  }
   return {
     type: '字段修改原因沉淀规则',
     rule: `当同场景、同航司待审文件命中相同字段问题，且当前值为空或等于旧值时，按人工修改原因修正「${fieldLabel || fieldKey}」。`,
@@ -709,6 +715,15 @@ async function appendKnowledgeGraphRecord(record) {
 async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceParsed, fieldKey, fieldLabel, oldValue, newValue, reason, userName }) {
   if (!fieldKey || !reasonLooksGeneral(reason)) {
     return { applied: 0, files: [], skipped: true, reason: '修改原因不是可泛化规则' };
+  }
+  const sourceTextBoundFields = new Set(['sign_and_transfer_rules', 'refund_rules', 'change_rules']);
+  if (sourceTextBoundFields.has(fieldKey)) {
+    return {
+      applied: 0,
+      files: [],
+      skipped: true,
+      reason: '退票/变更/签转字段必须按当前原文逐条拆分，不做跨文件自动矫正',
+    };
   }
 
   const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
