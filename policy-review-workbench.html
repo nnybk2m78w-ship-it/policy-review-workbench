@@ -88,7 +88,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .field-group { margin-bottom:20px; }
 .field-group .group-title { font-size:13px; font-weight:600; color:var(--primary); margin-bottom:10px; padding-bottom:6px; border-bottom:2px solid var(--primary); }
 .field-row { display:flex; padding:8px 0; border-bottom:1px solid #f1f2f6; font-size:13px; align-items:flex-start; }
-.field-row .field-label { width:130px; flex-shrink:0; color:var(--muted); font-weight:500; }
+.field-row .field-label { width:180px; flex-shrink:0; color:var(--muted); font-weight:500; }
+.field-key { display:block; margin-top:2px; color:#98a1aa; font-size:11px; font-weight:400; line-height:1.2; }
 .field-row .field-value { flex:1; cursor:pointer; padding:2px 4px; border-radius:3px; transition:background 0.15s; }
 .field-row .field-value:hover { background:#f0f4ff; }
 .field-row .field-value input { width:100%; border:1px solid var(--primary); border-radius:3px; padding:4px 6px; font-size:13px; outline:none; }
@@ -2029,13 +2030,19 @@ function renderFieldRow(p, f, isExtra) {
   const probClass = fieldProblems.length ? ' field-problem' : '';
   const customTag = isExtra ? '<span class="evidence-tag" title="人工补充或解析JSON额外字段">新增</span>' : '';
   return `<div class="field-row${modClass}${probClass}">
-    <div class="field-label">${escapeHtml(LABELS[f] || f)}${modIndicator}${probIndicator}</div>
+    <div class="field-label">${renderFieldLabel(f)}${modIndicator}${probIndicator}</div>
     <div class="field-value" ondblclick="startEdit('${jsArg(p.id)}', '${jsArg(f)}')" id="${fieldDomId(f)}">${escapeHtml(displayVal)}${evidence}${customTag}</div>
     <div class="field-actions">
       <span class="field-problem-btn" onclick="openProblem('${jsArg(p.id)}','${jsArg(f)}')" title="标记该字段的解析问题">⚠</span>
       <span class="field-delete-btn" onclick="openDeleteField('${jsArg(p.id)}','${jsArg(f)}')" title="删除该字段">×</span>
     </div>
   </div>`;
+}
+
+function renderFieldLabel(field) {
+  const label = LABELS[field] || field;
+  if (!field || label === field) return escapeHtml(label);
+  return `${escapeHtml(label)}<span class="field-key">(${escapeHtml(field)})</span>`;
 }
 
 function getSourcePaths(p) {
@@ -2300,7 +2307,7 @@ function renderConfirm(main) {
     keyFields.forEach(f => {
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
         const v = typeof p.data[f] === 'boolean' ? (p.data[f] ? '是' : '否') : String(p.data[f]);
-        kvHtml += `<div class="kv"><span class="k">${LABELS[f] || f}：</span><span class="v">${v}</span></div>`;
+        kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f)}：</span><span class="v">${v}</span></div>`;
       }
     });
 
