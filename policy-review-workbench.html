@@ -133,20 +133,30 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm-add-field:hover { background:#00b894; color:#fff; }
 .btn-sm-danger { background:#d63031; color:#fff; border:none; padding:8px 18px; border-radius:4px; cursor:pointer; font-size:13px; }
 .btn-sm-danger:hover { background:#c0392b; }
-.add-field-list { margin-top:10px; border-top:1px solid #f1f2f6; }
-.add-field-modal { width:760px; }
-.add-field-row { display:grid; grid-template-columns:130px 170px minmax(0,1.1fr) minmax(0,1fr) 30px; gap:8px; align-items:start; padding:8px 0; border-bottom:1px solid #f1f2f6; }
+.add-field-list { margin-top:10px; border-top:1px solid #f1f2f6; max-height:56vh; overflow:auto; padding-right:4px; }
+.add-field-modal { width:920px; max-width:94vw; max-height:92vh; overflow:auto; }
+.add-field-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(150px,1fr) 130px 30px; grid-template-areas:"label key format action" "desc desc desc action" "value value value action" "logic logic logic action"; gap:8px; align-items:start; padding:10px 0; border-bottom:1px solid #f1f2f6; }
 .add-field-row input, .add-field-row textarea { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
+.add-field-row select { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
 .add-field-row input:focus, .add-field-row textarea:focus { border-color:var(--primary); }
-.add-field-row textarea { min-height:38px; resize:vertical; }
+.add-field-row textarea { min-height:42px; resize:vertical; }
+.add-field-label-input { grid-area:label; }
 .add-field-key-input { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color:#4b5563; }
-.add-field-plus { width:28px; height:28px; border-radius:50%; border:1px solid #00b894; color:#008f72; background:#fff; cursor:pointer; font-size:18px; line-height:24px; margin-top:2px; }
+.add-field-key-input { grid-area:key; }
+.add-field-format-input { grid-area:format; }
+.add-field-desc-input { grid-area:desc; }
+.add-field-content-input { grid-area:value; min-height:54px !important; }
+.add-field-logic-input { grid-area:logic; min-height:54px !important; }
+.add-field-plus { grid-area:action; width:28px; height:28px; border-radius:50%; border:1px solid #00b894; color:#008f72; background:#fff; cursor:pointer; font-size:18px; line-height:24px; margin-top:2px; }
 .add-field-plus:hover { background:#00b894; color:#fff; }
-.add-field-remove { width:28px; height:28px; border-radius:50%; border:1px solid #dfe6e9; color:#636e72; background:#fff; cursor:pointer; font-size:16px; line-height:24px; margin-top:2px; }
+.add-field-remove { grid-area:action; width:28px; height:28px; border-radius:50%; border:1px solid #dfe6e9; color:#636e72; background:#fff; cursor:pointer; font-size:16px; line-height:24px; margin-top:2px; }
 .add-field-remove:hover { border-color:#d63031; color:#d63031; }
 .add-field-reason { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; resize:vertical; min-height:64px; margin-top:10px; }
 .add-field-reason:focus { border-color:var(--primary); }
 .custom-field-hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
+@media (max-width: 760px) {
+  .add-field-row { grid-template-columns:1fr 30px; grid-template-areas:"label action" "key action" "format action" "desc desc" "value value" "logic logic"; }
+}
 
 /* 问题清单视图 */
 .problems-view { }
@@ -418,7 +428,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <datalist id="addFieldLabelOptions"></datalist>
     <div class="add-field-list" id="addFieldRows"></div>
     <textarea id="addFieldReason" class="add-field-reason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这些字段？证据在哪？）"></textarea>
-    <div class="custom-field-hint">每行补一个正式字段：中文名、JSON key、字段内容、判断逻辑必须完整。使用已有字段名时会自动使用原始 JSON key；完全新增字段会自动生成可读英文 key，也可人工调整。</div>
+    <div class="custom-field-hint">每个新增字段都按正式字段定义保存：字段中文名、JSON key、字段格式、字段简述、字段内容、提取逻辑。使用已有字段名时会自动使用原始 JSON key；完全新增字段会自动生成可读英文 key，也可人工调整。</div>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
@@ -2255,7 +2265,7 @@ const REVIEW_POLICIES = [
   }
 ];
 
-const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "附加权益与限制", "fields": ["benefit_name", "benefit_usage_rules", "not_applicable_flight_routes"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
+const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "policy_code", "fare_basis", "corporate_code", "coupon_resource_code", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "附加权益与限制", "fields": ["benefit_name", "benefit_usage_rules", "not_applicable_flight_routes"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
 const LABELS = {
   "scenario": "解析场景",
   "business_line": "业务线",
@@ -2267,6 +2277,10 @@ const LABELS = {
   "product_type": "出票指令",
   "product_code": "产品代码",
   "product_code_raw": "原始产品码",
+  "policy_code": "政策编号",
+  "fare_basis": "运价基础",
+  "corporate_code": "大客户编码",
+  "coupon_resource_code": "券/资源编号",
   "product_category": "产品类别",
   "flight_type": "航程类型",
   "trip_type_note": "航程备注",
@@ -2386,15 +2400,24 @@ function ensureFieldDefinitions(policy) {
   return policy.data[FIELD_DEFINITIONS_KEY];
 }
 
-function registerFieldDefinition(policy, key, label, logic) {
+function registerFieldDefinition(policy, key, label, logic, valueType, description) {
   if (!key) return;
-  if (label && !LABELS[key]) LABELS[key] = label;
-  if (label) FIELD_LABEL_TO_KEY[label] = key;
+  const input = label && typeof label === 'object' ? label : {
+    label,
+    logic,
+    value_type: valueType,
+    description,
+  };
+  const nextLabel = input.label || LABELS[key] || key;
+  if (nextLabel && !LABELS[key]) LABELS[key] = nextLabel;
+  if (nextLabel) FIELD_LABEL_TO_KEY[nextLabel] = key;
   const defs = ensureFieldDefinitions(policy);
   defs[key] = {
-    label: label || LABELS[key] || key,
+    label: nextLabel,
     json_key: key,
-    logic: logic || (defs[key] && defs[key].logic) || '',
+    value_type: input.value_type || input.format || (defs[key] && defs[key].value_type) || 'string',
+    description: input.description || input.summary || (defs[key] && defs[key].description) || '',
+    logic: input.logic || (defs[key] && defs[key].logic) || '',
   };
 }
 
@@ -2430,7 +2453,21 @@ function normalizePolicySchema(policy) {
   });
   migrateLegacyCustomFields(policy.data, policy);
   Object.entries(policy.data[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
-    registerFieldDefinition(policy, key, def.label, def.logic);
+    registerFieldDefinition(policy, key, def);
+  });
+  (policy._change_history || []).forEach(h => {
+    const key = canonicalizeLegacyFieldName(h.field);
+    const label = h.fieldLabel || h.field_label || '';
+    if (!key || !label || label === key || label === '人工新增字段') return;
+    if (!LABELS[key] && !(policy.data[FIELD_DEFINITIONS_KEY] && policy.data[FIELD_DEFINITIONS_KEY][key])) {
+      registerFieldDefinition(policy, key, {
+        label,
+        json_key: key,
+        value_type: 'string',
+        description: '人工补充字段',
+        logic: h.reason || '依据当前文件原文由审核人员补充。',
+      });
+    }
   });
   if (Array.isArray(policy.audit && policy.audit.edited_fields)) {
     policy.audit.edited_fields = [...new Set(policy.audit.edited_fields.map(canonicalizeLegacyFieldName).filter(Boolean))];
@@ -2463,7 +2500,7 @@ function mergeParsedJsonIntoPolicy(p, rawJson) {
   if (!data || typeof data !== 'object') return 0;
   migrateLegacyCustomFields(data, p);
   Object.entries(data[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
-    registerFieldDefinition(p, key, def.label, def.logic);
+    registerFieldDefinition(p, key, def);
   });
   let changed = 0;
   if (!p.data) p.data = {};
@@ -3597,7 +3634,7 @@ function saveEdit(policyId, field) {
 
 function promptChangeReason(policyId, field, oldVal, newVal) {
   const p = appState.policies.find(x => x.id === policyId);
-  const fieldLabel = LABELS[field] || field;
+  const fieldLabel = renderPlainFieldLabel(field, p);
   const isDelete = pendingEdit && pendingEdit.deleteField;
   document.getElementById('reasonTitle').textContent = isDelete ? '🗑️ 填写删除原因' : '✏️ 填写修改原因';
   document.getElementById('reasonMeta').innerHTML =
@@ -3648,7 +3685,7 @@ function openProblem(policyId, field) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
   pendingProblem = { policyId, field: field || '' };
-  const fieldLabel = field ? (LABELS[field] || field) : '文件整体';
+  const fieldLabel = field ? renderPlainFieldLabel(field, p) : '文件整体';
   document.getElementById('problemMeta').innerHTML =
     `<b>${escapeHtml(fieldLabel)}</b><br><span>文件：${escapeHtml(p.file_name)}</span>`;
   document.getElementById('problemInput').value = '';
@@ -3678,7 +3715,7 @@ async function submitProblem() {
 	  if (!p.problems) p.problems = [];
 	  const problemEntry = {
 	    field: field,
-	    field_label: field ? (LABELS[field] || field) : '文件整体',
+		    field_label: field ? renderPlainFieldLabel(field, p) : '文件整体',
 	    desc: desc,
 	    created_by: (appState.user && appState.user.name) || '',
 	    created_at: formatTime(new Date()),
@@ -3769,7 +3806,7 @@ function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
   const isDeletion = /^删除字段[:：]/.test(reason || '');
   return {
     field: field,
-    field_label: LABELS[field] || field,
+    field_label: renderPlainFieldLabel(field, appState.policies.find(p => p.data && Object.prototype.hasOwnProperty.call(p.data, field))) || field,
     desc: `${isDeletion ? '删除字段' : (isAddition ? '新增字段' : '字段修改')}：${oldVal || '(空)'} → ${newVal || '(空)'}；原因：${reason || '未填写'}`,
     created_by: (appState.user && appState.user.name) || '',
     created_at: timeStr,
@@ -3800,8 +3837,17 @@ function addAddFieldRow(label, value) {
   row.innerHTML = `
     <input class="add-field-label-input" list="addFieldLabelOptions" placeholder="字段中文名" value="${escapeHtml(label || '')}" oninput="syncAddFieldKey(this)">
     <input class="add-field-key-input" placeholder="JSON key" value="${escapeHtml(key || '')}" oninput="this.dataset.touched='1'">
+    <select class="add-field-format-input" title="字段格式">
+      <option value="string">string</option>
+      <option value="boolean">boolean</option>
+      <option value="number">number</option>
+      <option value="array">array</option>
+      <option value="object">object</option>
+      <option value="date_range">date_range</option>
+    </select>
+    <input class="add-field-desc-input" placeholder="字段简述">
     <textarea class="add-field-content-input" placeholder="字段内容">${escapeHtml(value || '')}</textarea>
-    <textarea class="add-field-logic-input" placeholder="判断逻辑 / 解析依据"></textarea>
+    <textarea class="add-field-logic-input" placeholder="提取逻辑 / 判断依据"></textarea>
     <button class="add-field-plus" type="button" onclick="addAddFieldRow()" title="继续增加字段">+</button>
   `;
   rows.appendChild(row);
@@ -3937,19 +3983,21 @@ async function submitAddField() {
   const rows = [...document.querySelectorAll('#addFieldRows .add-field-row')].map(row => {
     const label = row.querySelector('.add-field-label-input').value.trim();
     const keyInput = normalizeJsonKey(row.querySelector('.add-field-key-input').value.trim());
+    const valueType = row.querySelector('.add-field-format-input').value.trim();
+    const description = row.querySelector('.add-field-desc-input').value.trim();
     const value = row.querySelector('.add-field-content-input').value.trim();
     const logic = row.querySelector('.add-field-logic-input').value.trim();
     const field = FIELD_LABEL_TO_KEY[label] || keyInput || resolveAddFieldKey(label, p);
-    return { field, label, value, logic };
-  }).filter(row => row.label || row.field || row.value || row.logic);
+    return { field, label, value, logic, valueType, description };
+  }).filter(row => row.label || row.field || row.value || row.logic || row.description);
 
   if (!rows.length) {
     showToast('请至少填写一个字段', 'error');
     return;
   }
-  const invalid = rows.find(row => !row.field || !row.label || !row.value || !row.logic || !/^[a-z][a-z0-9_]*$/.test(row.field));
+  const invalid = rows.find(row => !row.field || !row.label || !row.valueType || !row.description || !row.value || !row.logic || !/^[a-z][a-z0-9_]*$/.test(row.field));
   if (invalid) {
-    showToast('每一行都需要填写中文名、合法JSON key、字段内容和判断逻辑', 'error');
+    showToast('每一行都需要填写中文名、合法JSON key、字段格式、字段简述、字段内容和提取逻辑', 'error');
     return;
   }
   if (!reason) {
@@ -3961,11 +4009,13 @@ async function submitAddField() {
   pendingAddField = null;
   document.getElementById('addFieldOverlay').style.display = 'none';
   for (const row of rows) {
-    registerFieldDefinition(p, row.field, row.label, row.logic);
+    registerFieldDefinition(p, row.field, row.label, row.logic, row.valueType, row.description);
     doSaveField(policyId, row.field, '', row.value, `新增字段：${reason}`, {
       fieldDefinition: {
         label: row.label,
         json_key: row.field,
+        value_type: row.valueType,
+        description: row.description,
         logic: row.logic,
       },
     });
@@ -3985,7 +4035,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
   if (!p) return;
 
   if (opts.fieldDefinition) {
-    registerFieldDefinition(p, field, opts.fieldDefinition.label, opts.fieldDefinition.logic);
+    registerFieldDefinition(p, field, opts.fieldDefinition);
   }
 
   if (opts.deleteField) {
@@ -4008,7 +4058,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
   const timeStr = formatTime(new Date());
   p._change_history.push({
     field: field,
-    fieldLabel: LABELS[field] || field,
+    fieldLabel: renderPlainFieldLabel(field, p),
     oldValue: oldVal,
     newValue: opts.deleteField ? '' : newVal,
     time: timeStr,
@@ -4036,7 +4086,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         recordId: policyId,
-        fieldLabel: LABELS[field] || field,
+        fieldLabel: renderPlainFieldLabel(field, p),
         fieldKey: field,
         newValue: newVal,
         reason: reason,
@@ -4046,7 +4096,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
           time: timeStr,
           user: (appState.user && appState.user.name) || '',
           field: field,
-          fieldLabel: LABELS[field] || field,
+          fieldLabel: renderPlainFieldLabel(field, p),
           oldValue: oldVal,
           newValue: opts.deleteField ? '' : newVal,
           reason: reason,
@@ -4199,7 +4249,7 @@ function toggleChangeHistory(policyId, field) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p || !p._change_history) return;
   const changes = p._change_history.filter(h => h.field === field);
-  const fieldLabel = LABELS[field] || field;
+  const fieldLabel = renderPlainFieldLabel(field, p);
   document.getElementById('historyMeta').innerHTML =
     `<b>${escapeHtml(fieldLabel)}</b><br><span>文件：${escapeHtml(p.file_name || '')}</span>`;
   const list = document.getElementById('historyList');
@@ -4210,7 +4260,7 @@ function toggleChangeHistory(policyId, field) {
       `<div class="change-history-item">
         <div class="ch-head">
           <span class="ch-time">${escapeHtml(h.time)}</span>
-          <span class="ch-field">${escapeHtml(LABELS[h.field] || h.field)}</span>
+          <span class="ch-field">${escapeHtml(renderPlainFieldLabel(h.field, p))}</span>
         </div>
         <div class="ch-change">
           <span class="ch-old">${escapeHtml(h.oldValue || '(空)')}</span>

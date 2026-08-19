@@ -29,6 +29,10 @@ const KEY_LABELS = {
   product_type: '出票指令',
   product_code: '产品代码',
   product_code_raw: '原始产品码',
+  policy_code: '政策编号',
+  fare_basis: '运价基础',
+  corporate_code: '大客户编码',
+  coupon_resource_code: '券/资源编号',
   product_category: '产品类别',
   flight_type: '航程类型',
   trip_type_note: '航程备注',
@@ -455,6 +459,8 @@ function setParsedFieldDefinition(obj, key, fieldDefinition) {
   const next = {
     label: fieldDefinition.label || KEY_LABELS[key] || key,
     json_key: key,
+    value_type: fieldDefinition.value_type || fieldDefinition.format || 'string',
+    description: fieldDefinition.description || fieldDefinition.summary || '',
     logic: fieldDefinition.logic || '',
   };
   if (!obj[FIELD_DEFINITIONS_KEY] || typeof obj[FIELD_DEFINITIONS_KEY] !== 'object' || Array.isArray(obj[FIELD_DEFINITIONS_KEY])) {
