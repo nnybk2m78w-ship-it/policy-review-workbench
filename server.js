@@ -83,11 +83,15 @@ const KEY_LABELS = {
   membership_limit: '会员限制',
   refund_time: '未兑换退款日期',
   luggage_amount: '行李额',
+  benefit_name: '权益名称',
+  benefit_usage_rules: '权益使用规则',
+  not_applicable_flight_routes: '不适用航班/航线明细',
   price_groups_summary: '价格组汇总',
   use_code: '兑换标识',
 };
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([key, label]) => [label, key]));
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
+const FIELD_DEFINITIONS_KEY = '_field_definitions';
 
 // ---- Token 存储 (文件 + 环境变量双备份) ----
 const TOKEN_FILE = path.join(__dirname, '.feishu_tokens.json');
@@ -446,7 +450,25 @@ function stringifyJsonField(value) {
   return JSON.stringify(value, null, 2);
 }
 
-function setParsedField(parsed, key, value) {
+function setParsedFieldDefinition(obj, key, fieldDefinition) {
+  if (!obj || typeof obj !== 'object' || !key || !fieldDefinition) return false;
+  const next = {
+    label: fieldDefinition.label || KEY_LABELS[key] || key,
+    json_key: key,
+    logic: fieldDefinition.logic || '',
+  };
+  if (!obj[FIELD_DEFINITIONS_KEY] || typeof obj[FIELD_DEFINITIONS_KEY] !== 'object' || Array.isArray(obj[FIELD_DEFINITIONS_KEY])) {
+    obj[FIELD_DEFINITIONS_KEY] = {};
+  }
+  const old = obj[FIELD_DEFINITIONS_KEY][key];
+  if (JSON.stringify(old || {}) !== JSON.stringify(next)) {
+    obj[FIELD_DEFINITIONS_KEY][key] = next;
+    return true;
+  }
+  return false;
+}
+
+function setParsedField(parsed, key, value, fieldDefinition) {
   if (!parsed || !key) return false;
   let changed = false;
   const applyOne = (obj) => {
@@ -458,6 +480,12 @@ function setParsedField(parsed, key, value) {
     if (obj.data && typeof obj.data === 'object' && normalizeFeishuValue(obj.data[key]) !== normalizeFeishuValue(value)) {
       obj.data[key] = value;
       changed = true;
+    }
+    if (fieldDefinition) {
+      changed = setParsedFieldDefinition(obj, key, fieldDefinition) || changed;
+      if (obj.data && typeof obj.data === 'object') {
+        changed = setParsedFieldDefinition(obj.data, key, fieldDefinition) || changed;
+      }
     }
   };
   if (Array.isArray(parsed)) parsed.forEach(applyOne);
@@ -476,6 +504,14 @@ function deleteParsedField(parsed, key) {
     }
     if (obj.data && typeof obj.data === 'object' && Object.prototype.hasOwnProperty.call(obj.data, key)) {
       delete obj.data[key];
+      changed = true;
+    }
+    if (obj[FIELD_DEFINITIONS_KEY] && typeof obj[FIELD_DEFINITIONS_KEY] === 'object' && Object.prototype.hasOwnProperty.call(obj[FIELD_DEFINITIONS_KEY], key)) {
+      delete obj[FIELD_DEFINITIONS_KEY][key];
+      changed = true;
+    }
+    if (obj.data && obj.data[FIELD_DEFINITIONS_KEY] && typeof obj.data[FIELD_DEFINITIONS_KEY] === 'object' && Object.prototype.hasOwnProperty.call(obj.data[FIELD_DEFINITIONS_KEY], key)) {
+      delete obj.data[FIELD_DEFINITIONS_KEY][key];
       changed = true;
     }
   };
@@ -780,6 +816,16 @@ async function appendVersionUpdateRecord(record) {
 }
 
 async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceParsed, fieldKey, fieldLabel, oldValue, newValue, reason, userName }) {
+  if (/^新增字段[:：]/.test(reason || '')) {
+    return {
+      applied: 0,
+      files: [],
+      skipped: true,
+      ruleType: '新增字段定义沉淀规则',
+      rule: '新增字段仅沉淀中文名、JSON key、字段值和判断逻辑；其它文件必须按各自原文重新解析，不跨文件复制当前字段值。',
+      reason: '新增字段不做跨文件自动改值',
+    };
+  }
   if (!fieldKey || !reasonLooksGeneral(reason)) {
     return { applied: 0, files: [], skipped: true, reason: '修改原因不是可泛化规则' };
   }
@@ -1066,7 +1112,7 @@ app.post('/api/reopen', async (req, res) => {
 
 // ---- 保存字段修改（含修改原因 + 修改历史 + 已修改标识） ----
 app.post('/api/save-field', async (req, res) => {
-  const { recordId, fieldLabel, fieldKey: requestedFieldKey, newValue, reason, changeEntry, deleteField } = req.body;
+  const { recordId, fieldLabel, fieldKey: requestedFieldKey, newValue, reason, changeEntry, deleteField, fieldDefinition } = req.body;
   const systemGenerated = isSystemGeneratedChange(req.body, reason || (changeEntry && changeEntry.reason) || '');
 
   if (!recordId) {
@@ -1137,7 +1183,7 @@ app.post('/api/save-field', async (req, res) => {
     if (sourceParsed && fieldKey) {
       const changedJson = deleteField
         ? deleteParsedField(sourceParsed, fieldKey)
-        : setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '');
+        : setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '', fieldDefinition);
       if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
         fields[jsonFieldName] = stringifyJsonField(sourceParsed);
       }
