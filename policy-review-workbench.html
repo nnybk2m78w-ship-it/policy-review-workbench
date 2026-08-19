@@ -563,7 +563,7 @@ const REVIEW_POLICIES = [
         "resolved": false
       }
     ],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": "2026-08-18T11:53:02.937+08:00",
     "_change_history": [
@@ -696,7 +696,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": null,
     "_change_history": [
@@ -816,7 +816,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "旗舰店",
+    "category": "02_旗舰店",
     "subcategory": "四川航空",
     "confirmed_at": null,
     "_change_history": [
@@ -899,7 +899,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1004,7 +1004,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1116,7 +1116,7 @@ const REVIEW_POLICIES = [
         "resolved": false
       }
     ],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "华夏航空",
     "confirmed_at": "2026-08-18T11:35:29.782+08:00",
     "_change_history": [
@@ -1189,7 +1189,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "中国联合航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1278,7 +1278,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "中国联合航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1367,7 +1367,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "中国联合航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1456,7 +1456,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "河北航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1545,7 +1545,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1634,7 +1634,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "天骄航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1722,7 +1722,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "成都航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1803,7 +1803,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "山东航空",
     "confirmed_at": null,
     "_change_history": [
@@ -1893,7 +1893,7 @@ const REVIEW_POLICIES = [
       ]
     },
     "problems": [],
-    "category": "自营",
+    "category": "03_自营",
     "subcategory": "深圳航空",
     "confirmed_at": null,
     "_change_history": [
@@ -2223,6 +2223,14 @@ function render() {
 // ===== 侧边栏：搜索 + 一级Tab + 二级航司组 =====
 const CATEGORY_ORDER = ['03_自营', '02_旗舰店', '01_次卡'];
 const CATEGORY_NAMES = { '03_自营': '自营', '02_旗舰店': '旗舰店', '01_次卡': '次卡' };
+function normalizeCategory(cat) {
+  const value = String(cat || '').trim();
+  if (CATEGORY_NAMES[value]) return value;
+  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(value)) return '01_次卡';
+  if (/旗舰店/.test(value)) return '02_旗舰店';
+  if (/自营/.test(value)) return '03_自营';
+  return '03_自营';
+}
 
 // 展开状态记忆（localStorage 持久化，二级默认收起）
 const EXPANDED_KEY = 'policy_review_expanded_subs_v2';
@@ -2243,7 +2251,7 @@ function renderSidebar() {
   const catCount = {};
   CATEGORY_ORDER.forEach(c => catCount[c] = 0);
   appState.policies.forEach(p => {
-    const c = p.category || '03_自营';
+    const c = normalizeCategory(p.category);
     catCount[c] = (catCount[c] || 0) + 1;
   });
 
@@ -2280,14 +2288,14 @@ function renderSidebarList() {
   if (appState.statusFilter) {
     const n = appState.policies.filter(p =>
       policyMatchesStatusFilter(p) &&
-      (p.category || '03_自营') === (appState.sidebarCat || '03_自营')).length;
+      normalizeCategory(p.category) === (appState.sidebarCat || '03_自营')).length;
     html += `<div class="sub-filter-bar">仅显示：${getStatusFilterLabel(appState.statusFilter)} (${n}) <button class="sub-filter-clear" onclick="clearStatusFilter()" title="显示全部状态">✕</button></div>`;
   }
   // 航司只看过滤提示条
   if (appState.subFilter) {
     const sub = appState.subFilter;
     const n = appState.policies.filter(p =>
-      (p.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+      normalizeCategory(p.category) === (appState.sidebarCat || '03_自营') &&
       (p.subcategory || '未标注航司') === sub).length;
     html += `<div class="sub-filter-bar">仅显示：${escapeHtml(sub)} (${n}) <button class="sub-filter-clear" onclick="clearSubFilter()" title="显示全部航司">✕</button></div>`;
   }
@@ -2384,7 +2392,8 @@ function renderSearchResults(q) {
     const probBadge = hasProblems(p) ? `<div class="badge badge-problem">⚠ ${p.problems.length}</div>` : '';
     const st = getStatusInfo(p);
     const statusBadge = `<div class="badge badge-${st.cls}">${st.text}</div>`;
-    const path = `${CATEGORY_NAMES[p.category] || p.category || '自营'} · ${p.subcategory || '未标注航司'}`;
+    const displayCat = normalizeCategory(p.category);
+    const path = `${CATEGORY_NAMES[displayCat] || displayCat || '自营'} · ${p.subcategory || '未标注航司'}`;
     html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
       <div class="name">${highlightMatch(p.file_name, q)}</div>
       <div class="sub">${highlightMatch([p.data.business_type, p.data.product_name].filter(Boolean).join(' · '), q)}</div>
@@ -2401,7 +2410,7 @@ function renderGroups() {
   const expanded = getExpandedSubs();
   const groups = {};
   appState.policies.forEach(p => {
-    const c = p.category || '03_自营';
+    const c = normalizeCategory(p.category);
     const sub = p.subcategory || '未标注航司';
     if (c !== cat) return;
     if (subFilter && sub !== subFilter) return;
@@ -2419,7 +2428,7 @@ function renderGroups() {
   });
 
   // 一级分类信息条（强化 Tab 切换反馈）
-  const catAll = appState.policies.filter(p => (p.category || '03_自营') === cat);
+  const catAll = appState.policies.filter(p => normalizeCategory(p.category) === cat);
   const catConfirmed = catAll.filter(p => p.status === 'confirmed').length;
   const catProblem = catAll.filter(hasProblems).length;
   let html = `<div class="cat-info-bar">
@@ -2522,7 +2531,7 @@ function setSidebarCat(cat) {
   if (appState.statusFilter) {
     const first = appState.policies.find(p =>
       policyMatchesStatusFilter(p) &&
-      (p.category || '03_自营') === cat &&
+      normalizeCategory(p.category) === cat &&
       (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
     if (first) appState.currentFileId = first.id;
   }
@@ -2567,12 +2576,12 @@ function toggleStatusFilter(status) {
     const current = appState.policies.find(p => p.id === appState.currentFileId);
     const currentVisible = current &&
       policyMatchesStatusFilter(current) &&
-      (current.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+      normalizeCategory(current.category) === (appState.sidebarCat || '03_自营') &&
       (!appState.subFilter || (current.subcategory || '未标注航司') === appState.subFilter);
     if (!currentVisible) {
       const first = appState.policies.find(p =>
         policyMatchesStatusFilter(p) &&
-        (p.category || '03_自营') === (appState.sidebarCat || '03_自营') &&
+        normalizeCategory(p.category) === (appState.sidebarCat || '03_自营') &&
         (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
       if (first) appState.currentFileId = first.id;
     }
@@ -3076,7 +3085,7 @@ function selectFile(id) {
   // 自动切换到文件所在的一级分类 Tab，保证当前文件永远可见
   const p = appState.policies.find(x => x.id === id);
   if (p) {
-    const cat = p.category || '03_自营';
+    const cat = normalizeCategory(p.category);
     if (appState.sidebarCat !== cat) {
       appState.sidebarCat = cat;
       // 切换分类时清空搜索，避免搜索结果与定位冲突
@@ -3668,7 +3677,7 @@ async function confirmFile(id) {
       if (appState.currentView === 'review') {
         setTimeout(() => {
           const next = appState.policies.find(x => x.status !== 'confirmed' && x.id !== p.id);
-          const siblings = appState.policies.filter(x => x.category === p.category && x.subcategory === p.subcategory && x.status !== 'confirmed' && x.id !== p.id);
+          const siblings = appState.policies.filter(x => normalizeCategory(x.category) === normalizeCategory(p.category) && x.subcategory === p.subcategory && x.status !== 'confirmed' && x.id !== p.id);
           const target = siblings[0] || next;
           if (target) { appState.currentFileId = target.id; render(); }
         }, 600);
