@@ -768,6 +768,17 @@ async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceP
   }
 
   const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+  if (rule.type === '字段修改原因沉淀规则') {
+    return {
+      applied: 0,
+      files: [],
+      skipped: true,
+      ruleType: rule.type,
+      rule: rule.rule,
+      reason: '默认沉淀规则只写入知识图谱，不直接跨文件改值',
+    };
+  }
+
   const all = await listAllFeishuRecords();
   const applied = [];
 
