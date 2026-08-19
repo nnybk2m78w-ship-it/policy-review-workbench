@@ -2331,6 +2331,7 @@ const LABELS = {
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(LABELS).map(([key, label]) => [label, key]));
 const GROUPED_FIELD_KEYS = new Set(FIELD_GROUPS.flatMap(g => g.fields));
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
+const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const EXTRA_FIELD_EXCLUDE = new Set([
   'source_files', 'document_type', 'file_name', 'category', 'subcategory', 'business_type',
   'evidence', 'audit', 'problems', '_change_history', 'parsed_at', 'status', 'confirmed_at',
@@ -2411,6 +2412,47 @@ function migrateLegacyCustomFields(data, policy) {
     delete data[oldKey];
     registerFieldDefinition(policy, def.key, def.label, def.logic);
   });
+}
+
+function canonicalizeLegacyFieldName(field) {
+  if (LEGACY_CUSTOM_FIELD_MAP[field]) return LEGACY_CUSTOM_FIELD_MAP[field].key;
+  if (field === '人工新增字段') return 'benefit_usage_rules';
+  return field;
+}
+
+function normalizePolicySchema(policy) {
+  if (!policy || !policy.data) return 0;
+  const before = JSON.stringify({
+    data: policy.data,
+    audit: policy.audit,
+    history: policy._change_history,
+    problems: policy.problems,
+  });
+  migrateLegacyCustomFields(policy.data, policy);
+  Object.entries(policy.data[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
+    registerFieldDefinition(policy, key, def.label, def.logic);
+  });
+  if (Array.isArray(policy.audit && policy.audit.edited_fields)) {
+    policy.audit.edited_fields = [...new Set(policy.audit.edited_fields.map(canonicalizeLegacyFieldName).filter(Boolean))];
+  }
+  (policy._change_history || []).forEach(h => {
+    h.field = canonicalizeLegacyFieldName(h.field);
+    if (h.field && (!h.fieldLabel || h.fieldLabel === '人工新增字段' || h.fieldLabel === h.field)) {
+      h.fieldLabel = renderPlainFieldLabel(h.field, policy);
+    }
+  });
+  (policy.problems || []).forEach(pr => {
+    pr.field = canonicalizeLegacyFieldName(pr.field);
+    if (pr.field && (!pr.field_label || pr.field_label === '人工新增字段' || pr.field_label === pr.field)) {
+      pr.field_label = renderPlainFieldLabel(pr.field, policy);
+    }
+  });
+  return before === JSON.stringify({
+    data: policy.data,
+    audit: policy.audit,
+    history: policy._change_history,
+    problems: policy.problems,
+  }) ? 0 : 1;
 }
 
 function mergeParsedJsonIntoPolicy(p, rawJson) {
@@ -2543,16 +2585,20 @@ if (saved) {
             data: { ...p.data, ...(savedEntry.data || {}) },
             audit: savedEntry.audit || p.audit,
             _change_history: savedEntry._change_history || [],
-          };
-          // 加载时清理：当前值等于原始值则移除修改标识
-          refreshEditedFields(merged);
-          return merged;
-        }
-        return p;
-      });
-    }
-  } catch(e) {}
-}
+	          };
+	          // 加载时清理：当前值等于原始值则移除修改标识
+	          refreshEditedFields(merged);
+	          normalizePolicySchema(merged);
+	          return merged;
+	        }
+	        normalizePolicySchema(p);
+	        return p;
+	      });
+	    }
+	  } catch(e) {}
+	}
+const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
+if (normalizedOnLoad) setTimeout(saveState, 0);
 
 function saveState() {
   localStorage.setItem('policy_review_state', JSON.stringify({
@@ -3033,10 +3079,14 @@ function renderFieldRow(p, f, isExtra) {
 }
 
 function renderFieldLabel(field, policy) {
-  const def = getFieldDefinition(policy, field);
-  const label = (def && def.label) || LABELS[field] || field;
+  const label = renderPlainFieldLabel(field, policy);
   if (!field || label === field) return escapeHtml(label);
   return `${escapeHtml(label)}<span class="field-key">(${escapeHtml(field)})</span>`;
+}
+
+function renderPlainFieldLabel(field, policy) {
+  const def = getFieldDefinition(policy, field);
+  return (def && def.label) || LABELS[field] || field;
 }
 
 function getSourcePaths(p) {
@@ -4296,10 +4346,11 @@ function formatSyncTs(ts) {
 
 function applyFeishuFieldsToPolicy(p, fields) {
   if (!p || !fields) return 0;
-  let changed = 0;
+  let changed = normalizePolicySchema(p);
 
-  if (Object.prototype.hasOwnProperty.call(fields, '解析JSON')) {
-    changed += mergeParsedJsonIntoPolicy(p, fields['解析JSON']);
+  const jsonFieldName = JSON_FIELD_CANDIDATES.find(name => Object.prototype.hasOwnProperty.call(fields, name));
+  if (jsonFieldName) {
+    changed += mergeParsedJsonIntoPolicy(p, fields[jsonFieldName]);
   }
 
   Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
@@ -4334,11 +4385,15 @@ function applyFeishuFieldsToPolicy(p, fields) {
       changed++;
     }
     nextHistory.forEach(h => {
-      if (!/^删除字段[:：]/.test(h.reason || '')) return;
-      if (!h.field || !p.data || !Object.prototype.hasOwnProperty.call(p.data, h.field)) return;
-      delete p.data[h.field];
-      changed++;
-    });
+	    if (!/^删除字段[:：]/.test(h.reason || '')) return;
+	    if (!h.field || !p.data || !Object.prototype.hasOwnProperty.call(p.data, h.field)) return;
+	    delete p.data[h.field];
+	    if (p.data[FIELD_DEFINITIONS_KEY] && typeof p.data[FIELD_DEFINITIONS_KEY] === 'object') {
+	      delete p.data[FIELD_DEFINITIONS_KEY][h.field];
+	      if (!Object.keys(p.data[FIELD_DEFINITIONS_KEY]).length) delete p.data[FIELD_DEFINITIONS_KEY];
+	    }
+	    changed++;
+	  });
     if (!p.audit) p.audit = {};
     const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
     if (editedFields.length) p.audit.edited_fields = editedFields;
@@ -4351,8 +4406,9 @@ function applyFeishuFieldsToPolicy(p, fields) {
     }
   }
 
-  return changed;
-}
+	  changed += normalizePolicySchema(p);
+	  return changed;
+	}
 
 async function syncStatusesFromServer(showTip) {
   try {
