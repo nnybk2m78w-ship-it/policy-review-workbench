@@ -3102,7 +3102,7 @@ function renderProblems(main) {
 function renderFieldRow(p, f, isExtra) {
   const val = p.data[f];
   if (val === undefined || val === null || val === '') return '';
-  const displayVal = typeof val === 'boolean' ? (val ? '是' : '否') : String(val);
+  const displayVal = getFieldDisplayValue(f, val);
   const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
   const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
   const modIndicator = isModified 
@@ -3124,6 +3124,11 @@ function renderFieldRow(p, f, isExtra) {
       <span class="field-delete-btn" onclick="openDeleteField('${jsArg(p.id)}','${jsArg(f)}')" title="删除该字段">×</span>
     </div>
   </div>`;
+}
+
+function getFieldDisplayValue(field, value) {
+  if (field === 'manual_confirm_fields') return '人工确认';
+  return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
 }
 
 function renderFieldLabel(field, policy) {
@@ -3392,7 +3397,7 @@ function renderConfirm(main) {
     const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit','manual_confirm_fields'];
     keyFields.forEach(f => {
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
-        const v = typeof p.data[f] === 'boolean' ? (p.data[f] ? '是' : '否') : String(p.data[f]);
+        const v = getFieldDisplayValue(f, p.data[f]);
         kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f, p)}：</span><span class="v">${v}</span></div>`;
       }
     });
