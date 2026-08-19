@@ -2354,9 +2354,9 @@ const EXTRA_FIELD_EXCLUDE = new Set([
 
 const CUSTOM_FIELD_KEY_PREFIX = 'custom_';
 const LEGACY_CUSTOM_FIELD_MAP = {
-  custom_name: { key: 'benefit_name', label: '权益名称', logic: '当原文描述赠送/包含酒店券、行李、里程、选座等附加权益名称时提取。' },
-  custom_field_1ex1vq: { key: 'benefit_usage_rules', label: '权益使用规则', logic: '当原文包含附加权益的发放、激活、有效期、使用方式、限制条件时提取，仅提取当前文件自己的规则。' },
-  custom_route_not_applicable: { key: 'not_applicable_flight_routes', label: '不适用航班/航线明细', logic: '当原文列出不适用航线、航班号、日期、班期或附件表时提取明细；不得只写泛称。' },
+  custom_name: { key: 'benefit_name', label: '权益名称', value_type: 'string', description: '政策包含或赠送的附加权益名称', logic: '当原文描述赠送/包含酒店券、行李、里程、选座等附加权益名称时提取。' },
+  custom_field_1ex1vq: { key: 'benefit_usage_rules', label: '权益使用规则', value_type: 'string', description: '附加权益的发放、激活、有效期、使用方式和限制说明', logic: '当原文包含附加权益的发放、激活、有效期、使用方式、限制条件时提取，仅提取当前文件自己的规则。' },
+  custom_route_not_applicable: { key: 'not_applicable_flight_routes', label: '不适用航班/航线明细', value_type: 'string', description: '不适用的航线、航班号、日期、班期或舱位范围', logic: '当原文列出不适用航线、航班号、日期、班期或附件表时提取明细；不得只写泛称。' },
 };
 const FIELD_TERM_MAP = [
   ['销售', 'sale'], ['售卖', 'sale'], ['出票', 'ticketing'], ['航班', 'flight'], ['旅行', 'travel'],
@@ -2433,7 +2433,7 @@ function migrateLegacyCustomFields(data, policy) {
       data[def.key] = data[oldKey];
     }
     delete data[oldKey];
-    registerFieldDefinition(policy, def.key, def.label, def.logic);
+    registerFieldDefinition(policy, def.key, def);
   });
 }
 
@@ -2521,8 +2521,19 @@ function getExtraFieldKeys(p) {
     const value = p.data[key];
     return !GROUPED_FIELD_KEYS.has(key) &&
       !EXTRA_FIELD_EXCLUDE.has(key) &&
+      !!getFieldDefinition(p, key) &&
       value !== undefined && value !== null && normalizeFeishuValue(value) !== '';
   });
+}
+
+function getFieldsForGroup(p, group) {
+  const fields = [...group.fields];
+  if (group.title === '附加权益与限制') {
+    getExtraFieldKeys(p).forEach(key => {
+      if (!fields.includes(key)) fields.push(key);
+    });
+  }
+  return fields;
 }
 
 function normalizeFeishuValue(value) {
@@ -3290,19 +3301,13 @@ function renderReview(main) {
   let fieldsHtml = '';
   FIELD_GROUPS.forEach(group => {
     let groupRows = '';
-    group.fields.forEach(f => {
+    getFieldsForGroup(p, group).forEach(f => {
       groupRows += renderFieldRow(p, f, false);
     });
     if (groupRows) {
       fieldsHtml += `<div class="field-group"><div class="group-title">${group.title}</div>${groupRows}</div>`;
     }
   });
-
-  const extraFieldKeys = getExtraFieldKeys(p);
-  if (extraFieldKeys.length) {
-    const extraRows = extraFieldKeys.map(f => renderFieldRow(p, f, true)).join('');
-    fieldsHtml += `<div class="field-group"><div class="group-title">补充解析字段</div>${extraRows}</div>`;
-  }
 
   // File-level problems panel
   const fileProblems = p.problems || [];
@@ -3388,7 +3393,7 @@ function renderConfirm(main) {
     keyFields.forEach(f => {
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
         const v = typeof p.data[f] === 'boolean' ? (p.data[f] ? '是' : '否') : String(p.data[f]);
-        kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f)}：</span><span class="v">${v}</span></div>`;
+        kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f, p)}：</span><span class="v">${v}</span></div>`;
       }
     });
 
@@ -3801,12 +3806,12 @@ function closeFileProblems() {
   document.getElementById('fileProblemsOverlay').style.display = 'none';
 }
 
-function buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr) {
+function buildAutoProblemFromChange(policy, field, oldVal, newVal, reason, timeStr) {
   const isAddition = /^新增字段[:：]/.test(reason || '') || normalizeFeishuValue(oldVal) === '';
   const isDeletion = /^删除字段[:：]/.test(reason || '');
   return {
     field: field,
-    field_label: renderPlainFieldLabel(field, appState.policies.find(p => p.data && Object.prototype.hasOwnProperty.call(p.data, field))) || field,
+    field_label: renderPlainFieldLabel(field, policy) || field,
     desc: `${isDeletion ? '删除字段' : (isAddition ? '新增字段' : '字段修改')}：${oldVal || '(空)'} → ${newVal || '(空)'}；原因：${reason || '未填写'}`,
     created_by: (appState.user && appState.user.name) || '',
     created_at: timeStr,
@@ -4068,7 +4073,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
 
   if (normalizeFeishuValue(oldVal) !== normalizeFeishuValue(newVal)) {
     if (!p.problems) p.problems = [];
-    p.problems.push(buildAutoProblemFromChange(field, oldVal, newVal, reason, timeStr));
+    p.problems.push(buildAutoProblemFromChange(p, field, oldVal, newVal, reason, timeStr));
   }
 
   if (!opts.deleteField) {
