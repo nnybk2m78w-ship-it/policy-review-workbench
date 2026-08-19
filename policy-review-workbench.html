@@ -2265,7 +2265,7 @@ const REVIEW_POLICIES = [
   }
 ];
 
-const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "policy_code", "fare_basis", "corporate_code", "coupon_resource_code", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "附加权益与限制", "fields": ["benefit_name", "benefit_usage_rules", "not_applicable_flight_routes"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}, {"title": "人工确认", "fields": ["manual_confirm_fields"]}];
+const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "policy_code", "fare_basis", "corporate_code", "coupon_resource_code", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "附加权益与限制", "fields": ["benefit_name", "benefit_usage_rules", "not_applicable_flight_routes"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}];
 const LABELS = {
   "scenario": "解析场景",
   "business_line": "业务线",
@@ -2533,7 +2533,39 @@ function getFieldsForGroup(p, group) {
       if (!fields.includes(key)) fields.push(key);
     });
   }
+  getManualConfirmFieldKeys(p).forEach(key => {
+    if (group.fields.includes(key) && !fields.includes(key)) fields.push(key);
+  });
   return fields;
+}
+
+function getManualConfirmFieldKeys(p) {
+  const text = normalizeFeishuValue(p && p.data && p.data.manual_confirm_fields);
+  const keys = new Set();
+  if (!text) return [];
+  Object.entries(LABELS).forEach(([key, label]) => {
+    if (key === 'manual_confirm_fields') return;
+    if (label && text.includes(label)) keys.add(key);
+  });
+  [
+    [/销售|售卖/, 'sale_date'],
+    [/适用日期|乘机|航班日期|旅行|出行|航班时间/, 'depart_date'],
+    [/兑换|使用日期|使用时间/, 'use_date'],
+    [/适用舱位|舱位/, 'booking_cabin'],
+    [/航线范围|具体航线|航线金额|航线表|航线/, 'od'],
+    [/航程/, 'flight_type'],
+    [/直减|优惠|金额|价格/, 'discount_per'],
+    [/年龄|周岁/, 'age_limit'],
+    [/证件|身份证/, 'document_restrictions'],
+  ].forEach(([pattern, key]) => {
+    if (pattern.test(text)) keys.add(key);
+  });
+  return [...keys];
+}
+
+function isManualConfirmField(p, field) {
+  return getManualConfirmFieldKeys(p).includes(field) ||
+    normalizeFeishuValue(p && p.data && p.data[field]) === '需人工确认';
 }
 
 function normalizeFeishuValue(value) {
@@ -3101,8 +3133,9 @@ function renderProblems(main) {
 
 function renderFieldRow(p, f, isExtra) {
   const val = p.data[f];
-  if (val === undefined || val === null || val === '') return '';
-  const displayVal = getFieldDisplayValue(f, val);
+  const manualConfirm = isManualConfirmField(p, f);
+  if ((val === undefined || val === null || val === '') && !manualConfirm) return '';
+  const displayVal = getFieldDisplayValue(f, val, manualConfirm);
   const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
   const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
   const modIndicator = isModified 
@@ -3126,8 +3159,8 @@ function renderFieldRow(p, f, isExtra) {
   </div>`;
 }
 
-function getFieldDisplayValue(field, value) {
-  if (field === 'manual_confirm_fields') return '人工确认';
+function getFieldDisplayValue(field, value, manualConfirm) {
+  if (manualConfirm) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
 }
 
@@ -3394,7 +3427,7 @@ function renderConfirm(main) {
     
     // Build key fields summary
     let kvHtml = '';
-    const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit','manual_confirm_fields'];
+    const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit'];
     keyFields.forEach(f => {
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
         const v = getFieldDisplayValue(f, p.data[f]);
@@ -3829,7 +3862,7 @@ let pendingAddField = null; // { policyId }
 let addFieldRowSeq = 0;
 
 function buildAddFieldPresetOptions() {
-  const preferred = ['sale_date','redeem_date','use_date','depart_date','product_code','product_type','discount_per','age_limit','document_restrictions','benefit_name','benefit_usage_rules','not_applicable_flight_routes','od','booking_cabin','cabin','manual_confirm_fields'];
+  const preferred = ['sale_date','redeem_date','use_date','depart_date','product_code','product_type','discount_per','age_limit','document_restrictions','benefit_name','benefit_usage_rules','not_applicable_flight_routes','od','booking_cabin','cabin'];
   const keys = [...new Set([...preferred, ...Object.keys(LABELS)])];
   return keys.map(key =>
     `<option value="${escapeHtml(LABELS[key] || key)}" data-key="${escapeHtml(key)}"></option>`
