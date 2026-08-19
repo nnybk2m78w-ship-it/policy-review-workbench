@@ -15,6 +15,7 @@ const APP_SECRET = process.env.FEISHU_APP_SECRET;
 const BASE_TOKEN = process.env.FEISHU_BASE_TOKEN || 'EpBObMv3GaBOe3slKxdcOwJwnWc';
 const TABLE_ID = process.env.FEISHU_TABLE_ID || 'tblYWwuBfs3oylsh';
 const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6xFCnAc4gKBnDc';
+const VERSION_RECORD_DOC_TOKEN = process.env.FEISHU_VERSION_RECORD_DOC_TOKEN || 'KOlKwwvBEiMeEBk40mBckWN2nmg';
 const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
 
 const KEY_LABELS = {
@@ -711,20 +712,45 @@ function textDocBlock(content, blockType = 2) {
   };
 }
 
-async function appendKnowledgeGraphRecord(record) {
-  if (!KNOWLEDGE_DOC_ID) return { ok: false, skipped: true };
+async function resolveDocxToken(token, accessToken) {
+  if (!token) return '';
+  try {
+    const url = `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(token)}`;
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+    const data = await resp.json();
+    const node = data.data && data.data.node;
+    if (data.code === 0 && node && node.obj_token && (!node.obj_type || node.obj_type === 'docx')) {
+      return node.obj_token;
+    }
+  } catch (e) {
+    console.warn('[版本记录] wiki token 解析失败，尝试直接作为 docx token:', e.message);
+  }
+  return token;
+}
+
+async function appendVersionUpdateRecord(record) {
+  const targetToken = VERSION_RECORD_DOC_TOKEN || KNOWLEDGE_DOC_ID;
+  if (!targetToken) return { ok: false, skipped: true };
   try {
     const token = await getUserAccessToken();
+    const documentId = await resolveDocxToken(targetToken, token);
+    const updatedFiles = [
+      record.fileName ? `${record.fileName}（主文件解析结果）` : '',
+      ...(record.autoFiles || []).map(name => `${name}（待审文件自动矫正）`),
+    ].filter(Boolean);
     const lines = [
       `版本更新记录｜${record.time || new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      `更新时间：${record.time || new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      `操作人：${record.userName || ''}`,
       `触发文件：${record.fileName || ''}`,
-      `规则类型：${record.ruleType || ''}`,
       `字段：${record.fieldLabel || ''}`,
-      `修改：${record.oldValue || '(空)'} -> ${record.newValue || '(空)'}`,
+      `更新内容：${record.oldValue || '(空)'} -> ${record.newValue || '(空)'}`,
       `修改原因：${record.reason || ''}`,
-      `优化规则：${record.rule || ''}`,
-      `自动矫正：${record.autoApplied || 0} 份待审核文件`,
-      record.autoFiles && record.autoFiles.length ? `命中文件：${record.autoFiles.join('；')}` : '',
+      `学习结论：${record.rule || ''}`,
+      `规则类型：${record.ruleType || ''}`,
+      `更新文件解析结果：${updatedFiles.length ? updatedFiles.join('；') : '无'}`,
+      `相关待审文件自动矫正：${record.autoApplied || 0} 份`,
+      record.autoFiles && record.autoFiles.length ? `待审文件清单：${record.autoFiles.join('；')}` : '待审文件清单：无',
     ].filter(Boolean);
     const body = {
       index: -1,
@@ -733,7 +759,7 @@ async function appendKnowledgeGraphRecord(record) {
         ...lines.slice(1).map(line => textDocBlock(line, 2)),
       ],
     };
-    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${KNOWLEDGE_DOC_ID}/blocks/${KNOWLEDGE_DOC_ID}/children`;
+    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`;
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
@@ -748,7 +774,7 @@ async function appendKnowledgeGraphRecord(record) {
     }
     return { ok: true };
   } catch (e) {
-    console.warn('[知识图谱] 写入版本记录失败:', e.message);
+    console.warn('[版本记录] 写入失败:', e.message);
     return { ok: false, error: e.message };
   }
 }
@@ -1159,9 +1185,10 @@ app.post('/api/save-field', async (req, res) => {
         try {
           if (!systemGenerated) {
             const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
-            Object.assign(knowledge, await appendKnowledgeGraphRecord({
+            Object.assign(knowledge, await appendVersionUpdateRecord({
               time: new Date().toLocaleString('zh-CN', { hour12: false }),
               fileName: getFileName(sourceFields, sourceParsed),
+              userName: user ? user.name : '',
               fieldLabel,
               oldValue: entry.oldValue || '',
               newValue: newValue !== undefined ? String(newValue) : '',
@@ -1178,10 +1205,10 @@ app.post('/api/save-field', async (req, res) => {
         } catch (e) {
           knowledge.ok = false;
           knowledge.error = e.message;
-          console.warn('[知识图谱] 记录生成失败:', e.message);
+          console.warn('[版本记录] 记录生成失败:', e.message);
         }
 
-        console.log(`[保存字段后台] ✓ ${fieldLabel || ''} 自动矫正${autoCorrection.applied || 0}条 知识图谱${knowledge.ok ? '已写入' : '未写入'}`);
+        console.log(`[保存字段后台] ✓ ${fieldLabel || ''} 自动矫正${autoCorrection.applied || 0}条 版本记录${knowledge.ok ? '已写入' : '未写入'}`);
       })().catch(e => {
         console.warn('[保存字段后台] 异常:', e.message);
       });
@@ -1210,9 +1237,15 @@ app.post('/api/mark-problem', async (req, res) => {
 
     // 读取现有问题标记，追加一行
     let existingLines = [];
+    let sourceFields = {};
+    let sourceParsed = null;
+    let user = null;
+    try { user = await getCurrentUser(); } catch (e) { /* 忽略 */ }
     try {
       const record = await getFeishuRecord(recordId);
-      const raw = (record.fields || {})['问题标记'];
+      sourceFields = record.fields || {};
+      sourceParsed = parseJsonField(sourceFields[getJsonFieldName(sourceFields)]);
+      const raw = sourceFields['问题标记'];
       if (typeof raw === 'string' && raw.trim()) {
         existingLines = raw.split('\n').filter(Boolean);
       }
@@ -1228,6 +1261,22 @@ app.post('/api/mark-problem', async (req, res) => {
 
     console.log(`[标记问题] ✓ ${recordId} 问题 ${existingLines.length} 条`);
     res.json({ success: true, count: existingLines.length });
+
+    setImmediate(() => {
+      appendVersionUpdateRecord({
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+        userName: user ? user.name : (entry.created_by || ''),
+        fileName: getFileName(sourceFields, sourceParsed) || recordId,
+        fieldLabel: entry.field_label || '文件整体',
+        oldValue: '(标记前)',
+        newValue: entry.desc || '',
+        reason: entry.desc || '人工标记解析问题',
+        ruleType: '人工问题标记',
+        rule: '人工仅标记问题时，记录为待学习事项；完成字段修正后再沉淀具体解析规则并按安全规则矫正待审文件。',
+        autoApplied: 0,
+        autoFiles: [],
+      }).catch(e => console.warn('[版本记录] 标记问题记录生成失败:', e.message));
+    });
   } catch (err) {
     console.error(`[标记问题] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
