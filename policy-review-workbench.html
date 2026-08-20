@@ -2359,6 +2359,7 @@ const LEGACY_CUSTOM_FIELD_MAP = {
   custom_field_1ex1vq: { key: 'benefit_usage_rules', label: '权益使用规则', value_type: 'string', description: '附加权益的发放、激活、有效期、使用方式和限制说明', logic: '当原文包含附加权益的发放、激活、有效期、使用方式、限制条件时提取，仅提取当前文件自己的规则。' },
   custom_route_not_applicable: { key: 'not_applicable_flight_routes', label: '不适用航班/航线明细', value_type: 'string', description: '不适用的航线、航班号、日期、班期或舱位范围', logic: '当原文列出不适用航线、航班号、日期、班期或附件表时提取明细；不得只写泛称。' },
 };
+const SOURCE_BOUND_ADDED_FIELDS = ['benefit_name', 'benefit_usage_rules'];
 const FIELD_TERM_MAP = [
   ['销售', 'sale'], ['售卖', 'sale'], ['出票', 'ticketing'], ['航班', 'flight'], ['旅行', 'travel'],
   ['兑换', 'redeem'], ['使用', 'use'], ['日期', 'date'], ['时间', 'time'], ['开始', 'start'],
@@ -2444,6 +2445,58 @@ function canonicalizeLegacyFieldName(field) {
   return field;
 }
 
+function hasSourceEvidenceForField(policy, key, value) {
+  const text = [
+    policy && policy.file_name,
+    policy && policy.source_text,
+    policy && policy.data && policy.data.product_name,
+    policy && policy.data && policy.data.product_show,
+  ].map(normalizeFeishuValue).join('\n');
+  if (!SOURCE_BOUND_ADDED_FIELDS.includes(key)) return true;
+  if (!text.trim()) return false;
+  const val = normalizeFeishuValue(value);
+  if (/酒店|酒店券|房券|客房|深航酒店/.test(val)) return /酒店|酒店券|房券|客房|深航酒店/.test(text);
+  if (/行李|托运/.test(val)) return /行李|托运/.test(text);
+  if (/选座|座位/.test(val)) return /选座|座位/.test(text);
+  if (/积分|里程/.test(val)) return /积分|里程/.test(text);
+  return /权益|赠送|获赠|礼包|券|行李|选座|积分|里程|酒店|房券|客房/.test(text);
+}
+
+function purgeUnsupportedSourceBoundFields(policy) {
+  if (!policy || !policy.data) return 0;
+  let changed = 0;
+  SOURCE_BOUND_ADDED_FIELDS.forEach(key => {
+    if (!Object.prototype.hasOwnProperty.call(policy.data, key)) return;
+    if (hasSourceEvidenceForField(policy, key, policy.data[key])) return;
+    delete policy.data[key];
+    if (policy.data[FIELD_DEFINITIONS_KEY] && typeof policy.data[FIELD_DEFINITIONS_KEY] === 'object') {
+      delete policy.data[FIELD_DEFINITIONS_KEY][key];
+      if (!Object.keys(policy.data[FIELD_DEFINITIONS_KEY]).length) delete policy.data[FIELD_DEFINITIONS_KEY];
+    }
+    if (policy.audit && Array.isArray(policy.audit.edited_fields)) {
+      policy.audit.edited_fields = policy.audit.edited_fields.filter(f => f !== key);
+    }
+    changed++;
+  });
+  return changed;
+}
+
+function inferSourceBoundBenefitFields(policy) {
+  if (!policy || !policy.data || policy.data.benefit_name) return 0;
+  const text = normalizeFeishuValue(policy.source_text);
+  if (!/(获赠|赠送|赠予|包含|享有).{0,40}(酒店券|房券|客房券|酒店房券|深航酒店)/.test(text)) return 0;
+  const m = text.match(/(?:获赠|赠送|赠予|包含|享有)(?:由[^，。；\n]{0,30})?([^，。；\n]{0,20}(?:酒店券|房券|客房券|酒店房券)[^，。；\n]{0,12})/);
+  policy.data.benefit_name = m && m[1] ? m[1].trim() : '酒店券/房券';
+  registerFieldDefinition(policy, 'benefit_name', {
+    label: '权益名称',
+    json_key: 'benefit_name',
+    value_type: 'string',
+    description: '政策包含或赠送的附加权益名称',
+    logic: '仅当当前文件原文明确出现酒店券/房券等权益证据时提取，不得从其它文件复制字段值。',
+  });
+  return 1;
+}
+
 function normalizePolicySchema(policy) {
   if (!policy || !policy.data) return 0;
   const before = JSON.stringify({
@@ -2485,6 +2538,8 @@ function normalizePolicySchema(policy) {
       pr.field_label = renderPlainFieldLabel(pr.field, policy);
     }
   });
+  inferSourceBoundBenefitFields(policy);
+  purgeUnsupportedSourceBoundFields(policy);
   return before === JSON.stringify({
     data: policy.data,
     audit: policy.audit,
@@ -2507,6 +2562,7 @@ function mergeParsedJsonIntoPolicy(p, rawJson) {
   if (!p.data) p.data = {};
   Object.entries(data).forEach(([key, value]) => {
     if (value === undefined || value === null || EXTRA_FIELD_EXCLUDE.has(key)) return;
+    if (!hasSourceEvidenceForField(p, key, value)) return;
     const old = normalizeFeishuValue(p.data[key]);
     const next = normalizeFeishuValue(value);
     if (next !== '' && old !== next) {
@@ -4478,6 +4534,13 @@ function formatSyncTs(ts) {
 function applyFeishuFieldsToPolicy(p, fields) {
   if (!p || !fields) return 0;
   let changed = normalizePolicySchema(p);
+  if (Object.prototype.hasOwnProperty.call(fields, '原始文本')) {
+    const nextText = normalizeFeishuValue(fields['原始文本']);
+    if (nextText && p.source_text !== nextText) {
+      p.source_text = nextText;
+      changed++;
+    }
+  }
 
   const jsonFieldName = JSON_FIELD_CANDIDATES.find(name => Object.prototype.hasOwnProperty.call(fields, name));
   if (jsonFieldName) {
