@@ -2432,17 +2432,17 @@ function getFieldDefinition(policy, key) {
 }
 
 function getPolicyFileType(policy) {
+  const category = normalizeFeishuValue(policy && policy.category);
   const text = [
-    policy && policy.category,
+    category,
     policy && policy.data && policy.data.scenario,
     policy && policy.data && policy.data.product_family,
     policy && policy.data && policy.data.product_category,
     policy && policy.data && policy.data.product_name,
     policy && policy.file_name,
   ].map(normalizeFeishuValue).join(' ');
-  const cat = normalizeCategory(policy && policy.category);
-  if (cat === '01_次卡' || /次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
-  if (cat === '02_旗舰店' || /旗舰店/.test(text)) {
+  if (/^01_|次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(category) || /次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
+  if (/^02_|旗舰店/.test(category) || /旗舰店/.test(text)) {
     return /券类|优惠券|券码|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
   }
   return '自营';
