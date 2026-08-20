@@ -3006,8 +3006,9 @@ function purgeUnsupportedSourceBoundFields(policy) {
 }
 
 function isSystemHistoryEntry(entry) {
-  const text = `${entry && entry.user || ''} ${entry && entry.reason || ''}`;
-  return /AUTO_RULE|自动矫正|系统回滚|按当前原文复核拆分/.test(text);
+  const user = normalizeFeishuValue(entry && entry.user);
+  const reason = normalizeFeishuValue(entry && entry.reason);
+  return /AUTO_RULE|^系统$|^auto/i.test(user) || /^自动矫正/.test(reason) || /^系统回滚/.test(reason);
 }
 
 function applyManualHistoryValues(policy) {
