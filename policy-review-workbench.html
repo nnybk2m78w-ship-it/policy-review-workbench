@@ -3005,6 +3005,39 @@ function purgeUnsupportedSourceBoundFields(policy) {
   return changed;
 }
 
+function isSystemHistoryEntry(entry) {
+  const text = `${entry && entry.user || ''} ${entry && entry.reason || ''}`;
+  return /AUTO_RULE|自动矫正|系统回滚|按当前原文复核拆分/.test(text);
+}
+
+function applyManualHistoryValues(policy) {
+  if (!policy || !policy.data || !Array.isArray(policy._change_history)) return 0;
+  let changed = 0;
+  policy._change_history.forEach(entry => {
+    if (!entry || isSystemHistoryEntry(entry)) return;
+    const rawField = entry.field || entry.fieldLabel || '';
+    const field = canonicalizeLegacyFieldName(FIELD_LABEL_TO_KEY[rawField] || rawField);
+    if (!field || field === 'manual_confirm_fields' || EXTRA_FIELD_EXCLUDE.has(field)) return;
+    if (!isPromptAllowedField(policy, field)) return;
+    const isDeletion = /^删除字段[:：]/.test(entry.reason || '');
+    if (isDeletion) {
+      if (Object.prototype.hasOwnProperty.call(policy.data, field)) {
+        delete policy.data[field];
+        changed++;
+      }
+      return;
+    }
+    const next = normalizeFeishuValue(entry.newValue);
+    if (next === '') return;
+    if (normalizeFeishuValue(policy.data[field]) !== next) {
+      policy.data[field] = entry.newValue;
+      changed++;
+    }
+    changed += clearManualConfirmForField(policy, field);
+  });
+  return changed;
+}
+
 function inferSourceBoundBenefitFields(policy) {
   if (!policy || !policy.data || policy.data.benefit_name) return 0;
   const text = normalizeFeishuValue(policy.source_text);
@@ -3063,6 +3096,7 @@ function normalizePolicySchema(policy) {
       pr.field_label = renderPlainFieldLabel(pr.field, policy);
     }
   });
+  applyManualHistoryValues(policy);
   inferSourceBoundBenefitFields(policy);
   purgeUnsupportedSourceBoundFields(policy);
   return before === JSON.stringify({
@@ -5301,6 +5335,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
     const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
     if (editedFields.length) p.audit.edited_fields = editedFields;
     else if (normalizeFeishuValue(fields['已修改']) !== '是') delete p.audit.edited_fields;
+    changed += applyManualHistoryValues(p);
   } else if (Object.prototype.hasOwnProperty.call(fields, '已修改') && normalizeFeishuValue(fields['已修改']) !== '是') {
     if (p.audit && p.audit.edited_fields) {
       delete p.audit.edited_fields;
