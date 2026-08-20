@@ -3013,6 +3013,7 @@ function isSystemHistoryEntry(entry) {
 function applyManualHistoryValues(policy) {
   if (!policy || !policy.data || !Array.isArray(policy._change_history)) return 0;
   let changed = 0;
+  policy._change_history = policy._change_history.map(normalizeHistoryEntry);
   policy._change_history.forEach(entry => {
     if (!entry || isSystemHistoryEntry(entry)) return;
     const rawField = entry.field || entry.fieldLabel || '';
@@ -3358,7 +3359,9 @@ function parseChangeHistoryText(raw) {
   if (!text) return [];
   try {
     const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalizeHistoryEntry);
+    }
   } catch(e) {}
   return text.split('\n').filter(Boolean).map(line => {
     const m = line.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]*?)[:：]\s*(.*?)\s*→\s*(.*?)\s*\|\s*原因[:：]\s*(.*)$/);
@@ -3377,6 +3380,19 @@ function parseChangeHistoryText(raw) {
     }
     return { field: '', fieldLabel: '', oldValue: '', newValue: '', time: '', user: '', reason: line };
   });
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const fieldLabel = entry.fieldLabel || entry.field_label || entry.label || '';
+  const rawField = entry.field || fieldLabel || '';
+  return {
+    ...entry,
+    field: FIELD_LABEL_TO_KEY[rawField] || canonicalizeLegacyFieldName(rawField),
+    fieldLabel: fieldLabel || entry.fieldLabel || rawField,
+    oldValue: entry.oldValue !== undefined ? entry.oldValue : (entry.old !== undefined ? entry.old : ''),
+    newValue: entry.newValue !== undefined ? entry.newValue : (entry.new !== undefined ? entry.new : ''),
+  };
 }
 
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
@@ -3408,17 +3424,21 @@ if (saved) {
       const savedByFile = new Map(parsed.policies.map(p => [p.file_name, p]));
       appState.policies = REVIEW_POLICIES.map(p => {
         const savedEntry = savedById.get(p.id) || savedByFile.get(p.file_name);
-        if (savedEntry) {
-          const merged = {
-            ...p,
-            status: savedEntry.status || p.status,
-            confirmed_at: savedEntry.confirmed_at || p.confirmed_at,
-            data: { ...p.data, ...(savedEntry.data || {}) },
-            audit: savedEntry.audit || p.audit,
-            _change_history: savedEntry._change_history || [],
-	          };
-	          // 加载时清理：当前值等于原始值则移除修改标识
-	          refreshEditedFields(merged);
+	        if (savedEntry) {
+          const savedHistory = Array.isArray(savedEntry._change_history)
+            ? savedEntry._change_history.map(normalizeHistoryEntry)
+            : parseChangeHistoryText(savedEntry.change_history || (savedEntry.fields && savedEntry.fields['修改历史']) || '');
+	          const merged = {
+	            ...p,
+	            status: savedEntry.status || p.status,
+	            confirmed_at: savedEntry.confirmed_at || p.confirmed_at,
+	            data: { ...p.data, ...(savedEntry.data || {}) },
+	            audit: savedEntry.audit || p.audit,
+	            _change_history: savedHistory,
+		          };
+          delete merged._syncing;
+		          // 加载时清理：当前值等于原始值则移除修改标识
+		          refreshEditedFields(merged);
 	          normalizePolicySchema(merged);
 	          return merged;
 	        }
@@ -3433,8 +3453,13 @@ const propagatedOnLoad = propagateFieldDefinitionsByFileType();
 if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
 
 function saveState() {
+  const persistedPolicies = appState.policies.map(p => {
+    const clean = { ...p };
+    delete clean._syncing;
+    return clean;
+  });
   localStorage.setItem('policy_review_state', JSON.stringify({
-    policies: appState.policies,
+    policies: persistedPolicies,
     currentFileId: appState.currentFileId,
     currentView: appState.currentView,
     statusFilter: appState.statusFilter || '',
