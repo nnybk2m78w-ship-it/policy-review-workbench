@@ -2378,6 +2378,29 @@ const PROMPT_ALLOWED_SHARED_FIELDS = new Set([
   'student_verification_rules', 'customer_limit', 'card_limit',
   'customer_limit_origin', 'refund_change_together'
 ]);
+const CORE_MANUAL_FIELDS_BY_TYPE = {
+  '自营': new Set([
+    'scenario', 'business_line', 'carrier', 'carrier_name', 'product_name',
+    'product_type', 'fare_basis', 'corporate_code', 'flight_type', 'od',
+    'booking_cabin', 'cabin', 'sale_date', 'depart_date', 'discount_type',
+    'discount_per', 'sign_and_transfer_rules', 'refund_rules', 'change_rules'
+  ]),
+  '旗舰店code': new Set([
+    'scenario', 'business_line', 'carrier', 'product_name', 'product_type',
+    'product_code', 'flight_type', 'od', 'cabin', 'sale_date', 'depart_date',
+    'discount_type', 'discount_per', 'passenger_type', 'sign_and_transfer_rules',
+    'refund_rules', 'change_rules'
+  ]),
+  '旗舰店券类': new Set([
+    'scenario', 'business_line', 'carrier', 'product_name', 'coupon_resource_code',
+    'sale_date', 'depart_date', 'discount_type', 'discount_per'
+  ]),
+  '次卡': new Set([
+    'scenario', 'business_line', 'carrier', 'product_name', 'product_code',
+    'flight_type', 'travel_class', 'usage_times', 'sale_date', 'use_date',
+    'depart_date', 'price_groups_summary'
+  ])
+};
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const EXTRA_FIELD_EXCLUDE = new Set([
   'source_files', 'document_type', 'file_name', 'category', 'subcategory', 'business_type',
@@ -2745,16 +2768,30 @@ function getManualConfirmFieldKeys(p) {
 }
 
 function isManualConfirmField(p, field) {
-  const value = normalizeFeishuValue(p && p.data && p.data[field]);
-  return getManualConfirmFieldKeys(p).includes(field) ||
-    isManualConfirmValue(value);
+  if (getManualConfirmFieldKeys(p).includes(field)) return true;
+  const hasValueSlot = !!(p && p.data && Object.prototype.hasOwnProperty.call(p.data, field));
+  if (!hasValueSlot) return false;
+  return isManualConfirmValue(p.data[field]);
+}
+
+function isCoreManualField(p, field) {
+  const set = CORE_MANUAL_FIELDS_BY_TYPE[getPolicyFileType(p)];
+  return !!(set && set.has(field));
+}
+
+function shouldShowManualConfirmField(p, field) {
+  if (getManualConfirmFieldKeys(p).includes(field)) return true;
+  if (isCoreManualField(p, field)) return true;
+  if (p && p.audit && Array.isArray(p.audit.edited_fields) && p.audit.edited_fields.includes(field)) return true;
+  if ((p && p.problems || []).some(pr => pr.field === field)) return true;
+  return false;
 }
 
 function getUnresolvedManualConfirmFields(p) {
   const keys = new Set(getManualConfirmFieldKeys(p));
   Object.entries((p && p.data) || {}).forEach(([key, value]) => {
     const text = normalizeFeishuValue(value);
-    if (key !== 'manual_confirm_fields' && isManualConfirmValue(text)) keys.add(key);
+    if (key !== 'manual_confirm_fields' && isManualConfirmValue(text) && shouldShowManualConfirmField(p, key)) keys.add(key);
   });
   const edited = new Set((p && p.audit && p.audit.edited_fields) || []);
   return [...keys].filter(key => {
@@ -3343,9 +3380,14 @@ function renderProblems(main) {
 function renderFieldRow(p, f, isExtra) {
   if (!isPromptAllowedField(p, f)) return '';
   const val = p.data[f];
+  const hasValueSlot = !!(p && p.data && Object.prototype.hasOwnProperty.call(p.data, f));
+  const isEmptyValue = val === undefined || val === null || val === '';
   const manualConfirm = isManualConfirmField(p, f);
+  if (manualConfirm && !shouldShowManualConfirmField(p, f)) return '';
   const schemaDefined = definitionAppliesToPolicy(getFieldDefinition(p, f), p);
-  if ((val === undefined || val === null || val === '') && !manualConfirm && !schemaDefined) return '';
+  if (isEmptyValue && !manualConfirm) {
+    if (!schemaDefined || !isCoreManualField(p, f) || !hasValueSlot) return '';
+  }
   const displayVal = getFieldDisplayValue(f, val, manualConfirm);
   const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
   const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
