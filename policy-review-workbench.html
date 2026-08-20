@@ -224,6 +224,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm { padding:5px 14px; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500; transition:all 0.2s; white-space:nowrap; }
 .btn-sm-confirm { background:var(--primary); color:#fff; }
 .btn-sm-confirm:hover { background:#0773c5; }
+.btn-sm-confirm:disabled, .btn-confirm:disabled { opacity:0.45; cursor:not-allowed; }
 .btn-sm-confirmed { background:var(--success); color:#fff; cursor:default; }
 .btn-sm-reopen { background:#fff; color:#b58900; border:1px solid #f1c75b; }
 .btn-sm-reopen:hover { background:#fff8dc; }
@@ -2564,8 +2565,28 @@ function getManualConfirmFieldKeys(p) {
 }
 
 function isManualConfirmField(p, field) {
+  const value = normalizeFeishuValue(p && p.data && p.data[field]);
   return getManualConfirmFieldKeys(p).includes(field) ||
-    normalizeFeishuValue(p && p.data && p.data[field]) === '需人工确认';
+    value === '需人工确认' || /^需人工确认/.test(value);
+}
+
+function getUnresolvedManualConfirmFields(p) {
+  const keys = new Set(getManualConfirmFieldKeys(p));
+  Object.entries((p && p.data) || {}).forEach(([key, value]) => {
+    const text = normalizeFeishuValue(value);
+    if (key !== 'manual_confirm_fields' && (text === '需人工确认' || /^需人工确认/.test(text))) keys.add(key);
+  });
+  const edited = new Set((p && p.audit && p.audit.edited_fields) || []);
+  return [...keys].filter(key => {
+    const value = normalizeFeishuValue(p && p.data && p.data[key]);
+    const stillManual = value === '' || value === '需人工确认' || /^需人工确认/.test(value);
+    return stillManual || !edited.has(key);
+  });
+}
+
+function getManualConfirmBlockMessage(p) {
+  const labels = getUnresolvedManualConfirmFields(p).map(key => renderPlainFieldLabel(key, p));
+  return labels.length ? `请先修改人工确认字段：${labels.join('、')}` : '';
 }
 
 function normalizeFeishuValue(value) {
@@ -3364,9 +3385,12 @@ function renderReview(main) {
   const statusBadge = `<span class="status-badge ${statusInfo.cls}">${statusInfo.text}</span>`;
 
   // Confirm button
+  const manualBlockMsg = getManualConfirmBlockMessage(p);
   const confirmBtn = isConfirmed
     ? `<span><button class="btn-sm btn-sm-confirmed" disabled>已确认 ✓</button><button class="btn-sm btn-sm-reopen" onclick="reopenFile('${p.id}')">恢复待确认</button>${p.confirmed_by && p.confirmed_by.name ? `<span class="confirmed-by-tag" style="margin-left:8px">确认人：${escapeHtml(p.confirmed_by.name)}</span>` : ''}</span>`
-    : `<button class="btn-sm btn-sm-confirm" onclick="confirmFile('${p.id}')">✓ 确认此文件</button>`;
+    : manualBlockMsg
+      ? `<button class="btn-sm btn-sm-confirm" disabled title="${escapeHtml(manualBlockMsg)}">✓ 确认此文件</button>`
+      : `<button class="btn-sm btn-sm-confirm" onclick="confirmFile('${p.id}')">✓ 确认此文件</button>`;
 
   // File-level modified badge
   const fileModBadge = hasFileChanges(p)
@@ -3451,8 +3475,11 @@ function renderConfirm(main) {
       html += '</div>';
     }
 
+    const manualBlockMsg = getManualConfirmBlockMessage(p);
     if (!isConfirmed) {
-      html += `<button class="btn-confirm ready" onclick="confirmFile('${p.id}')">确认此文件</button>`;
+      html += manualBlockMsg
+        ? `<button class="btn-confirm ready" disabled title="${escapeHtml(manualBlockMsg)}">确认此文件</button>`
+        : `<button class="btn-confirm ready" onclick="confirmFile('${p.id}')">确认此文件</button>`;
     } else {
       html += `<button class="btn-confirm done" disabled>已确认 ✓</button><button class="btn-sm btn-sm-reopen" style="margin-top:12px;margin-left:8px" onclick="reopenFile('${p.id}')">恢复待确认</button>`;
     }
@@ -4177,6 +4204,17 @@ let syncQueue = []; // pending sync items
 async function confirmFile(id) {
   const p = appState.policies.find(x => x.id === id);
   if (!p || p._syncing) return;
+  const manualBlockMsg = getManualConfirmBlockMessage(p);
+  if (manualBlockMsg) {
+    showToast(manualBlockMsg, 'error', 4200);
+    if (appState.currentView !== 'review') {
+      appState.currentView = 'review';
+      appState.currentFileId = p.id;
+      saveState();
+      render();
+    }
+    return;
+  }
 
   p._syncing = true;
   showToast('正在同步到飞书...', '');
