@@ -4799,7 +4799,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== INIT =====
-if (appState.policies.length > 0 && !appState.currentFileId) {
+if (appState.policies.length > 0 && (!appState.currentFileId || !appState.policies.some(p => p.id === appState.currentFileId))) {
   appState.currentFileId = appState.policies[0].id;
 }
 // 初始化 segmented 高亮
