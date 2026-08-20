@@ -551,6 +551,64 @@ function getParsedValue(parsed, key) {
   return '';
 }
 
+function manualConfirmPatternForField(fieldKey, fieldLabel) {
+  const label = normalizeFeishuValue(fieldLabel || KEY_LABELS[fieldKey] || fieldKey);
+  const patterns = {
+    sale_date: /销售|售卖|出票日期|出票时间/,
+    depart_date: /航班日期|旅行|出行|乘机|航班时间|适用日期/,
+    use_date: /兑换|使用日期|使用时间/,
+    redeem_date: /兑换|使用日期|使用时间/,
+    booking_cabin: /适用舱位|订座舱位|舱位/,
+    cabin: /适用舱位|订座舱位|舱位/,
+    od: /航线范围|具体航线|航线金额|航线表|航线/,
+    flight_type: /航程/,
+    discount_per: /直减|优惠|金额|价格|比例/,
+    age_limit: /年龄|周岁/,
+    document_restrictions: /证件|身份证/,
+  };
+  if (patterns[fieldKey]) return patterns[fieldKey];
+  if (label && label !== fieldKey) {
+    return new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  }
+  return null;
+}
+
+function stripManualConfirmForField(raw, fieldKey, fieldLabel) {
+  const text = normalizeFeishuValue(raw);
+  if (!text) return text;
+  const pattern = manualConfirmPatternForField(fieldKey, fieldLabel);
+  if (!pattern) return text;
+  return text
+    .split(/[；;\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .filter(part => !(pattern.test(part) && /人工确认|需人工确认|待确认|未明确|未稳定识别|未提供|缺少/.test(part)))
+    .join('；');
+}
+
+function clearParsedManualConfirmForField(parsed, fieldKey, fieldLabel) {
+  if (!parsed || !fieldKey) return false;
+  let changed = false;
+  const applyOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    const next = stripManualConfirmForField(obj.manual_confirm_fields, fieldKey, fieldLabel);
+    if (normalizeFeishuValue(obj.manual_confirm_fields) !== next) {
+      obj.manual_confirm_fields = next;
+      changed = true;
+    }
+    if (obj.data && typeof obj.data === 'object') {
+      const dataNext = stripManualConfirmForField(obj.data.manual_confirm_fields, fieldKey, fieldLabel);
+      if (normalizeFeishuValue(obj.data.manual_confirm_fields) !== dataNext) {
+        obj.data.manual_confirm_fields = dataNext;
+        changed = true;
+      }
+    }
+  };
+  if (Array.isArray(parsed)) parsed.forEach(applyOne);
+  else applyOne(parsed);
+  return changed;
+}
+
 function appendManualNote(parsed, note) {
   if (!parsed || !note) return false;
   const appendOne = (obj) => {
@@ -1198,7 +1256,8 @@ app.post('/api/save-field', async (req, res) => {
 
     existingHistory.push(entry);
     const historyText = formatChangeHistory(existingHistory);
-    const isFieldAddition = /^新增字段[:：]/.test(entry.reason || '') || isBlankish(entry.oldValue);
+    const oldText = normalizeFeishuValue(entry.oldValue);
+    const isFieldAddition = /^新增字段[:：]/.test(entry.reason || '') || oldText === '' || oldText === '(空)' || oldText === '空';
     const isFieldDeletion = !!deleteField || /^删除字段[:：]/.test(entry.reason || '');
     const isEffectiveChange = normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue);
     const autoProblemLine = isEffectiveChange
@@ -1219,13 +1278,23 @@ app.post('/api/save-field', async (req, res) => {
       console.warn(`[保存字段] 表格中不存在字段「${fieldLabel}」，仅记录修改历史`);
     }
 
+    let changedJson = false;
     if (sourceParsed && fieldKey) {
-      const changedJson = deleteField
+      changedJson = deleteField
         ? deleteParsedField(sourceParsed, fieldKey)
         : setParsedField(sourceParsed, fieldKey, newValue !== undefined ? String(newValue) : '', fieldDefinition);
-      if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
-        fields[jsonFieldName] = stringifyJsonField(sourceParsed);
+    }
+    if (!deleteField && fieldKey && !isBlankish(newValue)) {
+      const cleanedManual = stripManualConfirmForField(sourceFields['人工确认项'], fieldKey, fieldLabel);
+      if (normalizeFeishuValue(sourceFields['人工确认项']) !== cleanedManual && state.tableFields && state.tableFields.includes('人工确认项')) {
+        fields['人工确认项'] = cleanedManual;
       }
+      if (sourceParsed) {
+        changedJson = clearParsedManualConfirmForField(sourceParsed, fieldKey, fieldLabel) || changedJson;
+      }
+    }
+    if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
+      fields[jsonFieldName] = stringifyJsonField(sourceParsed);
     }
 
     await updateFeishuRecord(recordId, fields);

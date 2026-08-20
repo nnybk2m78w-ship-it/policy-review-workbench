@@ -1715,7 +1715,7 @@ const REVIEW_POLICIES = [
       "flight_type": "单程",
       "booking_cabin": "M/M1/U/U1/H/H1/Q/Q1/V/V1/W/S/S1/P/K",
       "cabin": "M/M1/U/U1/H/H1/Q/Q1/V/V1/W/S/S1/P/K",
-      "sale_date": "需人工确认至2025-08-31",
+      "sale_date": "2025.8.22-2025.8.31",
       "depart_date": "2025-08-22至2025-08-31",
       "discount_type": "",
       "discount_per": "8%",
@@ -1735,7 +1735,7 @@ const REVIEW_POLICIES = [
       "refund_rules": "退票规定按照最新版《深航国内运输客票使用条件》执行。",
       "change_rules": "变更规定按照最新版《深航国内运输客票使用条件》执行。",
       "luggage_amount": "",
-      "manual_confirm_fields": "原文未明确销售起止，仅有文件日期2025-08-22及乘机时间2025-08-22至2025-08-31，销售日期需人工确认",
+      "manual_confirm_fields": "",
       "evidence": {
         "dates": "",
         "product_code": "CX20250822",
@@ -2700,7 +2700,6 @@ const REVIEW_POLICIES = [
     "_change_history": []
   }
 ];
-
 const FIELD_GROUPS = [{"title": "场景与产品", "fields": ["scenario", "business_line", "channel_note", "carrier", "carrier_name", "product_name", "product_show", "product_family", "product_type", "product_code", "product_code_raw", "policy_code", "fare_basis", "corporate_code", "coupon_resource_code", "product_category", "usage_times", "travel_class", "json_count"]}, {"title": "适用范围", "fields": ["flight_type", "trip_type_note", "od", "od_note", "booking_cabin", "cabin", "cabin_count", "sale_date", "redeem_date", "use_date", "use_limit", "use_begin", "wether_depart_today", "depart_date", "depart_date_note", "advance_purchase_days", "ticket_type", "ticket_stock"]}, {"title": "优惠与旅客", "fields": ["discount_type", "discount_per", "passenger_type", "customer_limit_group", "age_limit", "child_applicable", "baby_applicable", "membership_limit", "realname_required", "realname_limit", "id_type_restriction", "document_restrictions"]}, {"title": "退改签与规则", "fields": ["sign_and_transfer_rules", "refund_rules", "refund_change_note", "change_rules", "refund_time", "luggage_amount", "commission_rate", "rounding_rule", "fc_fn_fp_note"]}, {"title": "附加权益与限制", "fields": ["benefit_name", "benefit_usage_rules", "not_applicable_flight_routes"]}, {"title": "次卡数据", "fields": ["price_groups_summary", "use_code", "office_scope", "office_count", "route_row_count", "unique_route_count", "flight_count", "amount_tiers", "amount_range", "price_tiers_count", "top_5_hubs"]}];
 const LABELS = {
   "scenario": "解析场景",
@@ -3199,6 +3198,45 @@ function getManualConfirmFieldKeys(p) {
     if (pattern.test(text)) keys.add(key);
   });
   return [...keys];
+}
+
+function manualConfirmPatternForField(field, policy) {
+  const label = renderPlainFieldLabel(field, policy);
+  const patterns = {
+    sale_date: /销售|售卖|出票日期|出票时间/,
+    depart_date: /航班日期|旅行|出行|乘机|航班时间|适用日期/,
+    use_date: /兑换|使用日期|使用时间/,
+    redeem_date: /兑换|使用日期|使用时间/,
+    booking_cabin: /适用舱位|订座舱位|舱位/,
+    cabin: /适用舱位|订座舱位|舱位/,
+    od: /航线范围|具体航线|航线金额|航线表|航线/,
+    flight_type: /航程/,
+    discount_per: /直减|优惠|金额|价格|比例/,
+    age_limit: /年龄|周岁/,
+    document_restrictions: /证件|身份证/,
+  };
+  if (patterns[field]) return patterns[field];
+  if (label && label !== field) {
+    return new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  }
+  return null;
+}
+
+function clearManualConfirmForField(policy, field) {
+  if (!policy || !policy.data || !field || isManualConfirmValue(policy.data[field])) return 0;
+  const text = normalizeFeishuValue(policy.data.manual_confirm_fields);
+  if (!text) return 0;
+  const pattern = manualConfirmPatternForField(field, policy);
+  if (!pattern) return 0;
+  const next = text
+    .split(/[；;\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .filter(part => !(pattern.test(part) && /人工确认|需人工确认|待确认|未明确|未稳定识别|未提供|缺少/.test(part)))
+    .join('；');
+  if (next === text) return 0;
+  policy.data.manual_confirm_fields = next;
+  return 1;
 }
 
 function isManualConfirmField(p, field) {
@@ -4841,6 +4879,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
     }
   } else {
     p.data[field] = newVal;
+    clearManualConfirmForField(p, field);
   }
 
   // 标记已修改字段
