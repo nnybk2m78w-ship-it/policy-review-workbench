@@ -135,7 +135,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm-danger:hover { background:#c0392b; }
 .add-field-list { margin-top:10px; border-top:1px solid #f1f2f6; max-height:56vh; overflow:auto; padding-right:4px; }
 .add-field-modal { width:920px; max-width:94vw; max-height:92vh; overflow:auto; }
-.add-field-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(150px,1fr) 130px 30px; grid-template-areas:"label key format action" "desc desc desc action" "value value value action" "logic logic logic action"; gap:8px; align-items:start; padding:10px 0; border-bottom:1px solid #f1f2f6; }
+.add-field-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(150px,1fr) 120px 140px 30px; grid-template-areas:"label key format ftype action" "desc desc desc desc action" "value value value value action" "logic logic logic logic action"; gap:8px; align-items:start; padding:10px 0; border-bottom:1px solid #f1f2f6; }
 .add-field-row input, .add-field-row textarea { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
 .add-field-row select { width:100%; border:1px solid var(--border); border-radius:4px; padding:7px 8px; font-size:13px; outline:none; background:#fff; }
 .add-field-row input:focus, .add-field-row textarea:focus { border-color:var(--primary); }
@@ -144,6 +144,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .add-field-key-input { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color:#4b5563; }
 .add-field-key-input { grid-area:key; }
 .add-field-format-input { grid-area:format; }
+.add-field-type-input { grid-area:ftype; }
 .add-field-desc-input { grid-area:desc; }
 .add-field-content-input { grid-area:value; min-height:54px !important; }
 .add-field-logic-input { grid-area:logic; min-height:54px !important; }
@@ -155,7 +156,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .add-field-reason:focus { border-color:var(--primary); }
 .custom-field-hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
 @media (max-width: 760px) {
-  .add-field-row { grid-template-columns:1fr 30px; grid-template-areas:"label action" "key action" "format action" "desc desc" "value value" "logic logic"; }
+  .add-field-row { grid-template-columns:1fr 30px; grid-template-areas:"label action" "key action" "format action" "ftype action" "desc desc" "value value" "logic logic"; }
 }
 
 /* 问题清单视图 */
@@ -429,7 +430,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <datalist id="addFieldLabelOptions"></datalist>
     <div class="add-field-list" id="addFieldRows"></div>
     <textarea id="addFieldReason" class="add-field-reason" placeholder="请填写补充原因（必填，用于后续学习：为什么原解析漏了这些字段？证据在哪？）"></textarea>
-    <div class="custom-field-hint">每个新增字段都按正式字段定义保存：字段中文名、JSON key、字段格式、字段简述、字段内容、提取逻辑。使用已有字段名时会自动使用原始 JSON key；完全新增字段会自动生成可读英文 key，也可人工调整。</div>
+    <div class="custom-field-hint">每个新增字段都按正式字段定义保存：字段中文名、JSON key、字段格式、文件类型、字段简述、字段内容、提取逻辑。字段定义会应用到同文件类型，字段内容必须按每份文件原文单独解析，不能复制。</div>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelAddField()">取消</button>
       <button class="btn-sm btn-sm-confirm" onclick="submitAddField()">保存新增字段</button>
@@ -2374,6 +2375,7 @@ const FIELD_TERM_MAP = [
   ['权益', 'benefit'], ['酒店券', 'hotel_voucher'], ['酒店', 'hotel'], ['服务', 'service'],
   ['发放', 'issue'], ['激活', 'activate'],
 ];
+const FIELD_FILE_TYPES = ['次卡', '旗舰店code', '旗舰店券类', '自营'];
 
 function jsArg(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
@@ -2418,6 +2420,7 @@ function registerFieldDefinition(policy, key, label, logic, valueType, descripti
     label: nextLabel,
     json_key: key,
     value_type: input.value_type || input.format || (defs[key] && defs[key].value_type) || 'string',
+    file_type: input.file_type || input.fileType || (defs[key] && defs[key].file_type) || getPolicyFileType(policy),
     description: input.description || input.summary || (defs[key] && defs[key].description) || '',
     logic: input.logic || (defs[key] && defs[key].logic) || '',
   };
@@ -2426,6 +2429,28 @@ function registerFieldDefinition(policy, key, label, logic, valueType, descripti
 function getFieldDefinition(policy, key) {
   const defs = policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY];
   return (defs && defs[key]) || null;
+}
+
+function getPolicyFileType(policy) {
+  const text = [
+    policy && policy.category,
+    policy && policy.data && policy.data.scenario,
+    policy && policy.data && policy.data.product_family,
+    policy && policy.data && policy.data.product_category,
+    policy && policy.data && policy.data.product_name,
+    policy && policy.file_name,
+  ].map(normalizeFeishuValue).join(' ');
+  const cat = normalizeCategory(policy && policy.category);
+  if (cat === '01_次卡' || /次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
+  if (cat === '02_旗舰店' || /旗舰店/.test(text)) {
+    return /券类|优惠券|券码|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  }
+  return '自营';
+}
+
+function definitionAppliesToPolicy(def, policy) {
+  if (!def) return false;
+  return !def.file_type || def.file_type === getPolicyFileType(policy);
 }
 
 function migrateLegacyCustomFields(data, policy) {
@@ -2469,10 +2494,6 @@ function purgeUnsupportedSourceBoundFields(policy) {
     if (!Object.prototype.hasOwnProperty.call(policy.data, key)) return;
     if (hasSourceEvidenceForField(policy, key, policy.data[key])) return;
     delete policy.data[key];
-    if (policy.data[FIELD_DEFINITIONS_KEY] && typeof policy.data[FIELD_DEFINITIONS_KEY] === 'object') {
-      delete policy.data[FIELD_DEFINITIONS_KEY][key];
-      if (!Object.keys(policy.data[FIELD_DEFINITIONS_KEY]).length) delete policy.data[FIELD_DEFINITIONS_KEY];
-    }
     if (policy.audit && Array.isArray(policy.audit.edited_fields)) {
       policy.audit.edited_fields = policy.audit.edited_fields.filter(f => f !== key);
     }
@@ -2507,6 +2528,7 @@ function normalizePolicySchema(policy) {
   });
   migrateLegacyCustomFields(policy.data, policy);
   Object.entries(policy.data[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
+    if (def && !def.file_type) def.file_type = getPolicyFileType(policy);
     registerFieldDefinition(policy, key, def);
   });
   (policy._change_history || []).forEach(h => {
@@ -2548,6 +2570,61 @@ function normalizePolicySchema(policy) {
   }) ? 0 : 1;
 }
 
+function propagateFieldDefinitionsByFileType() {
+  const definitions = [];
+  appState.policies.forEach(policy => {
+    const defs = policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY];
+    Object.entries(defs || {}).forEach(([key, def]) => {
+      if (!def || !def.file_type) return;
+      definitions.push({ key, def });
+    });
+  });
+  let changed = 0;
+  definitions.forEach(({ key, def }) => {
+    appState.policies.forEach(policy => {
+      if (getPolicyFileType(policy) !== def.file_type) return;
+      const before = JSON.stringify(getFieldDefinition(policy, key) || {});
+      registerFieldDefinition(policy, key, def);
+      if (JSON.stringify(getFieldDefinition(policy, key) || {}) !== before) changed++;
+    });
+  });
+  return changed;
+}
+
+function applyFieldDefinitionToFileType(fieldKey, fieldDefinition) {
+  if (!fieldKey || !fieldDefinition || !fieldDefinition.file_type) return 0;
+  let changed = 0;
+  appState.policies.forEach(policy => {
+    if (getPolicyFileType(policy) !== fieldDefinition.file_type) return;
+    const before = JSON.stringify(getFieldDefinition(policy, fieldKey) || {});
+    registerFieldDefinition(policy, fieldKey, fieldDefinition);
+    if (JSON.stringify(getFieldDefinition(policy, fieldKey) || {}) !== before) changed++;
+  });
+  return changed;
+}
+
+function syncFieldDefinitionToServer(sourceRecordId, fieldKey, fieldDefinition) {
+  fetch('/api/apply-field-definition', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sourceRecordId, fieldKey, fieldDefinition }),
+  })
+    .then(resp => resp.json())
+    .then(result => {
+      if (result.success) {
+        showToast(`字段定义已应用到${fieldDefinition.file_type}：${result.updated || 0}份文件`, 'success', 2600);
+        syncStatusesFromServer(false);
+      } else if (result.needAuth) {
+        showInlineSyncBar('飞书授权已失效，字段定义已保存在当前页面，请授权后刷新核对',
+          `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+      }
+    })
+    .catch(() => {
+      showInlineSyncBar('字段定义暂未同步到飞书，当前页面已保留，请稍后刷新核对',
+        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
+    });
+}
+
 function mergeParsedJsonIntoPolicy(p, rawJson) {
   const parsed = parseJsonText(rawJson);
   if (!parsed) return 0;
@@ -2575,11 +2652,9 @@ function mergeParsedJsonIntoPolicy(p, rawJson) {
 
 function getExtraFieldKeys(p) {
   return Object.keys((p && p.data) || {}).filter(key => {
-    const value = p.data[key];
     return !GROUPED_FIELD_KEYS.has(key) &&
       !EXTRA_FIELD_EXCLUDE.has(key) &&
-      !!getFieldDefinition(p, key) &&
-      value !== undefined && value !== null && normalizeFeishuValue(value) !== '';
+      definitionAppliesToPolicy(getFieldDefinition(p, key), p);
   });
 }
 
@@ -2755,7 +2830,8 @@ if (saved) {
 	  } catch(e) {}
 	}
 const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
-if (normalizedOnLoad) setTimeout(saveState, 0);
+const propagatedOnLoad = propagateFieldDefinitionsByFileType();
+if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
 
 function saveState() {
   localStorage.setItem('policy_review_state', JSON.stringify({
@@ -3211,7 +3287,8 @@ function renderProblems(main) {
 function renderFieldRow(p, f, isExtra) {
   const val = p.data[f];
   const manualConfirm = isManualConfirmField(p, f);
-  if ((val === undefined || val === null || val === '') && !manualConfirm) return '';
+  const schemaDefined = definitionAppliesToPolicy(getFieldDefinition(p, f), p);
+  if ((val === undefined || val === null || val === '') && !manualConfirm && !schemaDefined) return '';
   const displayVal = getFieldDisplayValue(f, val, manualConfirm);
   const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
   const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
@@ -3238,6 +3315,7 @@ function renderFieldRow(p, f, isExtra) {
 
 function getFieldDisplayValue(field, value, manualConfirm) {
   if (manualConfirm) return '人工确认';
+  if (value === undefined || value === null || value === '') return '未提取';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
 }
 
@@ -3959,7 +4037,9 @@ function addAddFieldRow(label, value) {
   const row = document.createElement('div');
   row.className = 'add-field-row';
   row.dataset.rowId = rowId;
-  const key = label ? resolveAddFieldKey(label, appState.policies.find(x => pendingAddField && x.id === pendingAddField.policyId)) : '';
+  const p = appState.policies.find(x => pendingAddField && x.id === pendingAddField.policyId);
+  const key = label ? resolveAddFieldKey(label, p) : '';
+  const currentType = getPolicyFileType(p);
   row.innerHTML = `
     <input class="add-field-label-input" list="addFieldLabelOptions" placeholder="字段中文名" value="${escapeHtml(label || '')}" oninput="syncAddFieldKey(this)">
     <input class="add-field-key-input" placeholder="JSON key" value="${escapeHtml(key || '')}" oninput="this.dataset.touched='1'">
@@ -3970,6 +4050,9 @@ function addAddFieldRow(label, value) {
       <option value="array">array</option>
       <option value="object">object</option>
       <option value="date_range">date_range</option>
+    </select>
+    <select class="add-field-type-input" title="文件类型">
+      ${FIELD_FILE_TYPES.map(type => `<option value="${escapeHtml(type)}" ${type === currentType ? 'selected' : ''}>${escapeHtml(type)}</option>`).join('')}
     </select>
     <input class="add-field-desc-input" placeholder="字段简述">
     <textarea class="add-field-content-input" placeholder="字段内容">${escapeHtml(value || '')}</textarea>
@@ -4110,20 +4193,21 @@ async function submitAddField() {
     const label = row.querySelector('.add-field-label-input').value.trim();
     const keyInput = normalizeJsonKey(row.querySelector('.add-field-key-input').value.trim());
     const valueType = row.querySelector('.add-field-format-input').value.trim();
+    const fileType = row.querySelector('.add-field-type-input').value.trim();
     const description = row.querySelector('.add-field-desc-input').value.trim();
     const value = row.querySelector('.add-field-content-input').value.trim();
     const logic = row.querySelector('.add-field-logic-input').value.trim();
     const field = FIELD_LABEL_TO_KEY[label] || keyInput || resolveAddFieldKey(label, p);
-    return { field, label, value, logic, valueType, description };
+    return { field, label, value, logic, valueType, fileType, description };
   }).filter(row => row.label || row.field || row.value || row.logic || row.description);
 
   if (!rows.length) {
     showToast('请至少填写一个字段', 'error');
     return;
   }
-  const invalid = rows.find(row => !row.field || !row.label || !row.valueType || !row.description || !row.value || !row.logic || !/^[a-z][a-z0-9_]*$/.test(row.field));
+  const invalid = rows.find(row => !row.field || !row.label || !row.valueType || !row.fileType || !row.description || !row.value || !row.logic || !/^[a-z][a-z0-9_]*$/.test(row.field));
   if (invalid) {
-    showToast('每一行都需要填写中文名、合法JSON key、字段格式、字段简述、字段内容和提取逻辑', 'error');
+    showToast('每一行都需要填写中文名、合法JSON key、字段格式、文件类型、字段简述、字段内容和提取逻辑', 'error');
     return;
   }
   if (!reason) {
@@ -4135,17 +4219,22 @@ async function submitAddField() {
   pendingAddField = null;
   document.getElementById('addFieldOverlay').style.display = 'none';
   for (const row of rows) {
-    registerFieldDefinition(p, row.field, row.label, row.logic, row.valueType, row.description);
+    const fieldDefinition = {
+      label: row.label,
+      json_key: row.field,
+      value_type: row.valueType,
+      file_type: row.fileType,
+      description: row.description,
+      logic: row.logic,
+    };
+    applyFieldDefinitionToFileType(row.field, fieldDefinition);
     doSaveField(policyId, row.field, '', row.value, `新增字段：${reason}`, {
-      fieldDefinition: {
-        label: row.label,
-        json_key: row.field,
-        value_type: row.valueType,
-        description: row.description,
-        logic: row.logic,
-      },
+      fieldDefinition,
     });
+    syncFieldDefinitionToServer(policyId, row.field, fieldDefinition);
   }
+  saveState();
+  render();
 }
 
 let fieldSaveQueue = Promise.resolve();
@@ -4642,6 +4731,7 @@ async function syncStatusesFromServer(showTip) {
       }
       changed += applyFeishuFieldsToPolicy(p, s.fields);
     });
+    changed += propagateFieldDefinitionsByFileType();
     if (changed > 0) {
       saveState();
       render();

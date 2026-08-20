@@ -460,6 +460,7 @@ function setParsedFieldDefinition(obj, key, fieldDefinition) {
     label: fieldDefinition.label || KEY_LABELS[key] || key,
     json_key: key,
     value_type: fieldDefinition.value_type || fieldDefinition.format || 'string',
+    file_type: fieldDefinition.file_type || fieldDefinition.fileType || '',
     description: fieldDefinition.description || fieldDefinition.summary || '',
     logic: fieldDefinition.logic || '',
   };
@@ -526,6 +527,21 @@ function deleteParsedField(parsed, key) {
   return changed;
 }
 
+function setParsedFieldDefinitionOnly(parsed, key, fieldDefinition) {
+  if (!parsed || !key || !fieldDefinition) return false;
+  let changed = false;
+  const applyOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    changed = setParsedFieldDefinition(obj, key, fieldDefinition) || changed;
+    if (obj.data && typeof obj.data === 'object') {
+      changed = setParsedFieldDefinition(obj.data, key, fieldDefinition) || changed;
+    }
+  };
+  if (Array.isArray(parsed)) parsed.forEach(applyOne);
+  else applyOne(parsed);
+  return changed;
+}
+
 function getParsedValue(parsed, key) {
   if (!parsed || !key) return '';
   const first = Array.isArray(parsed) ? parsed[0] : parsed;
@@ -565,6 +581,21 @@ function getPolicyText(fields, parsed) {
     normalizeFeishuValue(getParsedValue(parsed, 'scenario')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_family')),
   ].filter(Boolean).join('\n');
+}
+
+function getPolicyFileType(fields, parsed) {
+  const text = [
+    getFileName(fields, parsed),
+    normalizeFeishuValue(fields && fields['解析场景']),
+    normalizeFeishuValue(fields && fields['产品名称']),
+    normalizeFeishuValue(getParsedValue(parsed, 'scenario')),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_family')),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_category')),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_name')),
+  ].filter(Boolean).join(' ');
+  if (/次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
+  if (/旗舰店/.test(text)) return /券类|优惠券|券码|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  return '自营';
 }
 
 function isBlankish(value) {
@@ -1267,6 +1298,46 @@ app.post('/api/save-field', async (req, res) => {
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+// ---- 按文件类型同步字段定义：只同步 schema，不同步当前文件字段值 ----
+app.post('/api/apply-field-definition', async (req, res) => {
+  const { sourceRecordId, fieldKey, fieldDefinition } = req.body || {};
+  if (!fieldKey || !fieldDefinition || !fieldDefinition.file_type) {
+    return res.status(400).json({ success: false, error: '缺少 fieldKey 或 fieldDefinition.file_type' });
+  }
+
+  try {
+    try { await ensureTableFields(); } catch (e) { console.warn('[字段定义] 检查字段失败:', e.message); }
+    const records = await listAllFeishuRecords();
+    let updated = 0;
+    const targetType = fieldDefinition.file_type;
+    for (const item of records) {
+      const fields = item.fields || {};
+      const jsonFieldName = getJsonFieldName(fields);
+      const parsed = parseJsonField(jsonFieldName ? fields[jsonFieldName] : null);
+      if (!parsed) continue;
+      if (getPolicyFileType(fields, parsed) !== targetType) continue;
+      const changed = setParsedFieldDefinitionOnly(parsed, fieldKey, fieldDefinition);
+      if (!changed) continue;
+      const updateFields = {};
+      if (jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
+        updateFields[jsonFieldName] = stringifyJsonField(parsed);
+      }
+      if (!Object.keys(updateFields).length) continue;
+      await updateFeishuRecord(item.recordId, updateFields);
+      updated++;
+    }
+    console.log(`[字段定义] ✓ ${fieldKey} 已应用到 ${targetType} ${updated} 条记录`);
+    res.json({ success: true, updated, fileType: targetType, sourceRecordId: sourceRecordId || '' });
+  } catch (err) {
+    console.error(`[字段定义] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
     } else {
