@@ -600,7 +600,9 @@ function getPolicyFileType(fields, parsed) {
 
 function isBlankish(value) {
   const text = normalizeFeishuValue(value).trim();
-  return !text || ['null', 'undefined', '待确认', '需人工确认', '(空)', '空'].includes(text);
+  return !text ||
+    ['null', 'undefined', '待确认', '需人工确认', '人工确认', '未提取', '未识别', '无法确认', '未获取', '(空)', '空', '暂无', '无'].includes(text) ||
+    /^(待确认|需人工确认|人工确认|未提取|未识别|无法确认|未获取)/.test(text);
 }
 
 function sameScope(sourceParsed, targetParsed) {

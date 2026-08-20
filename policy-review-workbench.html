@@ -2698,19 +2698,19 @@ function getManualConfirmFieldKeys(p) {
 function isManualConfirmField(p, field) {
   const value = normalizeFeishuValue(p && p.data && p.data[field]);
   return getManualConfirmFieldKeys(p).includes(field) ||
-    value === '需人工确认' || /^需人工确认/.test(value);
+    isManualConfirmValue(value);
 }
 
 function getUnresolvedManualConfirmFields(p) {
   const keys = new Set(getManualConfirmFieldKeys(p));
   Object.entries((p && p.data) || {}).forEach(([key, value]) => {
     const text = normalizeFeishuValue(value);
-    if (key !== 'manual_confirm_fields' && (text === '需人工确认' || /^需人工确认/.test(text))) keys.add(key);
+    if (key !== 'manual_confirm_fields' && isManualConfirmValue(text)) keys.add(key);
   });
   const edited = new Set((p && p.audit && p.audit.edited_fields) || []);
   return [...keys].filter(key => {
     const value = normalizeFeishuValue(p && p.data && p.data[key]);
-    const stillManual = value === '' || value === '需人工确认' || /^需人工确认/.test(value);
+    const stillManual = isManualConfirmValue(value);
     return stillManual || !edited.has(key);
   });
 }
@@ -2733,6 +2733,13 @@ function normalizeFeishuValue(value) {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function isManualConfirmValue(value) {
+  const text = normalizeFeishuValue(value).trim();
+  if (!text) return true;
+  return /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认|未获取|暂无|无)$/.test(text) ||
+    /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认|未获取)/.test(text);
 }
 
 function parseProblemMarks(raw) {
@@ -3315,7 +3322,7 @@ function renderFieldRow(p, f, isExtra) {
 
 function getFieldDisplayValue(field, value, manualConfirm) {
   if (manualConfirm) return '人工确认';
-  if (value === undefined || value === null || value === '') return '未提取';
+  if (isManualConfirmValue(value)) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
 }
 
