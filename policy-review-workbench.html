@@ -2347,6 +2347,37 @@ const LABELS = {
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(LABELS).map(([key, label]) => [label, key]));
 const GROUPED_FIELD_KEYS = new Set(FIELD_GROUPS.flatMap(g => g.fields));
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
+const TRIP_CARD_ONLY_FIELDS = new Set([
+  'product_show', 'usage_times', 'travel_class', 'json_count',
+  'redeem_date', 'use_date', 'use_limit', 'use_begin', 'wether_depart_today',
+  'refund_time', 'price_groups_summary', 'use_code', 'office_scope', 'office_count',
+  'route_row_count', 'unique_route_count', 'flight_count', 'amount_tiers',
+  'amount_range', 'price_tiers_count', 'top_5_hubs'
+]);
+const SELF_OWNED_FIELDS = new Set(['beside_time', 'product_type_origin', 'depart_date_origin']);
+const PROMPT_ALLOWED_SHARED_FIELDS = new Set([
+  'scenario', 'business_line', 'channel_note', 'carrier', 'carrier_name', 'product_name',
+  'product_family', 'product_type', 'product_code', 'policy_code', 'fare_basis',
+  'corporate_code', 'coupon_resource_code', 'product_category', 'flight_type', 'od',
+  'od_note', 'booking_cabin', 'cabin', 'cabin_count', 'sale_date', 'depart_date',
+  'depart_date_note', 'advance_purchase_days', 'ticket_type', 'ticket_stock',
+  'discount_type', 'discount_per', 'passenger_type', 'customer_limit_group',
+  'age_limit', 'child_applicable', 'baby_applicable', 'membership_limit',
+  'realname_required', 'realname_limit', 'id_type_restriction', 'document_restrictions',
+  'sign_and_transfer_rules', 'refund_rules', 'refund_change_note', 'change_rules',
+  'luggage_amount', 'commission_rate', 'rounding_rule', 'fc_fn_fp_note',
+  'benefit_name', 'benefit_usage_rules', 'not_applicable_flight_routes',
+  'sale_constraint', 'flight_number', 'not_applicable_flight_number', 'sub_cabin',
+  'associated_cabin', 'not_applicable_od', 'passenger_benefit', 'agent_fee',
+  'price_discount', 'price_voucher', 'restriction_code', 'age_limit_supplementary',
+  'age_limit_gender', 'young_old', 'capacity_limit', 'capacity_limit_supplementary',
+  'family_limit', 'equity_related', 'remium_products', 'payment_limit',
+  'regional_limit', 'regional_limit_origin', 'splice_limit', 'sale_method',
+  'display_method', 'product_label', 'display_limit', 'gender_restriction',
+  'usage_threshold', 'cabin_class', 'student_verification',
+  'student_verification_rules', 'customer_limit', 'card_limit',
+  'customer_limit_origin', 'refund_change_together'
+]);
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const EXTRA_FIELD_EXCLUDE = new Set([
   'source_files', 'document_type', 'file_name', 'category', 'subcategory', 'business_type',
@@ -2451,6 +2482,22 @@ function getPolicyFileType(policy) {
 function definitionAppliesToPolicy(def, policy) {
   if (!def) return false;
   return !def.file_type || def.file_type === getPolicyFileType(policy);
+}
+
+function isPromptAllowedFieldForType(fileType, field, def) {
+  if (!field || EXTRA_FIELD_EXCLUDE.has(field)) return false;
+  if (def && def.file_type && def.file_type !== fileType) return false;
+  if (SELF_OWNED_FIELDS.has(field)) return fileType === '自营';
+  if (TRIP_CARD_ONLY_FIELDS.has(field)) return fileType === '次卡';
+  if (PROMPT_ALLOWED_SHARED_FIELDS.has(field)) return true;
+  if (def && (field.startsWith(CUSTOM_FIELD_KEY_PREFIX) || !LABELS[field])) return true;
+  return false;
+}
+
+function isPromptAllowedField(policy, field) {
+  const fileType = getPolicyFileType(policy);
+  const def = getFieldDefinition(policy, field);
+  return isPromptAllowedFieldForType(fileType, field, def);
 }
 
 function migrateLegacyCustomFields(data, policy) {
@@ -2639,6 +2686,7 @@ function mergeParsedJsonIntoPolicy(p, rawJson) {
   if (!p.data) p.data = {};
   Object.entries(data).forEach(([key, value]) => {
     if (value === undefined || value === null || EXTRA_FIELD_EXCLUDE.has(key)) return;
+    if (!isPromptAllowedField(p, key)) return;
     if (!hasSourceEvidenceForField(p, key, value)) return;
     const old = normalizeFeishuValue(p.data[key]);
     const next = normalizeFeishuValue(value);
@@ -2654,19 +2702,20 @@ function getExtraFieldKeys(p) {
   return Object.keys((p && p.data) || {}).filter(key => {
     return !GROUPED_FIELD_KEYS.has(key) &&
       !EXTRA_FIELD_EXCLUDE.has(key) &&
+      isPromptAllowedField(p, key) &&
       definitionAppliesToPolicy(getFieldDefinition(p, key), p);
   });
 }
 
 function getFieldsForGroup(p, group) {
-  const fields = [...group.fields];
+  const fields = group.fields.filter(field => isPromptAllowedField(p, field));
   if (group.title === '附加权益与限制') {
     getExtraFieldKeys(p).forEach(key => {
       if (!fields.includes(key)) fields.push(key);
     });
   }
   getManualConfirmFieldKeys(p).forEach(key => {
-    if (group.fields.includes(key) && !fields.includes(key)) fields.push(key);
+    if (group.fields.includes(key) && isPromptAllowedField(p, key) && !fields.includes(key)) fields.push(key);
   });
   return fields;
 }
@@ -3292,6 +3341,7 @@ function renderProblems(main) {
 }
 
 function renderFieldRow(p, f, isExtra) {
+  if (!isPromptAllowedField(p, f)) return '';
   const val = p.data[f];
   const manualConfirm = isManualConfirmField(p, f);
   const schemaDefined = definitionAppliesToPolicy(getFieldDefinition(p, f), p);
@@ -3324,6 +3374,21 @@ function getFieldDisplayValue(field, value, manualConfirm) {
   if (manualConfirm) return '人工确认';
   if (isManualConfirmValue(value)) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
+}
+
+function getFilteredPolicyData(p) {
+  const out = {};
+  Object.entries((p && p.data) || {}).forEach(([key, value]) => {
+    if (key === FIELD_DEFINITIONS_KEY) return;
+    if (!isPromptAllowedField(p, key)) return;
+    out[key] = value;
+  });
+  const defs = {};
+  Object.entries(((p && p.data) || {})[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
+    if (definitionAppliesToPolicy(def, p)) defs[key] = def;
+  });
+  if (Object.keys(defs).length) out[FIELD_DEFINITIONS_KEY] = defs;
+  return out;
 }
 
 function renderFieldLabel(field, policy) {
@@ -3594,6 +3659,7 @@ function renderConfirm(main) {
     let kvHtml = '';
     const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit'];
     keyFields.forEach(f => {
+      if (!isPromptAllowedField(p, f)) return;
       if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
         const v = getFieldDisplayValue(f, p.data[f]);
         kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f, p)}：</span><span class="v">${v}</span></div>`;
@@ -3654,7 +3720,8 @@ function renderResult(main) {
       carrier: p.data.carrier,
       carrier_name: p.data.carrier_name,
       product_name: p.data.product_name,
-      data: p.data,
+      file_type: getPolicyFileType(p),
+      data: getFilteredPolicyData(p),
       audit: p.audit || {},
       change_history: p._change_history || [],
     }))
@@ -4222,6 +4289,20 @@ async function submitAddField() {
     document.getElementById('addFieldReason').focus();
     return;
   }
+  const currentFileType = getPolicyFileType(p);
+  const wrongType = rows.find(row => row.fileType !== currentFileType);
+  if (wrongType) {
+    showToast(`当前文件类型是${currentFileType}，新增字段不能写入${wrongType.fileType}`, 'error');
+    return;
+  }
+  const crossPrompt = rows.find(row => !isPromptAllowedFieldForType(row.fileType, row.field, {
+    file_type: row.fileType,
+    label: row.label,
+  }));
+  if (crossPrompt) {
+    showToast(`「${crossPrompt.label}」不属于${crossPrompt.fileType}字段集，请按该文件类型 prompt 新增`, 'error');
+    return;
+  }
 
   pendingAddField = null;
   document.getElementById('addFieldOverlay').style.display = 'none';
@@ -4645,6 +4726,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
 
   Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
     if (!Object.prototype.hasOwnProperty.call(fields, label)) return;
+    if (!isPromptAllowedField(p, key)) return;
     const value = normalizeFeishuValue(fields[label]);
     // 飞书表没有维护该字段值时，不用空值覆盖预解析结果；确认/问题/修改等状态字段单独处理。
     if (value === '') return;
