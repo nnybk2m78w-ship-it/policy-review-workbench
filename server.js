@@ -582,7 +582,7 @@ function stripManualConfirmForField(raw, fieldKey, fieldLabel) {
     .split(/[；;\n]+/)
     .map(part => part.trim())
     .filter(Boolean)
-    .filter(part => !(pattern.test(part) && /人工确认|需人工确认|待确认|未明确|未稳定识别|未提供|缺少/.test(part)))
+    .filter(part => !pattern.test(part))
     .join('；');
 }
 
