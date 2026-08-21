@@ -7660,6 +7660,66 @@ function applyFeishuFieldsToPolicy(p, fields) {
 	  return changed;
 	}
 
+function policyFromFeishuStatus(recordId, statusEntry) {
+  const fields = (statusEntry && statusEntry.fields) || {};
+  const jsonFieldName = JSON_FIELD_CANDIDATES.find(name => Object.prototype.hasOwnProperty.call(fields, name));
+  const parsed = jsonFieldName ? parseJsonText(fields[jsonFieldName]) : null;
+  const source = Array.isArray(parsed) ? (parsed[0] || {}) : (parsed || {});
+  const parsedData = source.data && typeof source.data === 'object' ? source.data : {};
+  const flatData = { ...source, ...parsedData };
+  const data = {};
+
+  Object.entries(flatData).forEach(([rawKey, value]) => {
+    const key = canonicalizeLegacyFieldName(rawKey);
+    if (!key || value === undefined || value === null) return;
+    if (['data', 'source_text', 'source_type', 'parsed_at', 'status', 'category', 'subcategory'].includes(key)) return;
+    if (EXTRA_FIELD_EXCLUDE.has(key) && key !== FIELD_DEFINITIONS_KEY) return;
+    data[key] = value;
+  });
+
+  Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, label)) return;
+    const value = normalizeFeishuValue(fields[label]);
+    if (value !== '') data[key] = value;
+  });
+
+  if (Object.prototype.hasOwnProperty.call(fields, '人工确认项')) {
+    data.manual_confirm_fields = normalizeFeishuValue(fields['人工确认项']);
+  }
+
+  const fileName = normalizeFeishuValue(fields['文件名称'] || fields['文件名'] || source.file_name || flatData.file_name) || `飞书记录 ${recordId}`;
+  const sourceText = normalizeFeishuValue(fields['原始文本'] || fields['源文本'] || fields['文件内容'] || fields['解析文本'] || source.source_text || flatData.source_text);
+  const fileType = getPolicyFileType({
+    file_name: fileName,
+    category: source.category || flatData.category || fields['分类'] || fields['文件分类'],
+    data,
+  });
+  const category = normalizeCategory(source.category || flatData.category || (fileType === '次卡' ? '01_次卡' : (fileType === '自营' ? '03_自营' : '02_旗舰店')));
+  const policy = {
+    id: recordId,
+    file_name: fileName,
+    source_type: normalizeFeishuValue(fields['文件类型'] || source.source_type || ''),
+    parsed_at: source.parsed_at || '',
+    status: statusEntry && statusEntry.status ? statusEntry.status : 'reviewing',
+    source_text: sourceText,
+    data,
+    evidence: source.evidence || parsedData.evidence || data.evidence || {},
+    audit: source.audit || {},
+    problems: parseProblemMarks(fields['问题标记']),
+    category,
+    subcategory: normalizeFeishuValue(source.subcategory || flatData.subcategory || data.carrier_name || data.carrier || fields['航司'] || fields['航司名称']) || '未分类',
+    confirmed_at: statusEntry && statusEntry.confirmed_at ? formatSyncTs(statusEntry.confirmed_at) : null,
+    confirmed_by: statusEntry && statusEntry.confirmed_by ? statusEntry.confirmed_by : null,
+    _change_history: parseChangeHistoryText(fields['修改历史']),
+  };
+
+  if (normalizeFeishuValue(fields['已修改']) === '是' && policy._change_history.length) {
+    policy.audit.edited_fields = [...new Set(policy._change_history.map(h => h.field).filter(Boolean))];
+  }
+  normalizePolicySchema(policy);
+  return policy;
+}
+
 async function syncStatusesFromServer(showTip) {
   try {
     const resp = await fetch('/api/statuses', { cache: 'no-store' });
@@ -7667,8 +7727,22 @@ async function syncStatusesFromServer(showTip) {
     const result = await resp.json();
     if (!result.success || !result.statuses) return false;
     let changed = 0;
-    appState.policies.forEach(p => {
-      const s = result.statuses[p.id];
+    const statusEntries = Object.entries(result.statuses);
+    const serverIds = new Set(statusEntries.map(([id]) => id));
+    if (serverIds.size) {
+      const beforeLen = appState.policies.length;
+      appState.policies = appState.policies.filter(p => serverIds.has(p.id) || p._syncing);
+      if (appState.policies.length !== beforeLen) changed++;
+    }
+
+    statusEntries.forEach(([recordId, statusEntry]) => {
+      let p = appState.policies.find(item => item.id === recordId);
+      if (!p) {
+        p = policyFromFeishuStatus(recordId, statusEntry);
+        appState.policies.push(p);
+        changed++;
+      }
+      const s = statusEntry;
       if (!s || p._syncing) return;
       if (s.status && s.status !== p.status) {
         p.status = s.status;
@@ -7698,6 +7772,10 @@ async function syncStatusesFromServer(showTip) {
       }
       changed += applyFeishuFieldsToPolicy(p, s.fields);
     });
+    if (appState.currentFileId && !appState.policies.some(p => p.id === appState.currentFileId)) {
+      appState.currentFileId = appState.policies[0] ? appState.policies[0].id : null;
+      changed++;
+    }
     changed += propagateFieldDefinitionsByFileType();
     if (changed > 0) {
       saveState();
