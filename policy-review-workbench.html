@@ -5366,6 +5366,7 @@ function normalizePolicySchema(policy) {
     }
   });
   applyManualHistoryValues(policy);
+  clearResolvedManualConfirmFields(policy);
   inferSourceBoundBenefitFields(policy);
   purgeUnsupportedSourceBoundFields(policy);
   return before === JSON.stringify({
@@ -5542,11 +5543,29 @@ function clearManualConfirmForField(policy, field) {
   return 1;
 }
 
+function hasConcreteFieldValue(value) {
+  const text = normalizeFeishuValue(value).trim();
+  return text !== '' && !isManualConfirmValue(text);
+}
+
+function clearResolvedManualConfirmFields(policy) {
+  if (!policy || !policy.data) return 0;
+  let changed = 0;
+  getManualConfirmFieldKeys(policy).forEach(field => {
+    if (hasConcreteFieldValue(policy.data[field])) {
+      changed += clearManualConfirmForField(policy, field);
+    }
+  });
+  return changed;
+}
+
 function isManualConfirmField(p, field) {
-  if (getManualConfirmFieldKeys(p).includes(field)) return true;
   const hasValueSlot = !!(p && p.data && Object.prototype.hasOwnProperty.call(p.data, field));
+  const value = hasValueSlot ? p.data[field] : undefined;
+  if (hasConcreteFieldValue(value)) return false;
+  if (getManualConfirmFieldKeys(p).includes(field)) return true;
   if (!hasValueSlot) return false;
-  return isManualConfirmValue(p.data[field]);
+  return isManualConfirmValue(value);
 }
 
 function isCoreManualField(p, field) {
@@ -5555,6 +5574,7 @@ function isCoreManualField(p, field) {
 }
 
 function shouldShowManualConfirmField(p, field) {
+  if (hasConcreteFieldValue(p && p.data && p.data[field])) return true;
   if (getManualConfirmFieldKeys(p).includes(field)) return true;
   if (isCoreManualField(p, field)) return true;
   if (p && p.audit && Array.isArray(p.audit.edited_fields) && p.audit.edited_fields.includes(field)) return true;
@@ -5568,11 +5588,8 @@ function getUnresolvedManualConfirmFields(p) {
     const text = normalizeFeishuValue(value);
     if (key !== 'manual_confirm_fields' && isManualConfirmValue(text) && shouldShowManualConfirmField(p, key)) keys.add(key);
   });
-  const edited = new Set((p && p.audit && p.audit.edited_fields) || []);
   return [...keys].filter(key => {
-    const value = normalizeFeishuValue(p && p.data && p.data[key]);
-    const stillManual = isManualConfirmValue(value);
-    return stillManual || !edited.has(key);
+    return !hasConcreteFieldValue(p && p.data && p.data[key]);
   });
 }
 
@@ -6227,7 +6244,7 @@ function renderFieldRow(p, f, isExtra) {
 }
 
 function getFieldDisplayValue(field, value, manualConfirm) {
-  if (manualConfirm) return '人工确认';
+  if (manualConfirm && !hasConcreteFieldValue(value)) return '人工确认';
   if (isManualConfirmValue(value)) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
 }
