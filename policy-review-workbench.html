@@ -5897,7 +5897,7 @@ function policyMatches(p, q) {
 }
 
 function policyMatchesStatusFilter(p) {
-  if (appState.statusFilter === 'reviewing') return p.status !== 'confirmed' && !hasProblems(p);
+  if (appState.statusFilter === 'reviewing') return p.status !== 'confirmed';
   if (appState.statusFilter === 'problem') return hasProblems(p);
   if (appState.statusFilter === 'confirmed') return p.status === 'confirmed';
   return true;
@@ -6642,8 +6642,8 @@ function hasProblems(p) {
   return !!(p.problems && p.problems.length > 0);
 }
 function getStatusInfo(p) {
-  if (hasProblems(p)) return { text: '有问题', cls: 'problem' };
   if (p.status === 'confirmed') return { text: '已确认', cls: 'confirmed' };
+  if (hasProblems(p)) return { text: '有问题', cls: 'problem' };
   return { text: '待审核', cls: 'reviewing' };
 }
 
@@ -6661,7 +6661,7 @@ function updateProgress() {
   const st = document.getElementById('statReviewing');
   if (st) {
     st.dataset.prefix = '待审';
-    st.innerHTML = '待审 <b>' + Math.max(reviewing - problem, 0) + '</b>';
+    st.innerHTML = '待审 <b>' + reviewing + '</b>';
     st.classList.toggle('active-filter', appState.statusFilter === 'reviewing');
     st.title = appState.statusFilter === 'reviewing' ? '当前只看待审文件，点击取消筛选' : '点击只看待审文件';
   }
@@ -6684,7 +6684,7 @@ function updateProgress() {
   const seg = document.getElementById('segProblemCount');
   if (seg) seg.textContent = problem > 0 ? problem : '';
   const metaEl = document.getElementById('headerMeta');
-  if (metaEl) metaEl.textContent = `${total} 份文件 · 待审 ${Math.max(reviewing - problem, 0)} · 有问题 ${problem} · 已确认 ${confirmed}`;
+  if (metaEl) metaEl.textContent = `${total} 份文件 · 待审 ${reviewing} · 有问题 ${problem} · 已确认 ${confirmed}`;
 }
 
 // ===== ACTIONS =====
