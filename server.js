@@ -754,12 +754,35 @@ function parseRecordDate(fields) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function extractDocumentDate(text) {
+  const patterns = [
+    /(?:发布日期|发布日|发文日期|签发日期|下发日期|通知日期|日期)[:：\s]*(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/,
+    /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日.{0,30}(?:发布|下发|签发|生效)/,
+    /(?:发布日期|发布日|发文日期|签发日期|下发日期|通知日期|日期)[:：\s]*(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/,
+  ];
+  for (const pattern of patterns) {
+    const m = text.match(pattern);
+    if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+function compareDate(a, b) {
+  if (!a || !b) return 0;
+  return a.localeCompare(b);
+}
+
 function inferRelativeStartDateRange(fields, parsed, fieldKey) {
   const text = getPolicyText(fields, parsed);
   if (!/(即日起|上线之日起|产品生效之日起|自下发之日起|自发布之日起|本通告自下发之日起生效)/.test(text)) return '';
-  const start = parseRecordDate(fields);
+  const parseDate = parseRecordDate(fields);
+  const docDate = extractDocumentDate(text);
   const endMatch = text.match(/(?:至|到|截止至|截至|有效期至)\s*(20\d{2})[年\-/\.](\d{1,2})[月\-/\.](\d{1,2})日?/);
-  if (endMatch) return `${start}至${endMatch[1]}-${endMatch[2].padStart(2, '0')}-${endMatch[3].padStart(2, '0')}`;
+  const end = endMatch ? `${endMatch[1]}-${endMatch[2].padStart(2, '0')}-${endMatch[3].padStart(2, '0')}` : '';
+  const start = (end && compareDate(parseDate, end) > 0) ? docDate : (docDate || parseDate);
+  if (!start) return '';
+  if (end && compareDate(start, end) > 0) return '';
+  if (end) return `${start}至${end}`;
   if (['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return `${start}起`;
   return '';
 }
