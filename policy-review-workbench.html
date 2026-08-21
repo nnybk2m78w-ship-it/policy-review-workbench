@@ -7735,6 +7735,103 @@ function policyFromFeishuStatus(recordId, statusEntry) {
   return policy;
 }
 
+function hasReviewArtifacts(policy) {
+  return !!(policy && (
+    (Array.isArray(policy._change_history) && policy._change_history.length) ||
+    (Array.isArray(policy.problems) && policy.problems.length) ||
+    (policy.audit && Array.isArray(policy.audit.edited_fields) && policy.audit.edited_fields.length) ||
+    policy.status === 'confirmed' ||
+    policy.confirmed_at ||
+    policy.confirmed_by
+  ));
+}
+
+function policyFileIdentity(policy) {
+  return normalizeFeishuValue(policy && policy.file_name).trim();
+}
+
+function mergeLegacyReviewState(target, legacy) {
+  if (!target || !legacy || target.id === legacy.id || !hasReviewArtifacts(legacy)) return 0;
+  let changed = 0;
+  normalizePolicySchema(legacy);
+  normalizePolicySchema(target);
+
+  if ((!target._change_history || !target._change_history.length) && Array.isArray(legacy._change_history) && legacy._change_history.length) {
+    target._change_history = legacy._change_history.map(normalizeHistoryEntry);
+    changed++;
+  }
+  if ((!target.problems || !target.problems.length) && Array.isArray(legacy.problems) && legacy.problems.length) {
+    target.problems = legacy.problems.map(x => ({ ...x }));
+    changed++;
+  }
+
+  const changedFields = new Set([
+    ...(((legacy.audit || {}).edited_fields) || []),
+    ...((legacy._change_history || []).map(h => h.field || h.fieldLabel).filter(Boolean)),
+  ].map(canonicalizeLegacyFieldName).filter(Boolean));
+  changedFields.forEach(field => {
+    if (!legacy.data || !Object.prototype.hasOwnProperty.call(legacy.data, field)) return;
+    if (!isPromptAllowedField(target, field)) return;
+    const next = legacy.data[field];
+    if (!hasConcreteFieldValue(next)) return;
+    const old = normalizeFeishuValue(target.data && target.data[field]);
+    if (old !== normalizeFeishuValue(next)) {
+      if (!target.data) target.data = {};
+      target.data[field] = next;
+      changed++;
+    }
+  });
+
+  if (legacy.data && legacy.data[FIELD_DEFINITIONS_KEY]) {
+    Object.entries(legacy.data[FIELD_DEFINITIONS_KEY]).forEach(([key, def]) => {
+      if (definitionAppliesToPolicy(def, target)) {
+        registerFieldDefinition(target, key, def);
+        changed++;
+      }
+    });
+  }
+
+  if (!target.audit) target.audit = {};
+  const edited = [...new Set([
+    ...(((target.audit || {}).edited_fields) || []),
+    ...changedFields,
+  ].filter(Boolean))];
+  if (edited.length) target.audit.edited_fields = edited;
+  changed += applyManualHistoryValues(target);
+  changed += clearResolvedManualConfirmFields(target);
+
+  if (changed) target._needsReviewStateRestore = true;
+  return changed;
+}
+
+function restoreReviewStateToServer(policy) {
+  if (!policy || !policy._needsReviewStateRestore || policy._restoreInFlight) return;
+  policy._restoreInFlight = true;
+  fetch('/api/restore-review-state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recordId: policy.id,
+      data: policy.data || {},
+      changeHistory: policy._change_history || [],
+      problems: policy.problems || [],
+      editedFields: (policy.audit && policy.audit.edited_fields) || [],
+    }),
+  })
+    .then(resp => resp.json())
+    .then(result => {
+      if (result && result.success) {
+        delete policy._needsReviewStateRestore;
+        showToast(result.restored ? '已恢复旧修改/备注并同步到飞书' : '旧修改/备注已在飞书中，无需恢复', 'success', 2600);
+      } else {
+        policy._restoreInFlight = false;
+      }
+    })
+    .catch(() => {
+      policy._restoreInFlight = false;
+    });
+}
+
 async function syncStatusesFromServer(showTip) {
   try {
     const resp = await fetch('/api/statuses', { cache: 'no-store' });
@@ -7744,6 +7841,13 @@ async function syncStatusesFromServer(showTip) {
     let changed = 0;
     const statusEntries = Object.entries(result.statuses);
     const serverIds = new Set(statusEntries.map(([id]) => id));
+    const legacyByFile = new Map();
+    appState.policies.forEach(policy => {
+      const name = policyFileIdentity(policy);
+      if (name && !serverIds.has(policy.id) && hasReviewArtifacts(policy)) {
+        legacyByFile.set(name, policy);
+      }
+    });
     if (serverIds.size) {
       if (!appState.serverSynced) {
         appState.serverSynced = true;
@@ -7758,6 +7862,8 @@ async function syncStatusesFromServer(showTip) {
       let p = appState.policies.find(item => item.id === recordId);
       if (!p) {
         p = policyFromFeishuStatus(recordId, statusEntry);
+        const legacy = legacyByFile.get(policyFileIdentity(p));
+        if (legacy) changed += mergeLegacyReviewState(p, legacy);
         appState.policies.push(p);
         changed++;
       }
@@ -7790,6 +7896,7 @@ async function syncStatusesFromServer(showTip) {
         }
       }
       changed += applyFeishuFieldsToPolicy(p, s.fields);
+      if (p._needsReviewStateRestore) restoreReviewStateToServer(p);
     });
     if (appState.currentFileId && !appState.policies.some(p => p.id === appState.currentFileId)) {
       appState.currentFileId = appState.policies[0] ? appState.policies[0].id : null;

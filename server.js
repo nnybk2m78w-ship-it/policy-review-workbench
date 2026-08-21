@@ -97,6 +97,10 @@ const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([k
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 
+function canonicalizeFieldName(field) {
+  return FIELD_LABEL_TO_KEY[field] || field;
+}
+
 // ---- Token 存储 (文件 + 环境变量双备份) ----
 const TOKEN_FILE = path.join(__dirname, '.feishu_tokens.json');
 
@@ -395,6 +399,21 @@ function appendProblemLine(rawProblemMarks, line) {
   const lines = normalizeFeishuValue(rawProblemMarks).split('\n').filter(Boolean);
   if (line && !lines.includes(line)) lines.push(line);
   return lines.join('\n');
+}
+
+function formatProblemMarks(entries) {
+  if (!Array.isArray(entries)) return normalizeFeishuValue(entries);
+  return entries
+    .map(e => {
+      if (typeof e === 'string') return e;
+      const time = e.created_at || e.time || '';
+      const user = e.created_by || e.user || '';
+      const label = e.field_label || e.fieldLabel || e.field || '文件整体';
+      const desc = e.desc || e.reason || '';
+      return `[${time}] ${user} | ${label}: ${desc}`.trim();
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 function normalizeChangeEntry(entry, fallback) {
@@ -1534,6 +1553,75 @@ app.get('/api/statuses', async (req, res) => {
   }
 });
 
+// ---- 恢复同名旧缓存里的审核痕迹（recordId 变化后的兜底迁移）----
+app.post('/api/restore-review-state', async (req, res) => {
+  const { recordId, data, changeHistory, problems, editedFields } = req.body || {};
+  if (!recordId) {
+    return res.status(400).json({ success: false, error: '缺少 recordId' });
+  }
+
+  try {
+    const tableFields = await ensureTableFields();
+    const record = await getFeishuRecord(recordId);
+    const currentFields = record.fields || {};
+    const updates = {};
+    const hasValue = v => normalizeFeishuValue(v).trim() !== '';
+
+    const history = Array.isArray(changeHistory)
+      ? changeHistory.map(e => normalizeChangeEntry(e, {})).filter(e => e.field || e.fieldLabel || e.reason)
+      : [];
+    const historyText = formatChangeHistory(history);
+    const problemText = formatProblemMarks(problems || []);
+
+    if (historyText && !hasValue(currentFields['修改历史'])) updates['修改历史'] = historyText;
+    if (problemText && !hasValue(currentFields['问题标记'])) updates['问题标记'] = problemText;
+    if ((historyText || problemText) && !hasValue(currentFields['已修改'])) updates['已修改'] = '是';
+
+    const changedKeys = new Set((editedFields || []).map(canonicalizeFieldName).filter(Boolean));
+    history.forEach(h => changedKeys.add(canonicalizeFieldName(h.field || h.fieldLabel)));
+    const payloadData = data && typeof data === 'object' ? data : {};
+    changedKeys.forEach(key => {
+      const label = KEY_LABELS[key];
+      if (!label || !tableFields.includes(label)) return;
+      if (!Object.prototype.hasOwnProperty.call(payloadData, key)) return;
+      const value = normalizeFeishuValue(payloadData[key]);
+      if (!value) return;
+      updates[label] = value;
+    });
+
+    const jsonFieldName = getJsonFieldName(currentFields);
+    const parsed = parseJsonField(jsonFieldName ? currentFields[jsonFieldName] : null);
+    if (parsed && jsonFieldName && tableFields.includes(jsonFieldName)) {
+      let changedJson = false;
+      changedKeys.forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(payloadData, key)) return;
+        changedJson = setParsedField(parsed, key, normalizeFeishuValue(payloadData[key])) || changedJson;
+      });
+      if (payloadData[FIELD_DEFINITIONS_KEY] && typeof payloadData[FIELD_DEFINITIONS_KEY] === 'object') {
+        Object.entries(payloadData[FIELD_DEFINITIONS_KEY]).forEach(([key, def]) => {
+          changedJson = setParsedFieldDefinition(parsed, key, def) || changedJson;
+        });
+      }
+      if (changedJson) updates[jsonFieldName] = stringifyJsonField(parsed);
+    }
+
+    if (!Object.keys(updates).length) {
+      return res.json({ success: true, restored: false, reason: '当前飞书记录已有审核痕迹或无可恢复内容' });
+    }
+
+    await updateFeishuRecord(recordId, updates);
+    console.log(`[恢复审核状态] ✓ ${recordId} 更新字段: ${Object.keys(updates).join(', ')}`);
+    res.json({ success: true, restored: true, fields: Object.keys(updates) });
+  } catch (err) {
+    console.error(`[恢复审核状态] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
 function requireAdminConfirm(req, res, expected) {
   const confirm = (req.body && req.body.confirm) || req.query.confirm || '';
   if (confirm !== expected) {
@@ -1649,17 +1737,67 @@ app.post('/api/admin/import-records', async (req, res) => {
       return res.status(400).json({ success: false, error: 'records 为空' });
     }
     const tableFields = await ensureTableFields();
+    const existingRecords = await listAllFeishuRecords();
+    const existingByName = new Map();
+    existingRecords.forEach(record => {
+      const name = normalizeFeishuValue(record.fields && (record.fields['文件名称'] || record.fields['文件名']));
+      if (name && !existingByName.has(name)) existingByName.set(name, record);
+    });
+    const REVIEW_PRESERVE_FIELDS = new Set([
+      '审核状态', '确认人', '确认人ID', '确认时间',
+      '已修改', '修改历史', '问题标记',
+      '错误字段', '错误字段明细',
+    ]);
+    const MERGEABLE_RESULT_FIELDS = Object.values(KEY_LABELS).filter(name => !REVIEW_PRESERVE_FIELDS.has(name));
+    const hasValue = v => normalizeFeishuValue(v).trim() !== '';
+    const mergePreservingReview = (incoming, existing) => {
+      if (!existing || !existing.fields) return incoming;
+      const merged = { ...incoming };
+
+      // 审核资产一律以飞书现有记录为准，防止重导入/补导入冲掉人工痕迹。
+      REVIEW_PRESERVE_FIELDS.forEach(name => {
+        if (Object.prototype.hasOwnProperty.call(existing.fields, name) && hasValue(existing.fields[name])) {
+          merged[name] = existing.fields[name];
+        }
+      });
+
+      // 对已经被人工改过的文件，字段列也优先保留飞书当前值；新解析只补空字段。
+      const reviewed = hasValue(existing.fields['修改历史']) ||
+        hasValue(existing.fields['问题标记']) ||
+        normalizeFeishuValue(existing.fields['已修改']) === '是' ||
+        normalizeFeishuValue(existing.fields['审核状态']) === '已确认';
+      if (reviewed) {
+        MERGEABLE_RESULT_FIELDS.forEach(name => {
+          if (hasValue(existing.fields[name])) merged[name] = existing.fields[name];
+        });
+      }
+
+      return merged;
+    };
     const created = [];
     for (const item of records) {
-      const fields = filterKnownFields(item.fields || item, tableFields);
+      let fields = filterKnownFields(item.fields || item, tableFields);
       if (!fields['文件名称']) {
         throw new Error('导入记录缺少 文件名称');
+      }
+      const existing = existingByName.get(normalizeFeishuValue(fields['文件名称']));
+      if (existing) {
+        fields = filterKnownFields(mergePreservingReview(fields, existing), tableFields);
+        await updateFeishuRecord(existing.recordId, fields);
+        created.push({
+          recordId: existing.recordId,
+          fields: { ...(existing.fields || {}), ...fields },
+          fileName: fields['文件名称'],
+          mode: 'updated',
+        });
+        continue;
       }
       const record = await createFeishuRecord(fields);
       created.push({
         recordId: record.record_id,
         fields: record.fields || fields,
         fileName: fields['文件名称'],
+        mode: 'created',
       });
     }
     res.json({ success: true, count: created.length, records: created });
