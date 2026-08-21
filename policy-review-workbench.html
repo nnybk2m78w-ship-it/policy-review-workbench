@@ -5695,6 +5695,7 @@ let appState = {
   sidebarCat: '03_自营',    // 当前一级分类 Tab
   subFilter: '',           // 二级航司只看过滤
   statusFilter: '',        // 快速状态过滤：confirmed
+  serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
 
 // Load from localStorage — merge status/edits INTO fresh REVIEW_POLICIES data
@@ -5705,36 +5706,49 @@ if (saved) {
     appState.currentFileId = parsed.currentFileId || null;
     appState.currentView = parsed.currentView || 'review';
     appState.statusFilter = parsed.statusFilter || '';
-    // Merge: use REVIEW_POLICIES as base, carry over status/edits from saved state
     if (parsed.policies) {
-      const savedById = new Map(parsed.policies.map(p => [p.id, p]));
-      const savedByFile = new Map(parsed.policies.map(p => [p.file_name, p]));
-      appState.policies = REVIEW_POLICIES.map(p => {
-        const savedEntry = savedById.get(p.id) || savedByFile.get(p.file_name);
-	        if (savedEntry) {
-          const savedHistory = Array.isArray(savedEntry._change_history)
+      appState.serverSynced = !!parsed.serverSynced;
+      if (appState.serverSynced) {
+        appState.policies = parsed.policies.map(savedEntry => {
+          const clean = { ...savedEntry };
+          delete clean._syncing;
+          clean._change_history = Array.isArray(savedEntry._change_history)
             ? savedEntry._change_history.map(normalizeHistoryEntry)
             : parseChangeHistoryText(savedEntry.change_history || (savedEntry.fields && savedEntry.fields['修改历史']) || '');
-	          const merged = {
-	            ...p,
-	            status: savedEntry.status || p.status,
-	            confirmed_at: savedEntry.confirmed_at || p.confirmed_at,
-	            data: { ...p.data, ...(savedEntry.data || {}) },
-	            audit: savedEntry.audit || p.audit,
-	            _change_history: savedHistory,
-		          };
-          delete merged._syncing;
-		          // 加载时清理：当前值等于原始值则移除修改标识
-		          refreshEditedFields(merged);
-	          normalizePolicySchema(merged);
-	          return merged;
-	        }
-	        normalizePolicySchema(p);
-	        return p;
-	      });
-	    }
-	  } catch(e) {}
-	}
+          normalizePolicySchema(clean);
+          return clean;
+        });
+      } else {
+        // 首次加载或未完成飞书同步时，用静态包兜底，再合并本地编辑状态。
+        const savedById = new Map(parsed.policies.map(p => [p.id, p]));
+        const savedByFile = new Map(parsed.policies.map(p => [p.file_name, p]));
+        appState.policies = REVIEW_POLICIES.map(p => {
+          const savedEntry = savedById.get(p.id) || savedByFile.get(p.file_name);
+          if (savedEntry) {
+            const savedHistory = Array.isArray(savedEntry._change_history)
+              ? savedEntry._change_history.map(normalizeHistoryEntry)
+              : parseChangeHistoryText(savedEntry.change_history || (savedEntry.fields && savedEntry.fields['修改历史']) || '');
+            const merged = {
+              ...p,
+              status: savedEntry.status || p.status,
+              confirmed_at: savedEntry.confirmed_at || p.confirmed_at,
+              data: { ...p.data, ...(savedEntry.data || {}) },
+              audit: savedEntry.audit || p.audit,
+              _change_history: savedHistory,
+            };
+            delete merged._syncing;
+            // 加载时清理：当前值等于原始值则移除修改标识
+            refreshEditedFields(merged);
+            normalizePolicySchema(merged);
+            return merged;
+          }
+          normalizePolicySchema(p);
+          return p;
+        });
+      }
+    }
+  } catch(e) {}
+}
 const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
 const propagatedOnLoad = propagateFieldDefinitionsByFileType();
 if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
@@ -5750,6 +5764,7 @@ function saveState() {
     currentFileId: appState.currentFileId,
     currentView: appState.currentView,
     statusFilter: appState.statusFilter || '',
+    serverSynced: !!appState.serverSynced,
   }));
 }
 
@@ -7730,6 +7745,10 @@ async function syncStatusesFromServer(showTip) {
     const statusEntries = Object.entries(result.statuses);
     const serverIds = new Set(statusEntries.map(([id]) => id));
     if (serverIds.size) {
+      if (!appState.serverSynced) {
+        appState.serverSynced = true;
+        changed++;
+      }
       const beforeLen = appState.policies.length;
       appState.policies = appState.policies.filter(p => serverIds.has(p.id) || p._syncing);
       if (appState.policies.length !== beforeLen) changed++;
