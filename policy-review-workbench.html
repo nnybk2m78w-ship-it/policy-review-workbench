@@ -5332,6 +5332,10 @@ function normalizePolicySchema(policy) {
     problems: policy.problems,
   });
   migrateLegacyCustomFields(policy.data, policy);
+  const cleanedManualConfirm = cleanManualConfirmText(policy.data.manual_confirm_fields);
+  if (normalizeFeishuValue(policy.data.manual_confirm_fields) !== cleanedManualConfirm) {
+    policy.data.manual_confirm_fields = cleanedManualConfirm;
+  }
   Object.entries(policy.data[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
     if (def && !def.file_type) def.file_type = getPolicyFileType(policy);
     registerFieldDefinition(policy, key, def);
@@ -5481,7 +5485,7 @@ function getFieldsForGroup(p, group) {
 }
 
 function getManualConfirmFieldKeys(p) {
-  const text = normalizeFeishuValue(p && p.data && p.data.manual_confirm_fields);
+  const text = cleanManualConfirmText(p && p.data && p.data.manual_confirm_fields);
   const keys = new Set();
   if (!text) return [];
   Object.entries(LABELS).forEach(([key, label]) => {
@@ -5528,7 +5532,7 @@ function manualConfirmPatternForField(field, policy) {
 
 function clearManualConfirmForField(policy, field) {
   if (!policy || !policy.data || !field || isManualConfirmValue(policy.data[field])) return 0;
-  const text = normalizeFeishuValue(policy.data.manual_confirm_fields);
+  const text = cleanManualConfirmText(policy.data.manual_confirm_fields);
   if (!text) return 0;
   const pattern = manualConfirmPatternForField(field, policy);
   if (!pattern) return 0;
@@ -5611,6 +5615,20 @@ function normalizeFeishuValue(value) {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function cleanManualConfirmText(raw) {
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return '';
+  return text
+    .split(/[；;\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .filter(part => !/^依据原文出现/.test(part))
+    .filter(part => !/按旗舰店(?:code)?政策审核/.test(part))
+    .filter(part => !/旗舰店不解析PAT[:：]?A|旗舰店不解析出票指令|旗舰店不看出票指令/.test(part))
+    .filter(part => !/^分类依据[:：]/.test(part))
+    .join('；');
 }
 
 function isManualConfirmValue(value) {

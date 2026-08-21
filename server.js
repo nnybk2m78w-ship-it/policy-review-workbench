@@ -444,6 +444,20 @@ function normalizeFeishuValue(value) {
   return String(value);
 }
 
+function cleanManualConfirmText(raw) {
+  const text = normalizeFeishuValue(raw).trim();
+  if (!text) return '';
+  return text
+    .split(/[；;\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .filter(part => !/^依据原文出现/.test(part))
+    .filter(part => !/按旗舰店(?:code)?政策审核/.test(part))
+    .filter(part => !/旗舰店不解析PAT[:：]?A|旗舰店不解析出票指令|旗舰店不看出票指令/.test(part))
+    .filter(part => !/^分类依据[:：]/.test(part))
+    .join('；');
+}
+
 function getJsonFieldName(fields) {
   if (!fields) return '';
   return JSON_FIELD_CANDIDATES.find(name => Object.prototype.hasOwnProperty.call(fields, name)) || '';
@@ -593,7 +607,7 @@ function manualConfirmPatternForField(fieldKey, fieldLabel) {
 }
 
 function stripManualConfirmForField(raw, fieldKey, fieldLabel) {
-  const text = normalizeFeishuValue(raw);
+  const text = cleanManualConfirmText(raw);
   if (!text) return text;
   const pattern = manualConfirmPatternForField(fieldKey, fieldLabel);
   if (!pattern) return text;
@@ -628,11 +642,34 @@ function clearParsedManualConfirmForField(parsed, fieldKey, fieldLabel) {
   return changed;
 }
 
+function cleanParsedManualConfirm(parsed) {
+  if (!parsed) return false;
+  let changed = false;
+  const applyOne = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    const next = cleanManualConfirmText(obj.manual_confirm_fields);
+    if (normalizeFeishuValue(obj.manual_confirm_fields) !== next) {
+      obj.manual_confirm_fields = next;
+      changed = true;
+    }
+    if (obj.data && typeof obj.data === 'object') {
+      const dataNext = cleanManualConfirmText(obj.data.manual_confirm_fields);
+      if (normalizeFeishuValue(obj.data.manual_confirm_fields) !== dataNext) {
+        obj.data.manual_confirm_fields = dataNext;
+        changed = true;
+      }
+    }
+  };
+  if (Array.isArray(parsed)) parsed.forEach(applyOne);
+  else applyOne(parsed);
+  return changed;
+}
+
 function appendManualNote(parsed, note) {
   if (!parsed || !note) return false;
   const appendOne = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
-    const prev = normalizeFeishuValue(obj.manual_confirm_fields);
+    const prev = cleanManualConfirmText(obj.manual_confirm_fields);
     if (prev.includes(note)) return false;
     obj.manual_confirm_fields = prev ? `${prev}；${note}` : note;
     return true;
@@ -705,8 +742,26 @@ function inferDateRangeFromTitle(text, fieldKey) {
   const start = `${year}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}`;
   const endYear = Number(em) < Number(sm) ? year + 1 : year;
   const end = `${endYear}-${em.padStart(2, '0')}-${ed.padStart(2, '0')}`;
-  if (fieldKey === 'sale_date') return `需人工确认至${end}`;
   return `${start}至${end}`;
+}
+
+function parseRecordDate(fields) {
+  const raw = normalizeFeishuValue(fields && (fields['解析时间'] || fields['创建时间'] || fields['更新时间']));
+  const m = raw.match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function inferRelativeStartDateRange(fields, parsed, fieldKey) {
+  const text = getPolicyText(fields, parsed);
+  if (!/(即日起|上线之日起|产品生效之日起|自下发之日起|自发布之日起|本通告自下发之日起生效)/.test(text)) return '';
+  const start = parseRecordDate(fields);
+  const endMatch = text.match(/(?:至|到|截止至|截至|有效期至)\s*(20\d{2})[年\-/\.](\d{1,2})[月\-/\.](\d{1,2})日?/);
+  if (endMatch) return `${start}至${endMatch[1]}-${endMatch[2].padStart(2, '0')}-${endMatch[3].padStart(2, '0')}`;
+  if (['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return `${start}起`;
+  return '';
 }
 
 function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
@@ -816,6 +871,8 @@ function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetPar
   }
   if (ruleType === '次卡日期完整性规则') {
     if (!/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(targetText)) return null;
+    const relative = inferRelativeStartDateRange(targetFields, targetParsed, fieldKey);
+    if (relative) return relative;
     const inferred = inferDateRangeFromTitle(targetText, fieldKey);
     return inferred || null;
   }
@@ -1519,6 +1576,9 @@ async function listAllRecordStatuses() {
   const statuses = {};
   const records = await listAllFeishuRecords();
   records.forEach(({ recordId, fields: f }) => {
+    if (Object.prototype.hasOwnProperty.call(f, '人工确认项')) {
+      f['人工确认项'] = cleanManualConfirmText(f['人工确认项']);
+    }
     let st = f['审核状态'];
     if (Array.isArray(st)) st = st[0];
     if (st && typeof st === 'object') st = st.text || st.name || '';
@@ -1719,6 +1779,58 @@ app.post('/api/admin/cleanup-auto-problems', async (req, res) => {
     });
   } catch (err) {
     console.error(`[清理自动问题标记] ✗ ${err.message}`);
+    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+// ---- 管理接口：清理人工确认项中的解析说明/分类证据 ----
+app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
+  if (!requireAdminConfirm(req, res, 'CLEANUP_MANUAL_CONFIRM')) return;
+
+  try {
+    const tableFields = await ensureTableFields();
+    const records = await listAllFeishuRecords();
+    const changed = [];
+    const results = await runLimited(records, 6, async item => {
+      const before = normalizeFeishuValue(item.fields['人工确认项']);
+      const after = cleanManualConfirmText(before);
+      const updates = {};
+      if (before !== after && tableFields.includes('人工确认项')) {
+        updates['人工确认项'] = after;
+      }
+
+      const jsonFieldName = getJsonFieldName(item.fields);
+      const parsed = parseJsonField(jsonFieldName ? item.fields[jsonFieldName] : null);
+      if (parsed && jsonFieldName && tableFields.includes(jsonFieldName) && cleanParsedManualConfirm(parsed)) {
+        updates[jsonFieldName] = stringifyJsonField(parsed);
+      }
+
+      if (!Object.keys(updates).length) {
+        return { success: true, skipped: true, recordId: item.recordId };
+      }
+
+      await updateFeishuRecord(item.recordId, updates);
+      changed.push({
+        recordId: item.recordId,
+        fileName: getFileName(item.fields, parsed),
+        before,
+        after,
+      });
+      return { success: true, recordId: item.recordId };
+    });
+    const errors = results.filter(x => x && !x.success);
+    res.json({
+      success: errors.length === 0,
+      changed: changed.length,
+      changed_records: changed,
+      errors,
+    });
+  } catch (err) {
+    console.error(`[清理人工确认项] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
     } else {
