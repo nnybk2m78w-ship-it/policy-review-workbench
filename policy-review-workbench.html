@@ -5178,19 +5178,36 @@ function getFieldDefinition(policy, key) {
 
 function getPolicyFileType(policy) {
   const category = normalizeFeishuValue(policy && policy.category);
-  const text = [
-    category,
+  const scenarioText = [
     policy && policy.data && policy.data.scenario,
     policy && policy.data && policy.data.product_family,
     policy && policy.data && policy.data.product_category,
     policy && policy.data && policy.data.product_name,
+  ].map(normalizeFeishuValue).join(' ');
+  const text = [
+    category,
+    scenarioText,
     policy && policy.file_name,
   ].map(normalizeFeishuValue).join(' ');
-  if (/^01_|次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(category) || /次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
-  if (/^02_|旗舰店/.test(category) || /旗舰店/.test(text)) {
-    return /券类|优惠券|券码|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  if (/次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(scenarioText) || /^01_/.test(category) || /次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
+  if (/旗舰店/.test(scenarioText) || /^02_/.test(category) || /旗舰店/.test(text)) {
+    return /券类|优惠券|券码|资源券|coupon/i.test(scenarioText || text) ? '旗舰店券类' : '旗舰店code';
   }
   return '自营';
+}
+
+function categoryForFileType(fileType) {
+  if (fileType === '次卡') return '01_次卡';
+  if (fileType === '旗舰店code' || fileType === '旗舰店券类') return '02_旗舰店';
+  return '03_自营';
+}
+
+function normalizePolicyCategory(policy) {
+  if (!policy) return 0;
+  const next = categoryForFileType(getPolicyFileType(policy));
+  if (String(policy.category || '').trim() === next) return 0;
+  policy.category = next;
+  return 1;
 }
 
 function definitionAppliesToPolicy(def, policy) {
@@ -5330,6 +5347,7 @@ function normalizePolicySchema(policy) {
     audit: policy.audit,
     history: policy._change_history,
     problems: policy.problems,
+    category: policy.category,
   });
   migrateLegacyCustomFields(policy.data, policy);
   const cleanedManualConfirm = cleanManualConfirmText(policy.data.manual_confirm_fields);
@@ -5373,11 +5391,13 @@ function normalizePolicySchema(policy) {
   clearResolvedManualConfirmFields(policy);
   inferSourceBoundBenefitFields(policy);
   purgeUnsupportedSourceBoundFields(policy);
+  normalizePolicyCategory(policy);
   return before === JSON.stringify({
     data: policy.data,
     audit: policy.audit,
     history: policy._change_history,
     problems: policy.problems,
+    category: policy.category,
   }) ? 0 : 1;
 }
 
@@ -5634,7 +5654,7 @@ function cleanManualConfirmText(raw) {
 function isManualConfirmValue(value) {
   const text = normalizeFeishuValue(value).trim();
   if (!text) return true;
-  return /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认|未获取|暂无|无)$/.test(text) ||
+  return /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认|未获取|暂无)$/.test(text) ||
     /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认|未获取)/.test(text);
 }
 
@@ -7634,6 +7654,15 @@ function applyFeishuFieldsToPolicy(p, fields) {
     changed += mergeParsedJsonIntoPolicy(p, fields[jsonFieldName]);
   }
 
+  if (Object.prototype.hasOwnProperty.call(fields, '人工确认项')) {
+    const nextManual = cleanManualConfirmText(fields['人工确认项']);
+    if (!p.data) p.data = {};
+    if (normalizeFeishuValue(p.data.manual_confirm_fields) !== nextManual) {
+      p.data.manual_confirm_fields = nextManual;
+      changed++;
+    }
+  }
+
   Object.entries(FIELD_LABEL_TO_KEY).forEach(([label, key]) => {
     if (!Object.prototype.hasOwnProperty.call(fields, label)) return;
     if (!isPromptAllowedField(p, key)) return;
@@ -7645,6 +7674,9 @@ function applyFeishuFieldsToPolicy(p, fields) {
       if (!p.data) p.data = {};
       p.data[key] = value;
       changed++;
+    }
+    if (hasConcreteFieldValue(value)) {
+      changed += clearManualConfirmForField(p, key);
     }
   });
 
@@ -7680,7 +7712,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
     const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
     if (editedFields.length) p.audit.edited_fields = editedFields;
     else if (normalizeFeishuValue(fields['已修改']) !== '是') delete p.audit.edited_fields;
-    changed += applyManualHistoryValues(p);
+      changed += applyManualHistoryValues(p);
   } else if (Object.prototype.hasOwnProperty.call(fields, '已修改') && normalizeFeishuValue(fields['已修改']) !== '是') {
     if (p.audit && p.audit.edited_fields) {
       delete p.audit.edited_fields;
@@ -7690,6 +7722,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
   }
 
 	  changed += normalizePolicySchema(p);
+	  changed += normalizePolicyCategory(p);
 	  return changed;
 	}
 
@@ -7727,7 +7760,7 @@ function policyFromFeishuStatus(recordId, statusEntry) {
     category: source.category || flatData.category || fields['分类'] || fields['文件分类'],
     data,
   });
-  const category = normalizeCategory(source.category || flatData.category || (fileType === '次卡' ? '01_次卡' : (fileType === '自营' ? '03_自营' : '02_旗舰店')));
+  const category = categoryForFileType(fileType);
   const policy = {
     id: recordId,
     file_name: fileName,
@@ -7921,6 +7954,9 @@ async function syncStatusesFromServer(showTip) {
       changed++;
     }
     changed += propagateFieldDefinitionsByFileType();
+    const beforeCat = appState.sidebarCat;
+    ensureVisibleSidebarCategory();
+    if (beforeCat !== appState.sidebarCat) changed++;
     if (changed > 0) {
       saveState();
       render();
