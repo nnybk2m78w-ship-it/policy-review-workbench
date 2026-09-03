@@ -787,8 +787,82 @@ function inferRelativeStartDateRange(fields, parsed, fieldKey) {
   return '';
 }
 
+function inferSamePeriodDate(fields, parsed, fieldKey) {
+  if (!['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return '';
+  const candidates = fieldKey === 'sale_date'
+    ? ['depart_date', 'travel_date', 'use_date', 'redeem_date']
+    : ['sale_date', 'depart_date', 'use_date', 'redeem_date'];
+  for (const key of candidates) {
+    if (key === fieldKey) continue;
+    const value = getParsedValue(parsed, key);
+    if (value && !isBlankish(value)) return value;
+  }
+  return '';
+}
+
+function inferCorporateCode(fields, parsed) {
+  const text = getPolicyText(fields, parsed);
+  const patterns = [
+    /大客户编码[:：\s]*([A-Z0-9_-]{2,})/i,
+    /(?:PAT[:：]?A)?#C\s*([A-Z0-9_-]{2,})/i,
+    /特殊指令[:：\s]*(?:PAT[:：]?A)?#?C?([A-Z0-9_-]{2,})/i,
+    /TC项[:：\s]*([A-Z0-9_-]{2,})/i,
+  ];
+  for (const pattern of patterns) {
+    const m = text.match(pattern);
+    if (m && m[1] && !/PAT|GP|CGP/i.test(m[1])) return m[1];
+  }
+  return '';
+}
+
+function inferDiscountType(fields, parsed) {
+  const text = getPolicyText(fields, parsed);
+  if (/指定票面价|票面价|一口价|指定价格|票价为|票面金额/.test(text)) return '指定票面价';
+  if (/直加|加价|加收|加享|升舱差价|额外支付/.test(text)) return '直加金额';
+  if (/\d+(?:\.\d+)?\s*%|折扣|直减比例/.test(text)) return '直减比例';
+  if (/直减|立减|优惠金额|减免|减\d+元/.test(text)) return '直减金额';
+  return '';
+}
+
+function inferChildApplicable(fields, parsed) {
+  const text = getPolicyText(fields, parsed);
+  if (/儿童.{0,12}(不适用|不得|不可|不能|不享受|不支持|不允许)|不适用.{0,12}儿童/.test(text)) return '否';
+  if (/儿童.{0,12}(适用|可购买|可享受|允许)|适用.{0,12}儿童/.test(text)) return '是';
+  return '';
+}
+
 function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
   const text = `${fieldKey} ${fieldLabel || ''} ${reason || ''} ${newValue || ''}`;
+  if (['sale_date', 'depart_date'].includes(fieldKey) && /删除字段|不看此字段|不开此字段|配置不看|配置不开/.test(text)) {
+    return {
+      type: '场景字段不适用删除规则',
+      rule: '当人工确认某文件类型/产品系列的字段不属于配置字段时，后续同场景同航司待审文件将该字段置空，不再以人工确认阻塞审核。',
+    };
+  }
+  if (fieldKey === 'sale_date' && /没有销售时间|无销售时间|同乘机|同航班|同适用日期|适用日期|文件下发日期|下发日期就是售卖日期/.test(text)) {
+    return {
+      type: '销售日期同周期或发文日规则',
+      rule: '销售日期缺失时，仅按当前文件自身证据处理：若说明与乘机/航班/适用日期同周期，则取该文件自己的旅行/适用日期；若说明下发日即售卖日期，则取该文件下发/发文日期。',
+    };
+  }
+  if (fieldKey === 'corporate_code' && /大客户编码|特殊指令|#C|TC项/.test(text)) {
+    return {
+      type: '大客户编码特殊指令规则',
+      rule: '大客户编码优先从大客户编码标签、#C 后缀、TC 项或特殊指令中提取，不作为优惠码、资源编号或渠道。',
+    };
+  }
+  if (fieldKey === 'discount_type' && /指定票面价|票面价|一口价|直加|加价|直减|比例|优惠/.test(text)) {
+    return {
+      type: '优惠类型语义识别规则',
+      rule: '优惠类型按原文语义识别：指定票价/票面价/一口价为指定票面价；直加/加价为直加金额；百分比为直减比例；固定减免为直减金额。',
+    };
+  }
+  if (fieldKey === 'child_applicable' && /儿童|婴儿|特殊票|不适用|适用/.test(text)) {
+    return {
+      type: '儿童适用显式语义规则',
+      rule: '儿童适用只按当前文件明确儿童适用/不适用判断；仅排除婴儿或特殊票时不得等同于儿童不适用。',
+    };
+  }
   if (fieldKey === 'product_type' && /成人|儿童|CH|PAT[:：]?A/i.test(text) && /PAT[:：]?A/i.test(text)) {
     return {
       type: '自营PAT指令完整性规则',
@@ -874,6 +948,31 @@ function filterManualProblemMarks(raw) {
 
 function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetParsed }) {
   const targetText = getPolicyText(targetFields, targetParsed);
+  if (ruleType === '场景字段不适用删除规则') {
+    const type = getPolicyFileType(targetFields, targetParsed);
+    if (type !== '旗舰店code') return null;
+    if (!/长龙|浙江长龙|GJ|升舱|超值权益|特惠|快速安检|行李加享|积分优享|授权销售渠道|TC项|产品代码/.test(targetText)) return null;
+    return '';
+  }
+  if (ruleType === '销售日期同周期或发文日规则') {
+    if (/按呈报政策|以接口报出为准|详见附件|见附件/.test(targetText)) return null;
+    if (/下发日期就是售卖日期|文件下发日期/.test(`${newValue || ''} ${targetText}`)) {
+      const docDate = extractDocumentDate(targetText);
+      if (docDate) return docDate;
+    }
+    const samePeriod = inferSamePeriodDate(targetFields, targetParsed, fieldKey);
+    if (samePeriod && !isBlankish(samePeriod)) return samePeriod;
+    return inferRelativeStartDateRange(targetFields, targetParsed, fieldKey) || null;
+  }
+  if (ruleType === '大客户编码特殊指令规则') {
+    return inferCorporateCode(targetFields, targetParsed) || null;
+  }
+  if (ruleType === '优惠类型语义识别规则') {
+    return inferDiscountType(targetFields, targetParsed) || null;
+  }
+  if (ruleType === '儿童适用显式语义规则') {
+    return inferChildApplicable(targetFields, targetParsed) || null;
+  }
   if (ruleType === '年龄限制产品证件默认规则') {
     const age = getParsedValue(targetParsed, 'age_limit');
     if (!age && !/青年|长者|银发|学生|年龄|周岁|身份证第7-14位/.test(targetText)) return null;
