@@ -2016,12 +2016,17 @@ app.post('/api/admin/import-records', async (req, res) => {
       }
       const existing = existingByName.get(normalizeFeishuValue(fields['文件名称']));
       if (existing) {
-        fields = filterKnownFields(mergePreservingReview(fields, existing), tableFields);
-        await updateFeishuRecord(existing.recordId, fields);
+        const mergedFields = filterKnownFields(mergePreservingReview(fields, existing), tableFields);
+        const updateFields = { ...mergedFields };
+        // Existing records may contain Feishu select/user/date objects. Updating those
+        // objects back through the API can trigger conversion failures, so keep review
+        // state in place by omitting preserved fields from update payloads.
+        REVIEW_PRESERVE_FIELDS.forEach(name => delete updateFields[name]);
+        await updateFeishuRecord(existing.recordId, updateFields);
         created.push({
           recordId: existing.recordId,
-          fields: { ...(existing.fields || {}), ...fields },
-          fileName: fields['文件名称'],
+          fields: { ...(existing.fields || {}), ...updateFields },
+          fileName: mergedFields['文件名称'],
           mode: 'updated',
         });
         continue;
