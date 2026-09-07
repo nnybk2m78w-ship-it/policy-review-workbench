@@ -125,6 +125,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .prob-resolve { background:transparent; border:1px solid #d63031; color:#d63031; border-radius:4px; padding:1px 8px; font-size:11px; cursor:pointer; margin-left:8px; }
 .prob-resolve:hover { background:#d63031; color:#fff; }
 .prob-resolve:disabled { opacity:0.4; cursor:default; }
+.inline-problems-section { margin-top:18px; background:#fff7f7; border:1px solid #f5c6c6; border-radius:8px; overflow:hidden; }
+.inline-problems-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; border-bottom:1px solid #f3d2d2; color:#d63031; font-size:13px; font-weight:700; }
+.inline-problems-list { max-height:240px; overflow:auto; padding:4px 12px; }
+.inline-problem-item { display:grid; grid-template-columns:1fr auto; gap:10px; padding:9px 0; border-bottom:1px dashed #edcaca; font-size:12px; align-items:start; }
+.inline-problem-item:last-child { border-bottom:none; }
+.inline-problem-desc { color:#2d3436; line-height:1.55; word-break:break-word; }
+.inline-problem-meta { color:var(--muted); white-space:nowrap; font-size:11px; text-align:right; }
 
 /* 问题按钮 */
 .btn-sm-problem { background:#fff; border:1px solid #d63031; color:#d63031; }
@@ -5665,8 +5672,9 @@ function parseProblemMarks(raw) {
     const m = line.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]*?)[:：]\s*(.*)$/);
     if (m) {
       const label = m[3].trim() || '文件整体';
+      const mappedField = canonicalizeLegacyFieldName(FIELD_LABEL_TO_KEY[label] || label);
       return {
-        field: FIELD_LABEL_TO_KEY[label] || '',
+        field: label === '文件整体' ? '' : mappedField,
         field_label: label,
         desc: m[4].trim(),
         created_by: m[2].trim(),
@@ -6261,6 +6269,28 @@ function renderProblems(main) {
   main.innerHTML = html;
 }
 
+function renderInlineProblemDetails(p) {
+  const problems = p.problems || [];
+  if (!problems.length) return '';
+  const items = problems.map((pr, i) => {
+    const label = pr.field_label || (pr.field ? renderPlainFieldLabel(pr.field, p) : '文件整体');
+    const meta = [pr.created_by, pr.created_at].filter(Boolean).join(' · ');
+    return `<div class="inline-problem-item">
+      <div class="inline-problem-desc"><span class="prob-field-tag">${escapeHtml(label)}</span>${escapeHtml(pr.desc || '')}</div>
+      <div class="inline-problem-meta">${escapeHtml(meta)}
+        <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${i})">✓ 已解决</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="inline-problems-section">
+    <div class="inline-problems-head">
+      <span>问题明细（${problems.length}）</span>
+      <button class="problems-panel-action" onclick="openFileProblems('${jsArg(p.id)}')">弹窗处理</button>
+    </div>
+    <div class="inline-problems-list">${items}</div>
+  </div>`;
+}
+
 function renderFieldRow(p, f, isExtra) {
   if (!isPromptAllowedField(p, f)) return '';
   const val = p.data[f];
@@ -6514,6 +6544,7 @@ function renderReview(main) {
   }
 
   const sourceHtml = renderSourceDocument(p);
+  const inlineProblemsHtml = renderInlineProblemDetails(p);
 
   // Status badge
   const statusInfo = getStatusInfo(p);
@@ -6558,6 +6589,7 @@ function renderReview(main) {
       </div>
       ${problemsHtml}
       ${fieldsHtml}
+      ${inlineProblemsHtml}
     </div>
   </div>`;
 }
