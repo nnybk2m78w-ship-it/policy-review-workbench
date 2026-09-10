@@ -5815,6 +5815,389 @@ try {
   localStorage.removeItem('policy_review_state_v2');
 } catch(e) {}
 
+const FIELD_DEFINITIONS_KEY = '_field_definitions';
+const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
+const CUSTOM_FIELD_KEY_PREFIX = 'custom_';
+const LABELS = {
+  scenario: '解析场景',
+  business_line: '业务线',
+  channel_note: '渠道备注',
+  carrier: '航司二字码',
+  carrier_name: '航司名称',
+  product_name: '产品名称',
+  product_family: '产品类型',
+  product_type: '出票指令',
+  product_code: '产品代码',
+  product_code_raw: '原始产品码',
+  policy_code: '政策编号',
+  fare_basis: '运价基础',
+  corporate_code: '大客户编码',
+  coupon_resource_code: '券/资源编号',
+  product_category: '产品类别',
+  flight_type: '航程类型',
+  trip_type_note: '航程备注',
+  od: '航线范围',
+  od_note: '航线备注',
+  booking_cabin: '适用舱位',
+  cabin: '舱位代码',
+  cabin_count: '舱位数量',
+  sale_date: '销售日期',
+  redeem_date: '兑换日期',
+  use_date: '兑换日期(标准)',
+  depart_date: '旅行日期',
+  depart_date_note: '旅行日期备注',
+  advance_purchase_days: '提前购票',
+  ticket_type: '票证类型',
+  ticket_stock: '票证代码',
+  discount_type: '直减类型',
+  discount_per: '直减金额/比例',
+  passenger_type: '旅客类型',
+  customer_limit_group: '客群分组',
+  age_limit: '年龄限制',
+  child_applicable: '儿童适用',
+  baby_applicable: '婴儿适用',
+  realname_required: '实名要求',
+  realname_limit: '实名限制',
+  id_type_restriction: '证件类型限制',
+  document_restrictions: '证件限制',
+  sign_and_transfer_rules: '签转规则',
+  refund_rules: '退票规则',
+  refund_change_note: '退改说明',
+  change_rules: '变更规则',
+  commission_rate: '代理费率',
+  rounding_rule: '取整规则',
+  fc_fn_fp_note: 'FC/FN/FP备注',
+  manual_confirm_fields: '人工确认项',
+  office_scope: 'OFFICE范围',
+  office_count: 'OFFICE数量',
+  route_row_count: '航线行数',
+  unique_route_count: '唯一航线数',
+  flight_count: '航班数',
+  amount_tiers: '金额档位',
+  amount_range: '金额范围',
+  price_tiers_count: '价格档位数',
+  top_5_hubs: 'TOP5枢纽',
+  usage_times: '使用次数',
+  travel_class: '舱等',
+  product_show: '权益卡展示文案',
+  json_count: '拆分JSON数',
+  use_limit: '兑换限制',
+  use_begin: '兑换开启时间',
+  wether_depart_today: '是否含起飞当日',
+  membership_limit: '会员限制',
+  refund_time: '未兑换退款日期',
+  luggage_amount: '行李额',
+  benefit_name: '权益名称',
+  benefit_usage_rules: '权益使用规则',
+  not_applicable_flight_routes: '不适用航班/航线明细',
+  not_applicable_od: '不适用航线',
+  price_groups_summary: '价格组汇总',
+  use_code: '兑换标识',
+};
+const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(LABELS).map(([key, label]) => [label, key]));
+const EXTRA_FIELD_EXCLUDE = new Set(['evidence', 'audit', 'problems', 'confirmed_by', 'confirmed_at', 'record_id']);
+const FIELD_TERM_MAP = [
+  ['销售', 'sale'], ['航班', 'flight'], ['旅行', 'depart'], ['兑换', 'redeem'], ['日期', 'date'],
+  ['航线', 'route'], ['舱位', 'cabin'], ['价格', 'price'], ['金额', 'amount'], ['比例', 'rate'],
+  ['权益', 'benefit'], ['名称', 'name'], ['规则', 'rules'], ['限制', 'limit'], ['文案', 'copy'],
+  ['渠道', 'channel'], ['证件', 'document'], ['年龄', 'age'], ['会员', 'member'], ['行李', 'baggage'],
+];
+const FIELD_GROUPS = [
+  { title: '基础信息', fields: ['scenario','business_line','carrier','carrier_name','product_name','product_family','product_category','policy_code'] },
+  { title: '产品代码与出票', fields: ['product_type','product_code','product_code_raw','fare_basis','corporate_code','coupon_resource_code','ticket_type','ticket_stock'] },
+  { title: '适用范围', fields: ['flight_type','trip_type_note','od','od_note','booking_cabin','cabin','cabin_count','office_scope','office_count'] },
+  { title: '日期规则', fields: ['sale_date','redeem_date','use_date','depart_date','depart_date_note','advance_purchase_days','use_begin','refund_time'] },
+  { title: '优惠与旅客', fields: ['discount_type','discount_per','passenger_type','customer_limit_group','age_limit','child_applicable','baby_applicable','realname_required','realname_limit','id_type_restriction','document_restrictions','membership_limit'] },
+  { title: '退改签与规则', fields: ['sign_and_transfer_rules','refund_rules','change_rules','refund_change_note','commission_rate','rounding_rule','fc_fn_fp_note'] },
+  { title: '次卡/权益', fields: ['usage_times','travel_class','product_show','json_count','use_limit','luggage_amount','benefit_name','benefit_usage_rules','not_applicable_flight_routes','not_applicable_od','price_groups_summary','use_code'] },
+  { title: '人工确认', fields: ['manual_confirm_fields'] },
+];
+const BASE_PROMPT_FIELDS = {
+  '自营': new Set(['scenario','business_line','channel_note','carrier','carrier_name','product_name','product_family','product_type','product_code','policy_code','fare_basis','corporate_code','flight_type','trip_type_note','od','od_note','booking_cabin','cabin','sale_date','depart_date','advance_purchase_days','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','commission_rate','manual_confirm_fields','luggage_amount','not_applicable_od']),
+  '旗舰店code': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','product_code_raw','policy_code','fare_basis','corporate_code','flight_type','od','booking_cabin','cabin','sale_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','manual_confirm_fields','luggage_amount','benefit_name','benefit_usage_rules','not_applicable_flight_routes']),
+  '旗舰店券类': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','coupon_resource_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','benefit_name','benefit_usage_rules','not_applicable_flight_routes','manual_confirm_fields']),
+  '次卡': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','usage_times','travel_class','product_show','json_count','use_limit','use_begin','wether_depart_today','refund_time','price_groups_summary','manual_confirm_fields']),
+};
+
+function normalizeFeishuValue(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(normalizeFeishuValue).filter(Boolean).join('、');
+  if (typeof value === 'object') {
+    if (value.text !== undefined) return normalizeFeishuValue(value.text);
+    if (value.name !== undefined) return normalizeFeishuValue(value.name);
+    if (value.value !== undefined) return normalizeFeishuValue(value.value);
+    return JSON.stringify(value);
+  }
+  return String(value).trim();
+}
+
+function parseJsonText(raw) {
+  const text = normalizeFeishuValue(raw);
+  if (!text) return null;
+  try { return JSON.parse(text); } catch(e) {}
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch(e) { return null; }
+}
+
+function parseJsonField(raw) {
+  return parseJsonText(raw);
+}
+
+function canonicalizeLegacyFieldName(field) {
+  return FIELD_LABEL_TO_KEY[field] || field;
+}
+
+function getPolicyFileType(policyOrFields, parsed) {
+  const p = policyOrFields || {};
+  const fields = parsed ? p : {};
+  const data = parsed || p.data || {};
+  const text = [
+    p.file_name,
+    p.category,
+    fields['文件类型'],
+    fields['解析场景'],
+    fields['产品名称'],
+    data.scenario,
+    data.business_line,
+    data.product_family,
+    data.product_category,
+    data.product_name,
+  ].filter(Boolean).join(' ');
+  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
+  if (/旗舰店|旗舰店产品|产品代码|产品码|权益|礼包|升舱|安检|行李|甄选|早鸟|趣游/.test(text)) {
+    return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  }
+  return '自营';
+}
+
+function categoryForFileType(type) {
+  if (type === '次卡') return '01_次卡';
+  if (type === '旗舰店code' || type === '旗舰店券类') return '02_旗舰店';
+  return '03_自营';
+}
+
+function normalizePolicyCategory(policy) {
+  if (!policy) return 0;
+  const next = categoryForFileType(getPolicyFileType(policy));
+  if (policy.category !== next) {
+    policy.category = next;
+    return 1;
+  }
+  return 0;
+}
+
+function getFieldDefinition(policy, field) {
+  return policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY] && policy.data[FIELD_DEFINITIONS_KEY][field];
+}
+
+function definitionAppliesToPolicy(def, policy) {
+  if (!def) return false;
+  const type = def.file_type || def.fileType || '';
+  return !type || type === getPolicyFileType(policy);
+}
+
+function isPromptAllowedFieldForType(fileType, field, def) {
+  if (!field || field === FIELD_DEFINITIONS_KEY) return false;
+  if ((BASE_PROMPT_FIELDS[fileType] || new Set()).has(field)) return true;
+  if (def && (def.file_type || def.fileType) === fileType) return true;
+  return field.startsWith(CUSTOM_FIELD_KEY_PREFIX);
+}
+
+function isPromptAllowedField(policy, field) {
+  const type = getPolicyFileType(policy);
+  const def = getFieldDefinition(policy, field);
+  return isPromptAllowedFieldForType(type, field, def) || !!LABELS[field];
+}
+
+function registerFieldDefinition(policy, field, def) {
+  if (!policy || !field || !def) return 0;
+  if (!policy.data) policy.data = {};
+  if (!policy.data[FIELD_DEFINITIONS_KEY]) policy.data[FIELD_DEFINITIONS_KEY] = {};
+  const current = JSON.stringify(policy.data[FIELD_DEFINITIONS_KEY][field] || {});
+  const nextDef = {
+    label: def.label || LABELS[field] || field,
+    json_key: def.json_key || field,
+    value_type: def.value_type || def.valueType || 'string',
+    file_type: def.file_type || def.fileType || getPolicyFileType(policy),
+    description: def.description || '',
+    logic: def.logic || '',
+  };
+  policy.data[FIELD_DEFINITIONS_KEY][field] = nextDef;
+  return current !== JSON.stringify(nextDef) ? 1 : 0;
+}
+
+function applyFieldDefinitionToFileType(field, def) {
+  if (!field || !def) return 0;
+  let changed = 0;
+  appState.policies.forEach(policy => {
+    if (getPolicyFileType(policy) !== def.file_type) return;
+    changed += registerFieldDefinition(policy, field, def);
+    if (!Object.prototype.hasOwnProperty.call(policy.data || {}, field)) {
+      policy.data[field] = '人工确认';
+      changed++;
+    }
+  });
+  return changed;
+}
+
+async function syncFieldDefinitionToServer(policyId, field, def) {
+  try {
+    await fetch('/api/save-field-definition', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId: policyId, fieldKey: field, fieldDefinition: def }),
+    });
+  } catch(e) {}
+}
+
+function isManualConfirmValue(value) {
+  return /^(人工确认|需人工确认|待确认|未提取|未识别|无法确认)/.test(normalizeFeishuValue(value));
+}
+
+function hasConcreteFieldValue(value) {
+  const text = normalizeFeishuValue(value);
+  return !!text && !isManualConfirmValue(text);
+}
+
+function cleanManualConfirmText(value) {
+  return normalizeFeishuValue(value).replace(/未提取/g, '人工确认');
+}
+
+function manualConfirmFieldNames(policy) {
+  const text = cleanManualConfirmText(policy && policy.data && policy.data.manual_confirm_fields);
+  if (!text) return new Set();
+  const names = new Set();
+  Object.entries(LABELS).forEach(([key, label]) => {
+    if (text.includes(label) || text.includes(key)) names.add(key);
+  });
+  return names;
+}
+
+function isManualConfirmField(policy, field) {
+  return field === 'manual_confirm_fields' || isManualConfirmValue(policy && policy.data && policy.data[field]) || manualConfirmFieldNames(policy).has(field);
+}
+
+function shouldShowManualConfirmField(policy, field) {
+  return field === 'manual_confirm_fields' || isPromptAllowedField(policy, field);
+}
+
+function isCoreManualField(policy, field) {
+  if (!policy || !field || field === FIELD_DEFINITIONS_KEY) return false;
+  if (field === 'manual_confirm_fields') return true;
+  return manualConfirmFieldNames(policy).has(field) || isPromptAllowedField(policy, field);
+}
+
+function clearManualConfirmForField(policy, field) {
+  if (!policy || !policy.data || field === 'manual_confirm_fields') return 0;
+  const label = LABELS[field] || field;
+  const before = normalizeFeishuValue(policy.data.manual_confirm_fields);
+  if (!before) return 0;
+  const pieces = before.split(/[;；,，、\n]/).map(x => x.trim()).filter(Boolean);
+  const next = pieces.filter(x => !x.includes(label) && !x.includes(field)).join('；');
+  if (next !== before) {
+    policy.data.manual_confirm_fields = next;
+    return 1;
+  }
+  return 0;
+}
+
+function applyManualHistoryValues(policy) {
+  if (!policy || !policy.data || !Array.isArray(policy._change_history)) return 0;
+  let changed = 0;
+  policy._change_history.forEach(h => {
+    const field = canonicalizeLegacyFieldName(h.field || h.fieldLabel || '');
+    if (!field || /^删除字段[:：]/.test(h.reason || '')) return;
+    if (!hasConcreteFieldValue(h.newValue)) return;
+    if (normalizeFeishuValue(policy.data[field]) !== normalizeFeishuValue(h.newValue)) {
+      policy.data[field] = h.newValue;
+      changed++;
+    }
+    changed += clearManualConfirmForField(policy, field);
+  });
+  return changed;
+}
+
+function clearResolvedManualConfirmFields(policy) {
+  if (!policy || !policy.data) return 0;
+  let changed = 0;
+  Object.keys(policy.data).forEach(field => {
+    if (field === 'manual_confirm_fields' || field === FIELD_DEFINITIONS_KEY) return;
+    if (hasConcreteFieldValue(policy.data[field])) changed += clearManualConfirmForField(policy, field);
+  });
+  return changed;
+}
+
+function mergeParsedJsonIntoPolicy(policy, rawJson) {
+  const parsed = parseJsonText(rawJson);
+  if (!parsed || !policy) return 0;
+  const source = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
+  const parsedData = source.data && typeof source.data === 'object' ? source.data : source;
+  if (!policy.data) policy.data = {};
+  let changed = 0;
+  Object.entries(parsedData || {}).forEach(([rawKey, value]) => {
+    const key = canonicalizeLegacyFieldName(rawKey);
+    if (!key || ['data','source_text','source_type','parsed_at','status','category','subcategory'].includes(key)) return;
+    if (EXTRA_FIELD_EXCLUDE.has(key) && key !== FIELD_DEFINITIONS_KEY) return;
+    if (!isPromptAllowedField(policy, key) && key !== FIELD_DEFINITIONS_KEY) return;
+    if (normalizeFeishuValue(policy.data[key]) !== normalizeFeishuValue(value)) {
+      policy.data[key] = value;
+      changed++;
+    }
+  });
+  return changed;
+}
+
+function normalizePolicySchema(policy) {
+  if (!policy) return 0;
+  let changed = 0;
+  if (!policy.data || typeof policy.data !== 'object') {
+    policy.data = {};
+    changed++;
+  }
+  if (!Array.isArray(policy.problems)) {
+    policy.problems = [];
+    changed++;
+  }
+  if (!policy.audit || typeof policy.audit !== 'object') {
+    policy.audit = {};
+    changed++;
+  }
+  if (!Array.isArray(policy._change_history)) {
+    policy._change_history = [];
+    changed++;
+  }
+  Object.keys(policy.data).forEach(key => {
+    const canonical = canonicalizeLegacyFieldName(key);
+    if (canonical !== key && !Object.prototype.hasOwnProperty.call(policy.data, canonical)) {
+      policy.data[canonical] = policy.data[key];
+      delete policy.data[key];
+      changed++;
+    }
+  });
+  changed += applyManualHistoryValues(policy);
+  changed += clearResolvedManualConfirmFields(policy);
+  return changed;
+}
+
+function propagateFieldDefinitionsByFileType() {
+  if (typeof appState === 'undefined' || !Array.isArray(appState.policies)) return 0;
+  const defs = [];
+  appState.policies.forEach(policy => {
+    const policyDefs = policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY];
+    if (!policyDefs || typeof policyDefs !== 'object') return;
+    Object.entries(policyDefs).forEach(([field, def]) => defs.push([field, def]));
+  });
+  let changed = 0;
+  defs.forEach(([field, def]) => {
+    appState.policies.forEach(policy => {
+      if (!definitionAppliesToPolicy(def, policy)) return;
+      changed += registerFieldDefinition(policy, field, def);
+    });
+  });
+  return changed;
+}
+
 // ===== STATE =====
 let appState = {
   policies: JSON.parse(JSON.stringify(REVIEW_POLICIES)),
@@ -5892,10 +6275,6 @@ if (saved) {
     }
   } catch(e) {}
 }
-const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
-const propagatedOnLoad = propagateFieldDefinitionsByFileType();
-if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
-
 function saveState() {
   const persistedPolicies = appState.policies.map(p => {
     const clean = { ...p };
@@ -6386,6 +6765,52 @@ function renderInlineProblemDetails(p) {
     </div>
     <div class="inline-problems-list">${items}</div>
   </div>`;
+}
+
+function jsArg(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+}
+
+function fieldDomId(field) {
+  return 'field_' + String(field || '').replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function getFieldsForGroup(policy, group) {
+  const base = Array.isArray(group.fields) ? group.fields : [];
+  const fields = [];
+  base.forEach(field => {
+    if (!fields.includes(field)) fields.push(field);
+  });
+  const defs = (policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY]) || {};
+  Object.keys(defs).forEach(field => {
+    if (definitionAppliesToPolicy(defs[field], policy) && !fields.includes(field)) {
+      fields.push(field);
+    }
+  });
+  return fields.filter(field => {
+    if (field === FIELD_DEFINITIONS_KEY) return false;
+    if (!isPromptAllowedField(policy, field)) return false;
+    if (field === 'manual_confirm_fields') return true;
+    const hasValue = policy && policy.data && Object.prototype.hasOwnProperty.call(policy.data, field);
+    const hasDef = !!getFieldDefinition(policy, field);
+    return hasValue || hasDef || isManualConfirmField(policy, field);
+  });
+}
+
+function getManualConfirmBlockMessage(policy) {
+  const pending = [];
+  const manual = manualConfirmFieldNames(policy);
+  manual.forEach(field => {
+    const value = policy && policy.data && policy.data[field];
+    if (!hasConcreteFieldValue(value)) pending.push(renderPlainFieldLabel(field, policy));
+  });
+  Object.entries((policy && policy.data) || {}).forEach(([field, value]) => {
+    if (field === FIELD_DEFINITIONS_KEY || field === 'manual_confirm_fields') return;
+    if (isManualConfirmValue(value) && !pending.includes(renderPlainFieldLabel(field, policy))) {
+      pending.push(renderPlainFieldLabel(field, policy));
+    }
+  });
+  return pending.length ? `仍有字段需要人工确认：${pending.join('、')}` : '';
 }
 
 function renderFieldRow(p, f, isExtra) {
@@ -8167,6 +8592,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== INIT =====
+const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
+const propagatedOnLoad = propagateFieldDefinitionsByFileType();
+if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
+
 if (appState.policies.length > 0 && (!appState.currentFileId || !appState.policies.some(p => p.id === appState.currentFileId))) {
   appState.currentFileId = appState.policies[0].id;
 }
