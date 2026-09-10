@@ -6064,9 +6064,16 @@ function cleanManualConfirmText(value) {
   return normalizeFeishuValue(value).replace(/未提取/g, '人工确认');
 }
 
+function hasActionableManualConfirmText(policy) {
+  const text = cleanManualConfirmText(policy && policy.data && policy.data.manual_confirm_fields);
+  if (!text) return false;
+  if (/^(人工确认|需人工确认|待确认|未识别|无法确认|暂无|\(空\)|空)$/.test(text)) return false;
+  return true;
+}
+
 function manualConfirmFieldNames(policy) {
   const text = cleanManualConfirmText(policy && policy.data && policy.data.manual_confirm_fields);
-  if (!text) return new Set();
+  if (!text || !hasActionableManualConfirmText(policy)) return new Set();
   const names = new Set();
   Object.entries(LABELS).forEach(([key, label]) => {
     if (text.includes(label) || text.includes(key)) names.add(key);
@@ -6075,16 +6082,18 @@ function manualConfirmFieldNames(policy) {
 }
 
 function isManualConfirmField(policy, field) {
-  return field === 'manual_confirm_fields' || isManualConfirmValue(policy && policy.data && policy.data[field]) || manualConfirmFieldNames(policy).has(field);
+  if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
+  return isManualConfirmValue(policy && policy.data && policy.data[field]) || manualConfirmFieldNames(policy).has(field);
 }
 
 function shouldShowManualConfirmField(policy, field) {
-  return field === 'manual_confirm_fields' || isPromptAllowedField(policy, field);
+  if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
+  return isPromptAllowedField(policy, field);
 }
 
 function isCoreManualField(policy, field) {
   if (!policy || !field || field === FIELD_DEFINITIONS_KEY) return false;
-  if (field === 'manual_confirm_fields') return true;
+  if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
   return manualConfirmFieldNames(policy).has(field) || isPromptAllowedField(policy, field);
 }
 
@@ -6790,7 +6799,7 @@ function getFieldsForGroup(policy, group) {
   return fields.filter(field => {
     if (field === FIELD_DEFINITIONS_KEY) return false;
     if (!isPromptAllowedField(policy, field)) return false;
-    if (field === 'manual_confirm_fields') return true;
+    if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
     const hasValue = policy && policy.data && Object.prototype.hasOwnProperty.call(policy.data, field);
     const hasDef = !!getFieldDefinition(policy, field);
     return hasValue || hasDef || isManualConfirmField(policy, field);
@@ -6815,6 +6824,7 @@ function getManualConfirmBlockMessage(policy) {
 
 function renderFieldRow(p, f, isExtra) {
   if (!isPromptAllowedField(p, f)) return '';
+  if (f === 'manual_confirm_fields' && !hasActionableManualConfirmText(p)) return '';
   const val = p.data[f];
   const hasValueSlot = !!(p && p.data && Object.prototype.hasOwnProperty.call(p.data, f));
   const isEmptyValue = val === undefined || val === null || val === '';
@@ -6849,6 +6859,7 @@ function renderFieldRow(p, f, isExtra) {
 }
 
 function getFieldDisplayValue(field, value, manualConfirm) {
+  if (field === 'manual_confirm_fields') return cleanManualConfirmText(value);
   if (manualConfirm && !hasConcreteFieldValue(value)) return '人工确认';
   if (isManualConfirmValue(value)) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
