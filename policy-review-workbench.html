@@ -377,7 +377,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 <div class="header">
   <div class="header-left">
     <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
-    <div class="meta" id="headerMeta">数据来源: 静态解析数据 · 更新于 2026-08-21 10:30:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:31:06</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:19:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:43:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
+    <div class="meta" id="headerMeta">数据来源: 静态解析数据 · 更新于 2026-09-10 17:55:00 · 69 份文件</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:31:06</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-14 11:19:08</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:43:00</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 19:41:42</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 18:13:17</div><div class="meta" style="display:none" id="headerMetaOld">数据来源: 飞书多维表格 · 更新于 2026-08-13 17:54:17</div><div class="meta" style="display:none" id="headerMetaOld"></div>
   </div>
   <div class="header-center">
     <div class="stat-chips">
@@ -5834,13 +5834,25 @@ const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
   try {
     const parsed = JSON.parse(saved);
-    appState.currentFileId = parsed.currentFileId || null;
-    appState.currentView = parsed.currentView || 'review';
-    appState.statusFilter = parsed.statusFilter || '';
-    if (parsed.policies) {
+    const savedPolicies = Array.isArray(parsed.policies) ? parsed.policies : null;
+    const staticIds = new Set(REVIEW_POLICIES.map(p => p.id));
+    const savedIds = new Set((savedPolicies || []).map(p => p && p.id).filter(Boolean));
+    const staleStaticBatch = REVIEW_POLICIES.length > 0 && (
+      !savedPolicies ||
+      savedPolicies.length < REVIEW_POLICIES.length ||
+      !REVIEW_POLICIES.some(p => savedIds.has(p.id))
+    );
+    if (staleStaticBatch) {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      appState.currentFileId = parsed.currentFileId || null;
+      appState.currentView = parsed.currentView || 'review';
+      appState.statusFilter = parsed.statusFilter || '';
+    }
+    if (!staleStaticBatch && savedPolicies) {
       appState.serverSynced = !!parsed.serverSynced;
       if (appState.serverSynced) {
-        appState.policies = parsed.policies.map(savedEntry => {
+        appState.policies = savedPolicies.map(savedEntry => {
           const clean = { ...savedEntry };
           delete clean._syncing;
           clean._change_history = Array.isArray(savedEntry._change_history)
@@ -5851,8 +5863,8 @@ if (saved) {
         });
       } else {
         // 首次加载或未完成飞书同步时，用静态包兜底，再合并本地编辑状态。
-        const savedById = new Map(parsed.policies.map(p => [p.id, p]));
-        const savedByFile = new Map(parsed.policies.map(p => [p.file_name, p]));
+        const savedById = new Map(savedPolicies.map(p => [p.id, p]));
+        const savedByFile = new Map(savedPolicies.map(p => [p.file_name, p]));
         appState.policies = REVIEW_POLICIES.map(p => {
           const savedEntry = savedById.get(p.id) || savedByFile.get(p.file_name);
           if (savedEntry) {
@@ -8010,6 +8022,10 @@ async function syncStatusesFromServer(showTip) {
     const statusEntries = Object.entries(result.statuses);
     const serverIds = new Set(statusEntries.map(([id]) => id));
     if (!serverIds.size) {
+      if (REVIEW_POLICIES.length > 0) {
+        if (showTip) showToast('飞书暂未返回记录，已保留当前静态解析队列', 'error', 2600);
+        return false;
+      }
       if (!appState.serverSynced || appState.policies.length || appState.currentFileId) {
         appState.serverSynced = true;
         appState.policies = [];

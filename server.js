@@ -17,6 +17,7 @@ const TABLE_ID = process.env.FEISHU_TABLE_ID || 'tblYWwuBfs3oylsh';
 const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6xFCnAc4gKBnDc';
 const VERSION_RECORD_DOC_TOKEN = process.env.FEISHU_VERSION_RECORD_DOC_TOKEN || 'C1d9w9WCIiLjCNkSecrcR7Bsnvh';
 const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
+const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app';
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -173,6 +174,24 @@ async function getAppAccessToken() {
   return state.appAccessToken;
 }
 
+function normalizeOAuthTokenResponse(data) {
+  const payload = data && (data.data || data);
+  if (!payload) return null;
+  return {
+    accessToken: payload.access_token || payload.user_access_token || '',
+    refreshToken: payload.refresh_token || payload.user_refresh_token || '',
+    expiresIn: payload.expires_in || payload.expires_in_sec || payload.expire || 7200,
+  };
+}
+
+function getFeishuErrorMessage(data, fallback) {
+  return (data && (data.msg || data.message || data.error_description || data.error)) || fallback;
+}
+
+function isFeishuErrorResponse(data) {
+  return typeof (data && data.code) === 'number' && data.code !== 0;
+}
+
 // ---- 获取/刷新 user_access_token ----
 async function getUserAccessToken() {
   if (state.userAccessToken && Date.now() < state.tokenExpiresAt - 60000) {
@@ -182,29 +201,30 @@ async function getUserAccessToken() {
     throw new Error('NOT_AUTHORIZED');
   }
 
-  const appToken = await getAppAccessToken();
-  const resp = await fetch('https://open.feishu.cn/open-apis/authen/v1/oidc/refresh_access_token', {
+  const resp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${appToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       grant_type: 'refresh_token',
+      client_id: APP_ID,
+      client_secret: APP_SECRET,
       refresh_token: state.userRefreshToken,
     }),
   });
   const data = await resp.json();
 
-  if (data.code !== 0) {
+  const tokenData = normalizeOAuthTokenResponse(data);
+  if (isFeishuErrorResponse(data) || !tokenData || !tokenData.accessToken) {
     state.userRefreshToken = null;
     saveTokens();
-    throw new Error('REFRESH_TOKEN_EXPIRED');
+    throw new Error(`REFRESH_TOKEN_EXPIRED: ${getFeishuErrorMessage(data, '刷新用户授权失败')}`);
   }
 
-  state.userAccessToken = data.data.access_token;
-  state.userRefreshToken = data.data.refresh_token;
-  state.tokenExpiresAt = Date.now() + (data.data.expires_in || 7200) * 1000;
+  state.userAccessToken = tokenData.accessToken;
+  state.userRefreshToken = tokenData.refreshToken || state.userRefreshToken;
+  state.tokenExpiresAt = Date.now() + (tokenData.expiresIn || 7200) * 1000;
   saveTokens();
   console.log('[飞书] user_access_token 已刷新');
   return state.userAccessToken;
@@ -1246,30 +1266,37 @@ app.get('/api/oauth/callback', async (req, res) => {
   console.log('[OAuth] 收到授权回调，正在换取 token...');
 
   try {
-    const appToken = await getAppAccessToken();
+    const redirectUri = `https://${req.get('host')}/api/oauth/callback`;
 
-    const resp = await fetch('https://open.feishu.cn/open-apis/authen/v1/oidc/access_token', {
+    const resp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${appToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ grant_type: 'authorization_code', code }),
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        client_id: APP_ID,
+        client_secret: APP_SECRET,
+        code,
+        redirect_uri: redirectUri,
+      }),
     });
 
     const data = await resp.json();
+    const tokenData = normalizeOAuthTokenResponse(data);
 
-    if (data.code !== 0) {
-      console.error('[OAuth] 换取token失败:', data.msg);
-      return res.send(`<script>alert('授权失败: ${data.msg}');window.close();</script>`);
+    if (isFeishuErrorResponse(data) || !tokenData || !tokenData.accessToken) {
+      const message = getFeishuErrorMessage(data, '换取 token 失败');
+      console.error('[OAuth] 换取token失败:', message);
+      return res.send(`<script>alert('授权失败: ${message}');window.close();</script>`);
     }
 
-    state.userAccessToken = data.data.access_token;
-    state.userRefreshToken = data.data.refresh_token;
-    state.tokenExpiresAt = Date.now() + (data.data.expires_in || 7200) * 1000;
+    state.userAccessToken = tokenData.accessToken;
+    state.userRefreshToken = tokenData.refreshToken || state.userRefreshToken;
+    state.tokenExpiresAt = Date.now() + (tokenData.expiresIn || 7200) * 1000;
     saveTokens();
     // 授权成功后打印 refresh_token，供配置 FEISHU_REFRESH_TOKEN 环境变量使用（Render 日志可见，私密勿外泄）
-    console.log('[OAuth] refresh_token:', data.data.refresh_token);
+    console.log('[OAuth] refresh_token:', tokenData.refreshToken || '(未返回新的 refresh_token)');
 
     // 获取当前用户信息（open_id + 姓名）
     try {
@@ -1317,7 +1344,7 @@ app.get('/api/me', async (req, res) => {
 // ---- 获取授权 URL ----
 app.get('/api/auth-url', (req, res) => {
   const redirectUri = `https://${req.get('host')}/api/oauth/callback`;
-  const authUrl = `https://open.feishu.cn/open-apis/authen/v1/index?app_id=${APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&state=policy_review`;
+  const authUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(FEISHU_OAUTH_SCOPES)}&state=policy_review`;
   res.json({ authUrl, redirectUri });
 });
 
