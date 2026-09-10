@@ -483,6 +483,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 const REVIEW_POLICIES = [];
 
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
+const STORAGE_KEY = 'policy_review_state_empty_20260910';
+try {
+  localStorage.removeItem('policy_review_state');
+  localStorage.removeItem('policy_review_state_v2');
+} catch(e) {}
 
 // ===== STATE =====
 let appState = {
@@ -492,14 +497,14 @@ let appState = {
   editingField: null,
   editingPolicyId: null,
   sidebarQuery: '',        // 侧边栏搜索关键词
-  sidebarCat: '03_自营',    // 当前一级分类 Tab
+  sidebarCat: '',           // 当前一级分类 Tab
   subFilter: '',           // 二级航司只看过滤
   statusFilter: '',        // 快速状态过滤：confirmed
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
 
 // Load from localStorage — merge status/edits INTO fresh REVIEW_POLICIES data
-const saved = localStorage.getItem('policy_review_state');
+const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
   try {
     const parsed = JSON.parse(saved);
@@ -559,7 +564,7 @@ function saveState() {
     delete clean._syncing;
     return clean;
   });
-  localStorage.setItem('policy_review_state', JSON.stringify({
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
     policies: persistedPolicies,
     currentFileId: appState.currentFileId,
     currentView: appState.currentView,
