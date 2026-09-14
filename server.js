@@ -5,6 +5,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,8 @@ const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6x
 const VERSION_RECORD_DOC_TOKEN = process.env.FEISHU_VERSION_RECORD_DOC_TOKEN || 'C1d9w9WCIiLjCNkSecrcR7Bsnvh';
 const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
 const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
+const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join(__dirname, '.review_state_store.json');
+const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -154,6 +157,358 @@ function saveTokens() {
 }
 
 loadTokens();
+
+function createEmptyReviewStore() {
+  return {
+    version: 1,
+    updatedAt: null,
+    staticHidden: false,
+    records: {},
+    events: [],
+  };
+}
+
+function loadReviewStore() {
+  try {
+    if (fs.existsSync(LOCAL_REVIEW_STORE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LOCAL_REVIEW_STORE_FILE, 'utf-8'));
+      if (data && typeof data === 'object') {
+        data.staticHidden = !!data.staticHidden;
+        data.records = data.records && typeof data.records === 'object' ? data.records : {};
+        data.events = Array.isArray(data.events) ? data.events : [];
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn('[本地审核记录] 读取失败，将使用空记录:', e.message);
+  }
+  return createEmptyReviewStore();
+}
+
+function saveReviewStore(store) {
+  if (!LOCAL_REVIEW_MODE) return;
+  try {
+    store.updatedAt = new Date().toISOString();
+    fs.writeFileSync(LOCAL_REVIEW_STORE_FILE, JSON.stringify(store, null, 2));
+  } catch (e) {
+    console.error('[本地审核记录] 保存失败:', e.message);
+    throw e;
+  }
+}
+
+function getReviewStoreRecord(store, recordId) {
+  if (!store.records[recordId]) {
+    store.records[recordId] = {
+      status: '',
+      confirmed_at: null,
+      confirmed_by: null,
+      dataPatch: {},
+      deletedFields: [],
+      fieldDefinitions: {},
+      changeHistory: [],
+      problemLines: [],
+      fields: {},
+      updated_at: null,
+    };
+  }
+  return store.records[recordId];
+}
+
+function appendReviewEvent(store, type, recordId, payload) {
+  store.events.push({
+    type,
+    recordId,
+    time: new Date().toISOString(),
+    payload: payload || {},
+  });
+  if (store.events.length > 3000) store.events = store.events.slice(-3000);
+}
+
+function fallbackUser() {
+  return { name: '网页审核用户', openId: 'local_review_user' };
+}
+
+let staticPoliciesCache = null;
+function loadStaticPolicies() {
+  if (staticPoliciesCache) return staticPoliciesCache;
+  try {
+    const html = fs.readFileSync(path.join(__dirname, 'policy-review-workbench.html'), 'utf-8');
+    const match = html.match(/const REVIEW_POLICIES = ([\s\S]*?);\n\nconst FEISHU_BASE_URL/);
+    if (!match) return [];
+    staticPoliciesCache = Function(`return ${match[1]}`)();
+    return staticPoliciesCache;
+  } catch (e) {
+    console.warn('[本地审核记录] 读取静态解析数据失败:', e.message);
+    return [];
+  }
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function applyLocalRecordToPolicy(policy, localRecord) {
+  const next = cloneJson(policy);
+  next.data = next.data && typeof next.data === 'object' ? next.data : {};
+  if (!localRecord) return next;
+  Object.entries(localRecord.dataPatch || {}).forEach(([key, value]) => {
+    next.data[key] = value;
+  });
+  (localRecord.deletedFields || []).forEach(key => {
+    delete next.data[key];
+    if (next.data[FIELD_DEFINITIONS_KEY]) delete next.data[FIELD_DEFINITIONS_KEY][key];
+  });
+  if (Object.keys(localRecord.fieldDefinitions || {}).length) {
+    next.data[FIELD_DEFINITIONS_KEY] = {
+      ...(next.data[FIELD_DEFINITIONS_KEY] || {}),
+      ...localRecord.fieldDefinitions,
+    };
+  }
+  if (localRecord.status) next.status = localRecord.status;
+  if (localRecord.confirmed_at !== undefined) next.confirmed_at = localRecord.confirmed_at;
+  if (localRecord.confirmed_by !== undefined) next.confirmed_by = localRecord.confirmed_by;
+  next._change_history = localRecord.changeHistory || [];
+  return next;
+}
+
+function policyToFields(policy, localRecord) {
+  const fields = {
+    '文件名称': policy.file_name || '',
+    '文件类型': policy.source_type || '',
+    '原始文本': policy.source_text || '',
+    '解析JSON': stringifyJsonField({
+      ...policy,
+      data: policy.data || {},
+    }),
+    '审核状态': policy.status === 'confirmed' ? '已确认' : '待审核',
+    '确认时间': policy.confirmed_at || null,
+    '确认人': policy.confirmed_by && policy.confirmed_by.name ? policy.confirmed_by.name : '',
+    '确认人ID': policy.confirmed_by && policy.confirmed_by.openId ? policy.confirmed_by.openId : '',
+    '已修改': localRecord && localRecord.changeHistory && localRecord.changeHistory.length ? '是' : '',
+    '修改历史': formatChangeHistory((localRecord && localRecord.changeHistory) || []),
+    '问题标记': ((localRecord && localRecord.problemLines) || []).join('\n'),
+  };
+  Object.entries(KEY_LABELS).forEach(([key, label]) => {
+    if (policy.data && Object.prototype.hasOwnProperty.call(policy.data, key)) {
+      fields[label] = normalizeFeishuValue(policy.data[key]);
+    }
+  });
+  if (localRecord && localRecord.fields) {
+    Object.assign(fields, localRecord.fields);
+  }
+  return fields;
+}
+
+function listLocalRecordStatuses() {
+  const store = loadReviewStore();
+  const statuses = {};
+  const staticPolicies = store.staticHidden ? [] : loadStaticPolicies();
+  staticPolicies.forEach(policy => {
+    const localRecord = store.records[policy.id] || null;
+    const merged = applyLocalRecordToPolicy(policy, localRecord);
+    const fields = policyToFields(merged, localRecord);
+    statuses[policy.id] = {
+      status: merged.status === 'confirmed' ? 'confirmed' : 'reviewing',
+      confirmed_by: merged.confirmed_by || null,
+      confirmed_at: merged.confirmed_at || null,
+      edited: fields['已修改'] || null,
+      change_history: fields['修改历史'] || null,
+      problem_marks: fields['问题标记'] || null,
+      fields,
+      storage: 'local',
+    };
+  });
+  Object.entries(store.records).forEach(([recordId, localRecord]) => {
+    if (statuses[recordId]) return;
+    const fields = {
+      ...(localRecord.fields || {}),
+      '审核状态': localRecord.status === 'confirmed' ? '已确认' : '待审核',
+      '确认时间': localRecord.confirmed_at || null,
+      '确认人': localRecord.confirmed_by && localRecord.confirmed_by.name ? localRecord.confirmed_by.name : '',
+      '确认人ID': localRecord.confirmed_by && localRecord.confirmed_by.openId ? localRecord.confirmed_by.openId : '',
+      '已修改': localRecord.changeHistory && localRecord.changeHistory.length ? '是' : '',
+      '修改历史': formatChangeHistory(localRecord.changeHistory || []),
+      '问题标记': (localRecord.problemLines || []).join('\n'),
+    };
+    statuses[recordId] = {
+      status: localRecord.status === 'confirmed' ? 'confirmed' : 'reviewing',
+      confirmed_by: localRecord.confirmed_by || null,
+      confirmed_at: localRecord.confirmed_at || null,
+      edited: fields['已修改'] || null,
+      change_history: fields['修改历史'] || null,
+      problem_marks: fields['问题标记'] || null,
+      fields,
+      storage: 'local',
+    };
+  });
+  return statuses;
+}
+
+function normalizeReviewStatus(fields) {
+  let st = fields && fields['审核状态'];
+  if (Array.isArray(st)) st = st[0];
+  if (st && typeof st === 'object') st = st.text || st.name || st.value || '';
+  return normalizeFeishuValue(st) === '已确认' ? 'confirmed' : 'reviewing';
+}
+
+function normalizeConfirmedBy(fields) {
+  const name = normalizeFeishuValue(fields && fields['确认人']);
+  const openId = normalizeFeishuValue(fields && fields['确认人ID']);
+  return name || openId ? { name: name || '网页审核用户', openId: openId || 'local_review_user' } : null;
+}
+
+function localRecordIdForFields(fields, fallbackIndex) {
+  const seed = normalizeFeishuValue(fields['文件名称'] || fields['文件名']) || `record-${fallbackIndex}`;
+  return `local_${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 14)}`;
+}
+
+function findLocalRecordIdByFileName(store, fileName) {
+  const target = normalizeFeishuValue(fileName);
+  if (!target) return '';
+  for (const [recordId, record] of Object.entries(store.records || {})) {
+    const existingName = normalizeFeishuValue(record.fields && (record.fields['文件名称'] || record.fields['文件名']));
+    if (existingName === target) return recordId;
+  }
+  if (!store.staticHidden) {
+    const staticPolicy = loadStaticPolicies().find(policy => normalizeFeishuValue(policy.file_name) === target);
+    if (staticPolicy) return staticPolicy.id;
+  }
+  return '';
+}
+
+function saveLocalImportedRecords(records) {
+  const store = loadReviewStore();
+  store.staticHidden = true;
+  const imported = [];
+  records.forEach((item, index) => {
+    const fields = cloneJson(item.fields || item || {});
+    const fileName = normalizeFeishuValue(fields['文件名称'] || fields['文件名']);
+    if (!fileName) throw new Error('导入记录缺少 文件名称');
+    fields['文件名称'] = fileName;
+    const recordId = item.recordId || item.id || findLocalRecordIdByFileName(store, fileName) || localRecordIdForFields(fields, index);
+    const previous = store.records[recordId] || {};
+    const record = getReviewStoreRecord(store, recordId);
+    record.fields = {
+      ...(previous.fields || {}),
+      ...fields,
+    };
+    record.status = normalizeReviewStatus(record.fields);
+    record.confirmed_at = record.fields['确认时间'] || previous.confirmed_at || null;
+    record.confirmed_by = normalizeConfirmedBy(record.fields) || previous.confirmed_by || null;
+    record.changeHistory = parseChangeHistory(record.fields['修改历史'] || previous.changeHistory || '');
+    record.problemLines = splitProblemMarkEntries(record.fields['问题标记'] || previous.problemLines || '');
+    record.updated_at = new Date().toISOString();
+    imported.push({ recordId, fields: record.fields, fileName, mode: previous.fields ? 'updated' : 'created' });
+  });
+  appendReviewEvent(store, 'import-records', '', { count: imported.length });
+  saveReviewStore(store);
+  return imported;
+}
+
+function clearLocalReviewRecords() {
+  const store = createEmptyReviewStore();
+  store.staticHidden = true;
+  appendReviewEvent(store, 'clear-records', '', { scope: 'local' });
+  saveReviewStore(store);
+}
+
+function saveLocalConfirm(recordId, fileName, confirmedBy) {
+  const store = loadReviewStore();
+  const record = getReviewStoreRecord(store, recordId);
+  const now = Date.now();
+  record.status = 'confirmed';
+  record.confirmed_at = now;
+  record.confirmed_by = confirmedBy || fallbackUser();
+  record.fields['文件名称'] = fileName || record.fields['文件名称'] || '';
+  record.updated_at = new Date().toISOString();
+  appendReviewEvent(store, 'confirm', recordId, { fileName, confirmedBy: record.confirmed_by });
+  saveReviewStore(store);
+  return { confirmedAt: now, confirmedBy: record.confirmed_by };
+}
+
+function saveLocalReopen(recordId, fileName) {
+  const store = loadReviewStore();
+  const record = getReviewStoreRecord(store, recordId);
+  record.status = 'reviewing';
+  record.confirmed_at = null;
+  record.confirmed_by = null;
+  record.fields['文件名称'] = fileName || record.fields['文件名称'] || '';
+  record.updated_at = new Date().toISOString();
+  appendReviewEvent(store, 'reopen', recordId, { fileName });
+  saveReviewStore(store);
+}
+
+function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, reason, changeEntry, deleteField, fieldDefinition }) {
+  const store = loadReviewStore();
+  const record = getReviewStoreRecord(store, recordId);
+  const key = fieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
+  const entry = normalizeChangeEntry(changeEntry, {
+    time: new Date().toLocaleString('zh-CN', { hour12: false }),
+    user: fallbackUser().name,
+    field: key,
+    fieldLabel: fieldLabel || KEY_LABELS[key] || key,
+    oldValue: '',
+    newValue: newValue !== undefined ? String(newValue) : '',
+    reason: reason || '',
+  });
+  record.changeHistory.push(entry);
+  if (fieldDefinition) record.fieldDefinitions[key] = fieldDefinition;
+  if (deleteField) {
+    delete record.dataPatch[key];
+    if (!record.deletedFields.includes(key)) record.deletedFields.push(key);
+    if (fieldLabel) record.fields[fieldLabel] = '';
+  } else {
+    record.dataPatch[key] = newValue !== undefined ? String(newValue) : '';
+    record.deletedFields = record.deletedFields.filter(x => x !== key);
+    if (fieldLabel) record.fields[fieldLabel] = record.dataPatch[key];
+  }
+  const isEffectiveChange = normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue);
+  if (isEffectiveChange) {
+    const label = entry.fieldLabel || fieldLabel || KEY_LABELS[key] || key;
+    const problemLine = `[${entry.time}] ${entry.user || fallbackUser().name} | ${label}: ${deleteField ? '删除字段' : '字段修改'}：${entry.oldValue || '(空)'} → ${deleteField ? '(空)' : (entry.newValue || '(空)')}；原因：${entry.reason || '未填写'}`;
+    record.problemLines.push(problemLine);
+  }
+  record.updated_at = new Date().toISOString();
+  appendReviewEvent(store, 'save-field', recordId, { fieldKey: key, fieldLabel, newValue, reason, deleteField: !!deleteField });
+  saveReviewStore(store);
+  return { historyCount: record.changeHistory.length };
+}
+
+function saveLocalProblem(recordId, entry) {
+  const store = loadReviewStore();
+  const record = getReviewStoreRecord(store, recordId);
+  const line = `[${entry.created_at || new Date().toLocaleString('zh-CN', { hour12: false })}] ${entry.created_by || fallbackUser().name} | ${entry.field_label || '文件整体'}: ${entry.desc || ''}`;
+  record.problemLines.push(line);
+  record.updated_at = new Date().toISOString();
+  appendReviewEvent(store, 'mark-problem', recordId, { entry });
+  saveReviewStore(store);
+  return { count: record.problemLines.length };
+}
+
+function saveLocalFieldDefinition(fieldKey, fieldDefinition) {
+  const store = loadReviewStore();
+  const targetType = fieldDefinition.file_type || fieldDefinition.fileType || '';
+  let updated = 0;
+  loadStaticPolicies().forEach(policy => {
+    if (targetType && getPolicyFileType(policy) !== targetType) return;
+    const record = getReviewStoreRecord(store, policy.id);
+    record.fieldDefinitions[fieldKey] = fieldDefinition;
+    record.updated_at = new Date().toISOString();
+    updated++;
+  });
+  appendReviewEvent(store, 'field-definition', '', { fieldKey, fieldDefinition, updated });
+  saveReviewStore(store);
+  return updated;
+}
+
+function isAuthOrPermissionError(err) {
+  const msg = String((err && err.message) || err || '');
+  return msg.includes('NOT_AUTHORIZED') ||
+    msg.includes('REFRESH_TOKEN_EXPIRED') ||
+    msg.includes('Unauthorized') ||
+    msg.includes('permission') ||
+    msg.includes('999916');
+}
 
 // ---- 获取 app_access_token ----
 async function getAppAccessToken() {
@@ -1324,6 +1679,16 @@ app.get('/api/oauth/callback', async (req, res) => {
 
 // ---- 授权状态 ----
 app.get('/api/auth-status', (req, res) => {
+  if (LOCAL_REVIEW_MODE && !state.userRefreshToken) {
+    return res.json({
+      authorized: true,
+      tokenValid: true,
+      mode: 'local-review-store',
+      storage: 'local',
+      feishuAuthorized: false,
+      user: fallbackUser(),
+    });
+  }
   res.json({
     authorized: !!state.userRefreshToken,
     tokenValid: !!(state.userAccessToken && Date.now() < state.tokenExpiresAt - 60000),
@@ -1336,12 +1701,18 @@ app.get('/api/auth-status', (req, res) => {
 app.get('/api/me', async (req, res) => {
   try {
     if (!state.userRefreshToken) {
+      if (LOCAL_REVIEW_MODE) {
+        return res.json({ authorized: true, storage: 'local', feishuAuthorized: false, user: fallbackUser() });
+      }
       return res.json({ authorized: false, user: null });
     }
     const user = await getCurrentUser();
     res.json({ authorized: true, user });
   } catch (err) {
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
+      if (LOCAL_REVIEW_MODE) {
+        return res.json({ authorized: true, storage: 'local', feishuAuthorized: false, user: fallbackUser() });
+      }
       res.json({ authorized: false, user: null });
     } else {
       res.status(500).json({ error: err.message });
@@ -1399,8 +1770,16 @@ app.post('/api/confirm', async (req, res) => {
     });
   } catch (err) {
     console.error(`[确认] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const saved = saveLocalConfirm(recordId, fileName, fallbackUser());
+      console.log(`[确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
+      res.json({
+        success: true,
+        confirmedAt: saved.confirmedAt,
+        confirmedBy: saved.confirmedBy,
+        savedToFeishu: false,
+        storage: 'local',
+      });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1434,8 +1813,10 @@ app.post('/api/reopen', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error(`[恢复待确认] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      saveLocalReopen(recordId, fileName);
+      console.log(`[恢复待确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
+      res.json({ success: true, savedToFeishu: false, storage: 'local' });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1604,8 +1985,26 @@ app.post('/api/save-field', async (req, res) => {
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const fieldKey = requestedFieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
+      const saved = saveLocalFieldChange({
+        recordId,
+        fieldLabel,
+        fieldKey,
+        newValue,
+        reason,
+        changeEntry,
+        deleteField,
+        fieldDefinition,
+      });
+      console.log(`[保存字段] ✓ 已写入本地审核记录 ${fieldLabel || fieldKey || ''}`);
+      res.json({
+        success: true,
+        historyCount: saved.historyCount,
+        savedToFeishu: false,
+        storage: 'local',
+        background: { autoCorrection: false, knowledge: false },
+      });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1644,8 +2043,10 @@ app.post('/api/apply-field-definition', async (req, res) => {
     res.json({ success: true, updated, fileType: targetType, sourceRecordId: sourceRecordId || '' });
   } catch (err) {
     console.error(`[字段定义] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const updated = saveLocalFieldDefinition(fieldKey, fieldDefinition);
+      console.log(`[字段定义] ✓ 已写入本地审核记录 ${fieldKey} ${updated} 条`);
+      res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: 'local' });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1708,8 +2109,10 @@ app.post('/api/mark-problem', async (req, res) => {
     });
   } catch (err) {
     console.error(`[标记问题] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const saved = saveLocalProblem(recordId, entry);
+      console.log(`[标记问题] ✓ 已写入本地审核记录 ${recordId} 问题 ${saved.count} 条`);
+      res.json({ success: true, count: saved.count, savedToFeishu: false, storage: 'local' });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1723,6 +2126,8 @@ app.get('/api/health', (req, res) => {
     time: new Date().toISOString(),
     mode: 'render-oauth2',
     authorized: !!state.userRefreshToken,
+    localReviewMode: LOCAL_REVIEW_MODE,
+    storage: state.userRefreshToken ? 'feishu' : 'local',
   });
 });
 
@@ -1759,15 +2164,34 @@ async function listAllRecordStatuses() {
 app.get('/api/statuses', async (req, res) => {
   try {
     const statuses = await listAllRecordStatuses();
-    res.json({ success: true, count: Object.keys(statuses).length, statuses });
+    res.json({ success: true, count: Object.keys(statuses).length, statuses, storage: 'feishu' });
   } catch (err) {
     console.error(`[状态同步] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const statuses = listLocalRecordStatuses();
+      res.json({
+        success: true,
+        count: Object.keys(statuses).length,
+        statuses,
+        storage: 'local',
+        warning: '飞书不可用，当前使用站点本地审核记录',
+      });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
   }
+});
+
+app.get('/api/local-review-store', (req, res) => {
+  const store = loadReviewStore();
+  res.json({
+    success: true,
+    storage: 'local',
+    updatedAt: store.updatedAt,
+    recordCount: Object.keys(store.records || {}).length,
+    eventCount: (store.events || []).length,
+    store,
+  });
 });
 
 // ---- 恢复同名旧缓存里的审核痕迹（recordId 变化后的兜底迁移）----
@@ -1897,8 +2321,16 @@ app.post('/api/admin/clear-records', async (req, res) => {
     });
   } catch (err) {
     console.error(`[清空记录] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      clearLocalReviewRecords();
+      res.json({
+        success: true,
+        deleted: 0,
+        storage: 'local',
+        savedToFeishu: false,
+        remaining_estimate: 0,
+        note: '飞书不可用，已清空站点本地审核记录并隐藏静态批次',
+      });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2077,8 +2509,19 @@ app.post('/api/admin/import-records', async (req, res) => {
     res.json({ success: true, count: created.length, records: created });
   } catch (err) {
     console.error(`[导入记录] ✗ ${err.message}`);
-    if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+      const records = Array.isArray(req.body.records) ? req.body.records : [];
+      if (!records.length) {
+        return res.status(400).json({ success: false, error: 'records 为空' });
+      }
+      const imported = saveLocalImportedRecords(records);
+      res.json({
+        success: true,
+        count: imported.length,
+        records: imported,
+        storage: 'local',
+        savedToFeishu: false,
+      });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }

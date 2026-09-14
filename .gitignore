@@ -1,3 +1,4 @@
 node_modules/
 .feishu_tokens.json
+.review_state_store.json
 .DS_Store
