@@ -17,7 +17,7 @@ const TABLE_ID = process.env.FEISHU_TABLE_ID || 'tblYWwuBfs3oylsh';
 const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6xFCnAc4gKBnDc';
 const VERSION_RECORD_DOC_TOKEN = process.env.FEISHU_VERSION_RECORD_DOC_TOKEN || 'C1d9w9WCIiLjCNkSecrcR7Bsnvh';
 const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
-const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app';
+const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -1146,13 +1146,21 @@ async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceP
   if (!fieldKey || !reasonLooksGeneral(reason)) {
     return { applied: 0, files: [], skipped: true, reason: '修改原因不是可泛化规则' };
   }
-  const sourceTextBoundFields = new Set(['sign_and_transfer_rules', 'refund_rules', 'change_rules']);
+  const sourceTextBoundFields = new Set([
+    'sign_and_transfer_rules',
+    'refund_rules',
+    'change_rules',
+    'benefit_name',
+    'benefit_usage_rules',
+    'not_applicable_flight_routes',
+    'not_applicable_od',
+  ]);
   if (sourceTextBoundFields.has(fieldKey)) {
     return {
       applied: 0,
       files: [],
       skipped: true,
-      reason: '退票/变更/签转字段必须按当前原文逐条拆分，不做跨文件自动矫正',
+      reason: '源文绑定字段必须按当前原文逐条提取，不做跨文件自动矫正或复制',
     };
   }
 

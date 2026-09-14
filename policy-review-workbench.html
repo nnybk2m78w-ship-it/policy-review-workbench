@@ -5902,6 +5902,8 @@ const FIELD_TERM_MAP = [
   ['权益', 'benefit'], ['名称', 'name'], ['规则', 'rules'], ['限制', 'limit'], ['文案', 'copy'],
   ['渠道', 'channel'], ['证件', 'document'], ['年龄', 'age'], ['会员', 'member'], ['行李', 'baggage'],
 ];
+const SOURCE_BOUND_FIELDS = new Set(['benefit_name', 'benefit_usage_rules']);
+const ENTITLEMENT_EVIDENCE_RE = /权益|礼包|酒店券|客房券|住宿券|快速安检|优先安检|优先选座|选座|行李|升舱|积分|里程|餐食|休息室|接送机|贵宾|服务|券码|兑换券|赠送|赠/;
 const FIELD_GROUPS = [
   { title: '基础信息', fields: ['scenario','business_line','carrier','carrier_name','product_name','product_family','product_category','policy_code'] },
   { title: '产品代码与出票', fields: ['product_type','product_code','product_code_raw','fare_basis','corporate_code','coupon_resource_code','ticket_type','ticket_stock'] },
@@ -6007,7 +6009,29 @@ function isPromptAllowedFieldForType(fileType, field, def) {
 function isPromptAllowedField(policy, field) {
   const type = getPolicyFileType(policy);
   const def = getFieldDefinition(policy, field);
-  return isPromptAllowedFieldForType(type, field, def) || !!LABELS[field];
+  return isPromptAllowedFieldForType(type, field, def) || (!!LABELS[field] && hasConcreteFieldValue(policy && policy.data && policy.data[field]));
+}
+
+function hasEntitlementEvidence(policy) {
+  const d = (policy && policy.data) || {};
+  const text = [
+    policy && policy.file_name,
+    policy && policy.source_text,
+    d.product_name,
+    d.product_family,
+    d.product_category,
+    d.benefit_name,
+    d.benefit_usage_rules,
+  ].filter(Boolean).join('\n');
+  return ENTITLEMENT_EVIDENCE_RE.test(text);
+}
+
+function shouldRenderSourceBoundField(policy, field) {
+  if (!SOURCE_BOUND_FIELDS.has(field)) return true;
+  const value = policy && policy.data && policy.data[field];
+  if (!hasConcreteFieldValue(value)) return false;
+  const edited = policy && policy.audit && Array.isArray(policy.audit.edited_fields) && policy.audit.edited_fields.includes(field);
+  return edited || hasEntitlementEvidence(policy);
 }
 
 function registerFieldDefinition(policy, field, def) {
@@ -6033,20 +6057,16 @@ function applyFieldDefinitionToFileType(field, def) {
   appState.policies.forEach(policy => {
     if (getPolicyFileType(policy) !== def.file_type) return;
     changed += registerFieldDefinition(policy, field, def);
-    if (!Object.prototype.hasOwnProperty.call(policy.data || {}, field)) {
-      policy.data[field] = '人工确认';
-      changed++;
-    }
   });
   return changed;
 }
 
 async function syncFieldDefinitionToServer(policyId, field, def) {
   try {
-    await fetch('/api/save-field-definition', {
+    await fetch('/api/apply-field-definition', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId: policyId, fieldKey: field, fieldDefinition: def }),
+      body: JSON.stringify({ sourceRecordId: policyId, fieldKey: field, fieldDefinition: def }),
     });
   } catch(e) {}
 }
@@ -6799,6 +6819,7 @@ function getFieldsForGroup(policy, group) {
   return fields.filter(field => {
     if (field === FIELD_DEFINITIONS_KEY) return false;
     if (!isPromptAllowedField(policy, field)) return false;
+    if (!shouldRenderSourceBoundField(policy, field)) return false;
     if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
     const hasValue = policy && policy.data && Object.prototype.hasOwnProperty.call(policy.data, field);
     const hasDef = !!getFieldDefinition(policy, field);
@@ -6824,6 +6845,7 @@ function getManualConfirmBlockMessage(policy) {
 
 function renderFieldRow(p, f, isExtra) {
   if (!isPromptAllowedField(p, f)) return '';
+  if (!shouldRenderSourceBoundField(p, f)) return '';
   if (f === 'manual_confirm_fields' && !hasActionableManualConfirmText(p)) return '';
   const val = p.data[f];
   const hasValueSlot = !!(p && p.data && Object.prototype.hasOwnProperty.call(p.data, f));
@@ -6870,6 +6892,7 @@ function getFilteredPolicyData(p) {
   Object.entries((p && p.data) || {}).forEach(([key, value]) => {
     if (key === FIELD_DEFINITIONS_KEY) return;
     if (!isPromptAllowedField(p, key)) return;
+    if (!shouldRenderSourceBoundField(p, key)) return;
     out[key] = value;
   });
   const defs = {};
