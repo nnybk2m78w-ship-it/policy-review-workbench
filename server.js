@@ -23,7 +23,7 @@ const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join
 const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
 const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || 'github').toLowerCase();
 const REVIEW_GITHUB_TOKEN = process.env.REVIEW_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
-const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || 'nnybk2m78w-ship-it/policy-review-workbench';
+const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || '';
 const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
 const REVIEW_GITHUB_PATH = process.env.REVIEW_GITHUB_PATH || 'data/review-state.json';
 
