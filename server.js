@@ -21,6 +21,11 @@ const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20'
 const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
 const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join(__dirname, '.review_state_store.json');
 const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
+const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || 'github').toLowerCase();
+const REVIEW_GITHUB_TOKEN = process.env.REVIEW_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || 'nnybk2m78w-ship-it/policy-review-workbench';
+const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
+const REVIEW_GITHUB_PATH = process.env.REVIEW_GITHUB_PATH || 'data/review-state.json';
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -196,6 +201,111 @@ function saveReviewStore(store) {
   }
 }
 
+function useFeishuStorage() {
+  return REVIEW_STORAGE_MODE === 'feishu';
+}
+
+function useGithubStorage() {
+  return REVIEW_STORAGE_MODE === 'github' && !!REVIEW_GITHUB_TOKEN && !!REVIEW_GITHUB_REPO;
+}
+
+function activeReviewStorageName() {
+  if (useFeishuStorage()) return 'feishu';
+  if (useGithubStorage()) return 'github';
+  return 'local';
+}
+
+async function githubContentsRequest(method, body) {
+  const baseUrl = `https://api.github.com/repos/${REVIEW_GITHUB_REPO}/contents/${encodeURIComponent(REVIEW_GITHUB_PATH).replace(/%2F/g, '/')}`;
+  const url = method === 'GET' ? `${baseUrl}?ref=${encodeURIComponent(REVIEW_GITHUB_BRANCH)}` : baseUrl;
+  const resp = await fetch(url, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${REVIEW_GITHUB_TOKEN}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const err = new Error(data.message || `GitHub storage ${method} failed`);
+    err.status = resp.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+async function loadGithubReviewStore() {
+  try {
+    const data = await githubContentsRequest('GET');
+    const raw = Buffer.from(data.content || '', 'base64').toString('utf-8');
+    const parsed = raw.trim() ? JSON.parse(raw) : createEmptyReviewStore();
+    parsed.records = parsed.records && typeof parsed.records === 'object' ? parsed.records : {};
+    parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
+    parsed.staticHidden = !!parsed.staticHidden;
+    return { store: parsed, sha: data.sha || null };
+  } catch (e) {
+    if (e.status === 404) {
+      return { store: createEmptyReviewStore(), sha: null };
+    }
+    console.warn('[GitHub审核记录] 读取失败，退回本地缓存:', e.message);
+    return { store: loadReviewStore(), sha: null, fallback: true };
+  }
+}
+
+async function saveGithubReviewStore(store, sha, message) {
+  const content = Buffer.from(JSON.stringify(store, null, 2), 'utf-8').toString('base64');
+  const body = {
+    message: message || 'Update policy review state',
+    content,
+    branch: REVIEW_GITHUB_BRANCH,
+  };
+  if (sha) body.sha = sha;
+  const data = await githubContentsRequest('PUT', body);
+  return data && data.content && data.content.sha;
+}
+
+async function loadReviewStoreForRead() {
+  if (useGithubStorage()) {
+    const result = await loadGithubReviewStore();
+    saveReviewStore(result.store);
+    return result.store;
+  }
+  return loadReviewStore();
+}
+
+async function withReviewStore(mutator, message) {
+  const loaded = useGithubStorage()
+    ? await loadGithubReviewStore()
+    : { store: loadReviewStore(), sha: null };
+  const result = await mutator(loaded.store);
+  loaded.store.updatedAt = new Date().toISOString();
+  if (useGithubStorage() && !loaded.fallback) {
+    try {
+      await saveGithubReviewStore(loaded.store, loaded.sha, message);
+    } catch (e) {
+      if (e.status === 409) {
+        const reloaded = await loadGithubReviewStore();
+        const retryResult = await mutator(reloaded.store);
+        reloaded.store.updatedAt = new Date().toISOString();
+        await saveGithubReviewStore(reloaded.store, reloaded.sha, message);
+        saveReviewStore(reloaded.store);
+        return retryResult;
+      }
+      console.warn('[GitHub审核记录] 保存失败，退回本地文件:', e.message);
+      saveReviewStore(loaded.store);
+      return result;
+    }
+  } else {
+    saveReviewStore(loaded.store);
+  }
+  saveReviewStore(loaded.store);
+  return result;
+}
+
 function getReviewStoreRecord(store, recordId) {
   if (!store.records[recordId]) {
     store.records[recordId] = {
@@ -299,8 +409,8 @@ function policyToFields(policy, localRecord) {
   return fields;
 }
 
-function listLocalRecordStatuses() {
-  const store = loadReviewStore();
+async function listLocalRecordStatuses() {
+  const store = await loadReviewStoreForRead();
   const statuses = {};
   const staticPolicies = store.staticHidden ? [] : loadStaticPolicies();
   staticPolicies.forEach(policy => {
@@ -315,7 +425,7 @@ function listLocalRecordStatuses() {
       change_history: fields['修改历史'] || null,
       problem_marks: fields['问题标记'] || null,
       fields,
-      storage: 'local',
+      storage: activeReviewStorageName(),
     };
   });
   Object.entries(store.records).forEach(([recordId, localRecord]) => {
@@ -338,7 +448,7 @@ function listLocalRecordStatuses() {
       change_history: fields['修改历史'] || null,
       problem_marks: fields['问题标记'] || null,
       fields,
-      storage: 'local',
+      storage: activeReviewStorageName(),
     };
   });
   return statuses;
@@ -376,8 +486,8 @@ function findLocalRecordIdByFileName(store, fileName) {
   return '';
 }
 
-function saveLocalImportedRecords(records) {
-  const store = loadReviewStore();
+async function saveLocalImportedRecords(records) {
+  return withReviewStore(store => {
   store.staticHidden = true;
   const imported = [];
   records.forEach((item, index) => {
@@ -401,19 +511,22 @@ function saveLocalImportedRecords(records) {
     imported.push({ recordId, fields: record.fields, fileName, mode: previous.fields ? 'updated' : 'created' });
   });
   appendReviewEvent(store, 'import-records', '', { count: imported.length });
-  saveReviewStore(store);
   return imported;
+  }, `Import ${records.length} policy review records`);
 }
 
-function clearLocalReviewRecords() {
-  const store = createEmptyReviewStore();
+async function clearLocalReviewRecords() {
+  return withReviewStore(store => {
+  Object.keys(store.records || {}).forEach(key => delete store.records[key]);
+  store.events = [];
   store.staticHidden = true;
   appendReviewEvent(store, 'clear-records', '', { scope: 'local' });
-  saveReviewStore(store);
+  return true;
+  }, 'Clear policy review records');
 }
 
-function saveLocalConfirm(recordId, fileName, confirmedBy) {
-  const store = loadReviewStore();
+async function saveLocalConfirm(recordId, fileName, confirmedBy) {
+  return withReviewStore(store => {
   const record = getReviewStoreRecord(store, recordId);
   const now = Date.now();
   record.status = 'confirmed';
@@ -422,12 +535,12 @@ function saveLocalConfirm(recordId, fileName, confirmedBy) {
   record.fields['文件名称'] = fileName || record.fields['文件名称'] || '';
   record.updated_at = new Date().toISOString();
   appendReviewEvent(store, 'confirm', recordId, { fileName, confirmedBy: record.confirmed_by });
-  saveReviewStore(store);
   return { confirmedAt: now, confirmedBy: record.confirmed_by };
+  }, `Confirm policy review: ${fileName || recordId}`);
 }
 
-function saveLocalReopen(recordId, fileName) {
-  const store = loadReviewStore();
+async function saveLocalReopen(recordId, fileName) {
+  return withReviewStore(store => {
   const record = getReviewStoreRecord(store, recordId);
   record.status = 'reviewing';
   record.confirmed_at = null;
@@ -435,11 +548,12 @@ function saveLocalReopen(recordId, fileName) {
   record.fields['文件名称'] = fileName || record.fields['文件名称'] || '';
   record.updated_at = new Date().toISOString();
   appendReviewEvent(store, 'reopen', recordId, { fileName });
-  saveReviewStore(store);
+  return true;
+  }, `Reopen policy review: ${fileName || recordId}`);
 }
 
-function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, reason, changeEntry, deleteField, fieldDefinition }) {
-  const store = loadReviewStore();
+async function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, reason, changeEntry, deleteField, fieldDefinition }) {
+  return withReviewStore(store => {
   const record = getReviewStoreRecord(store, recordId);
   const key = fieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
   const entry = normalizeChangeEntry(changeEntry, {
@@ -470,23 +584,23 @@ function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, reason
   }
   record.updated_at = new Date().toISOString();
   appendReviewEvent(store, 'save-field', recordId, { fieldKey: key, fieldLabel, newValue, reason, deleteField: !!deleteField });
-  saveReviewStore(store);
   return { historyCount: record.changeHistory.length };
+  }, `Update policy field: ${fieldLabel || fieldKey || recordId}`);
 }
 
-function saveLocalProblem(recordId, entry) {
-  const store = loadReviewStore();
+async function saveLocalProblem(recordId, entry) {
+  return withReviewStore(store => {
   const record = getReviewStoreRecord(store, recordId);
   const line = `[${entry.created_at || new Date().toLocaleString('zh-CN', { hour12: false })}] ${entry.created_by || fallbackUser().name} | ${entry.field_label || '文件整体'}: ${entry.desc || ''}`;
   record.problemLines.push(line);
   record.updated_at = new Date().toISOString();
   appendReviewEvent(store, 'mark-problem', recordId, { entry });
-  saveReviewStore(store);
   return { count: record.problemLines.length };
+  }, `Mark policy problem: ${recordId}`);
 }
 
-function saveLocalFieldDefinition(fieldKey, fieldDefinition) {
-  const store = loadReviewStore();
+async function saveLocalFieldDefinition(fieldKey, fieldDefinition) {
+  return withReviewStore(store => {
   const targetType = fieldDefinition.file_type || fieldDefinition.fileType || '';
   let updated = 0;
   loadStaticPolicies().forEach(policy => {
@@ -497,8 +611,8 @@ function saveLocalFieldDefinition(fieldKey, fieldDefinition) {
     updated++;
   });
   appendReviewEvent(store, 'field-definition', '', { fieldKey, fieldDefinition, updated });
-  saveReviewStore(store);
   return updated;
+  }, `Update policy field definition: ${fieldKey}`);
 }
 
 function isAuthOrPermissionError(err) {
@@ -1679,12 +1793,12 @@ app.get('/api/oauth/callback', async (req, res) => {
 
 // ---- 授权状态 ----
 app.get('/api/auth-status', (req, res) => {
-  if (LOCAL_REVIEW_MODE && !state.userRefreshToken) {
+  if (!useFeishuStorage()) {
     return res.json({
       authorized: true,
       tokenValid: true,
-      mode: 'local-review-store',
-      storage: 'local',
+      mode: 'review-store',
+      storage: activeReviewStorageName(),
       feishuAuthorized: false,
       user: fallbackUser(),
     });
@@ -1700,9 +1814,12 @@ app.get('/api/auth-status', (req, res) => {
 // ---- 当前用户信息 ----
 app.get('/api/me', async (req, res) => {
   try {
+    if (!useFeishuStorage()) {
+      return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
+    }
     if (!state.userRefreshToken) {
       if (LOCAL_REVIEW_MODE) {
-        return res.json({ authorized: true, storage: 'local', feishuAuthorized: false, user: fallbackUser() });
+        return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
       }
       return res.json({ authorized: false, user: null });
     }
@@ -1711,7 +1828,7 @@ app.get('/api/me', async (req, res) => {
   } catch (err) {
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       if (LOCAL_REVIEW_MODE) {
-        return res.json({ authorized: true, storage: 'local', feishuAuthorized: false, user: fallbackUser() });
+        return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
       }
       res.json({ authorized: false, user: null });
     } else {
@@ -1736,6 +1853,18 @@ app.post('/api/confirm', async (req, res) => {
   }
 
   console.log(`[确认] ${fileName || recordId}`);
+
+  if (!useFeishuStorage()) {
+    const saved = await saveLocalConfirm(recordId, fileName, fallbackUser());
+    console.log(`[确认] ✓ 已写入${activeReviewStorageName()}审核记录 ${fileName || recordId}`);
+    return res.json({
+      success: true,
+      confirmedAt: saved.confirmedAt,
+      confirmedBy: saved.confirmedBy,
+      savedToFeishu: false,
+      storage: activeReviewStorageName(),
+    });
+  }
 
   try {
     const now = Date.now();
@@ -1771,14 +1900,14 @@ app.post('/api/confirm', async (req, res) => {
   } catch (err) {
     console.error(`[确认] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      const saved = saveLocalConfirm(recordId, fileName, fallbackUser());
+      const saved = await saveLocalConfirm(recordId, fileName, fallbackUser());
       console.log(`[确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
       res.json({
         success: true,
         confirmedAt: saved.confirmedAt,
         confirmedBy: saved.confirmedBy,
         savedToFeishu: false,
-        storage: 'local',
+        storage: activeReviewStorageName(),
       });
     } else {
       res.status(500).json({ success: false, error: err.message });
@@ -1795,6 +1924,12 @@ app.post('/api/reopen', async (req, res) => {
   }
 
   console.log(`[恢复待确认] ${fileName || recordId}`);
+
+  if (!useFeishuStorage()) {
+    await saveLocalReopen(recordId, fileName);
+    console.log(`[恢复待确认] ✓ 已写入${activeReviewStorageName()}审核记录 ${fileName || recordId}`);
+    return res.json({ success: true, savedToFeishu: false, storage: activeReviewStorageName() });
+  }
 
   try {
     // 确保扩展字段存在，便于清空确认人信息
@@ -1814,9 +1949,9 @@ app.post('/api/reopen', async (req, res) => {
   } catch (err) {
     console.error(`[恢复待确认] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      saveLocalReopen(recordId, fileName);
+      await saveLocalReopen(recordId, fileName);
       console.log(`[恢复待确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
-      res.json({ success: true, savedToFeishu: false, storage: 'local' });
+      res.json({ success: true, savedToFeishu: false, storage: activeReviewStorageName() });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -1830,6 +1965,28 @@ app.post('/api/save-field', async (req, res) => {
 
   if (!recordId) {
     return res.status(400).json({ success: false, error: '缺少 recordId' });
+  }
+
+  if (!useFeishuStorage()) {
+    const fieldKey = requestedFieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
+    const saved = await saveLocalFieldChange({
+      recordId,
+      fieldLabel,
+      fieldKey,
+      newValue,
+      reason,
+      changeEntry,
+      deleteField,
+      fieldDefinition,
+    });
+    console.log(`[保存字段] ✓ 已写入${activeReviewStorageName()}审核记录 ${fieldLabel || fieldKey || ''}`);
+    return res.json({
+      success: true,
+      historyCount: saved.historyCount,
+      savedToFeishu: false,
+      storage: activeReviewStorageName(),
+      background: { autoCorrection: false, knowledge: false },
+    });
   }
 
   try {
@@ -1987,7 +2144,7 @@ app.post('/api/save-field', async (req, res) => {
     console.error(`[保存字段] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
       const fieldKey = requestedFieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
-      const saved = saveLocalFieldChange({
+      const saved = await saveLocalFieldChange({
         recordId,
         fieldLabel,
         fieldKey,
@@ -2002,7 +2159,7 @@ app.post('/api/save-field', async (req, res) => {
         success: true,
         historyCount: saved.historyCount,
         savedToFeishu: false,
-        storage: 'local',
+        storage: activeReviewStorageName(),
         background: { autoCorrection: false, knowledge: false },
       });
     } else {
@@ -2016,6 +2173,12 @@ app.post('/api/apply-field-definition', async (req, res) => {
   const { sourceRecordId, fieldKey, fieldDefinition } = req.body || {};
   if (!fieldKey || !fieldDefinition || !fieldDefinition.file_type) {
     return res.status(400).json({ success: false, error: '缺少 fieldKey 或 fieldDefinition.file_type' });
+  }
+
+  if (!useFeishuStorage()) {
+    const updated = await saveLocalFieldDefinition(fieldKey, fieldDefinition);
+    console.log(`[字段定义] ✓ 已写入${activeReviewStorageName()}审核记录 ${fieldKey} ${updated} 条`);
+    return res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: activeReviewStorageName() });
   }
 
   try {
@@ -2044,9 +2207,9 @@ app.post('/api/apply-field-definition', async (req, res) => {
   } catch (err) {
     console.error(`[字段定义] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      const updated = saveLocalFieldDefinition(fieldKey, fieldDefinition);
+      const updated = await saveLocalFieldDefinition(fieldKey, fieldDefinition);
       console.log(`[字段定义] ✓ 已写入本地审核记录 ${fieldKey} ${updated} 条`);
-      res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: 'local' });
+      res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: activeReviewStorageName() });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2059,6 +2222,12 @@ app.post('/api/mark-problem', async (req, res) => {
 
   if (!recordId || !entry) {
     return res.status(400).json({ success: false, error: '缺少 recordId 或 entry' });
+  }
+
+  if (!useFeishuStorage()) {
+    const saved = await saveLocalProblem(recordId, entry);
+    console.log(`[标记问题] ✓ 已写入${activeReviewStorageName()}审核记录 ${recordId} 问题 ${saved.count} 条`);
+    return res.json({ success: true, count: saved.count, savedToFeishu: false, storage: activeReviewStorageName() });
   }
 
   try {
@@ -2110,9 +2279,9 @@ app.post('/api/mark-problem', async (req, res) => {
   } catch (err) {
     console.error(`[标记问题] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      const saved = saveLocalProblem(recordId, entry);
+      const saved = await saveLocalProblem(recordId, entry);
       console.log(`[标记问题] ✓ 已写入本地审核记录 ${recordId} 问题 ${saved.count} 条`);
-      res.json({ success: true, count: saved.count, savedToFeishu: false, storage: 'local' });
+      res.json({ success: true, count: saved.count, savedToFeishu: false, storage: activeReviewStorageName() });
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2124,10 +2293,11 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     time: new Date().toISOString(),
-    mode: 'render-oauth2',
-    authorized: !!state.userRefreshToken,
+    mode: useFeishuStorage() ? 'render-oauth2' : 'review-store',
+    authorized: useFeishuStorage() ? !!state.userRefreshToken : true,
     localReviewMode: LOCAL_REVIEW_MODE,
-    storage: state.userRefreshToken ? 'feishu' : 'local',
+    storage: activeReviewStorageName(),
+    githubStorageConfigured: useGithubStorage(),
   });
 });
 
@@ -2162,18 +2332,28 @@ async function listAllRecordStatuses() {
 }
 
 app.get('/api/statuses', async (req, res) => {
+  if (!useFeishuStorage()) {
+    const statuses = await listLocalRecordStatuses();
+    return res.json({
+      success: true,
+      count: Object.keys(statuses).length,
+      statuses,
+      storage: activeReviewStorageName(),
+    });
+  }
+
   try {
     const statuses = await listAllRecordStatuses();
     res.json({ success: true, count: Object.keys(statuses).length, statuses, storage: 'feishu' });
   } catch (err) {
     console.error(`[状态同步] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      const statuses = listLocalRecordStatuses();
+      const statuses = await listLocalRecordStatuses();
       res.json({
         success: true,
         count: Object.keys(statuses).length,
         statuses,
-        storage: 'local',
+        storage: activeReviewStorageName(),
         warning: '飞书不可用，当前使用站点本地审核记录',
       });
     } else {
@@ -2182,11 +2362,11 @@ app.get('/api/statuses', async (req, res) => {
   }
 });
 
-app.get('/api/local-review-store', (req, res) => {
-  const store = loadReviewStore();
+app.get('/api/local-review-store', async (req, res) => {
+  const store = await loadReviewStoreForRead();
   res.json({
     success: true,
-    storage: 'local',
+    storage: activeReviewStorageName(),
     updatedAt: store.updatedAt,
     recordCount: Object.keys(store.records || {}).length,
     eventCount: (store.events || []).length,
@@ -2199,6 +2379,47 @@ app.post('/api/restore-review-state', async (req, res) => {
   const { recordId, data, changeHistory, problems, editedFields } = req.body || {};
   if (!recordId) {
     return res.status(400).json({ success: false, error: '缺少 recordId' });
+  }
+
+  if (!useFeishuStorage()) {
+    const fields = [];
+    await withReviewStore(store => {
+      const record = getReviewStoreRecord(store, recordId);
+      const history = Array.isArray(changeHistory)
+        ? changeHistory.map(e => normalizeChangeEntry(e, {})).filter(e => e.field || e.fieldLabel || e.reason)
+        : [];
+      const problemLines = splitProblemMarkEntries(formatProblemMarks(problems || []));
+      const payloadData = data && typeof data === 'object' ? data : {};
+      const changedKeys = new Set((editedFields || []).map(canonicalizeFieldName).filter(Boolean));
+      history.forEach(h => changedKeys.add(canonicalizeFieldName(h.field || h.fieldLabel)));
+
+      history.forEach(entry => record.changeHistory.push(entry));
+      problemLines.forEach(line => record.problemLines.push(line));
+      if (history.length) fields.push('修改历史');
+      if (problemLines.length) fields.push('问题标记');
+      if (history.length || problemLines.length) {
+        record.fields['已修改'] = '是';
+        fields.push('已修改');
+      }
+      changedKeys.forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(payloadData, key)) return;
+        const value = normalizeFeishuValue(payloadData[key]);
+        if (!value) return;
+        record.dataPatch[key] = value;
+        const label = KEY_LABELS[key];
+        if (label) {
+          record.fields[label] = value;
+          fields.push(label);
+        }
+      });
+      if (payloadData[FIELD_DEFINITIONS_KEY] && typeof payloadData[FIELD_DEFINITIONS_KEY] === 'object') {
+        Object.assign(record.fieldDefinitions, payloadData[FIELD_DEFINITIONS_KEY]);
+      }
+      record.updated_at = new Date().toISOString();
+      appendReviewEvent(store, 'restore-review-state', recordId, { fields: [...new Set(fields)] });
+      return true;
+    }, `Restore policy review state: ${recordId}`);
+    return res.json({ success: true, restored: true, fields: [...new Set(fields)], storage: activeReviewStorageName(), savedToFeishu: false });
   }
 
   try {
@@ -2302,6 +2523,18 @@ async function runLimited(items, limit, worker) {
 app.post('/api/admin/clear-records', async (req, res) => {
   if (!requireAdminConfirm(req, res, 'DELETE_ALL_POLICY_RECORDS')) return;
 
+  if (!useFeishuStorage()) {
+    await clearLocalReviewRecords();
+    return res.json({
+      success: true,
+      deleted: 0,
+      storage: activeReviewStorageName(),
+      savedToFeishu: false,
+      remaining_estimate: 0,
+      note: '已清空审核账本并隐藏静态批次',
+    });
+  }
+
   try {
     const limit = Math.max(1, Math.min(parseInt(req.body.limit || '80', 10) || 80, 120));
     const records = await listAllFeishuRecords();
@@ -2322,11 +2555,11 @@ app.post('/api/admin/clear-records', async (req, res) => {
   } catch (err) {
     console.error(`[清空记录] ✗ ${err.message}`);
     if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
-      clearLocalReviewRecords();
+      await clearLocalReviewRecords();
       res.json({
         success: true,
         deleted: 0,
-        storage: 'local',
+        storage: activeReviewStorageName(),
         savedToFeishu: false,
         remaining_estimate: 0,
         note: '飞书不可用，已清空站点本地审核记录并隐藏静态批次',
@@ -2341,6 +2574,26 @@ app.post('/api/admin/clear-records', async (req, res) => {
 // 保留修改历史，仅从「问题标记」里移除 AUTO_RULE/自动矫正/按当前原文复核拆分 等系统行。
 app.post('/api/admin/cleanup-auto-problems', async (req, res) => {
   if (!requireAdminConfirm(req, res, 'CLEANUP_AUTO_PROBLEMS')) return;
+
+  if (!useFeishuStorage()) {
+    let changed = 0;
+    await withReviewStore(store => {
+      Object.values(store.records || {}).forEach(record => {
+        const before = (record.problemLines || []).join('\n');
+        const after = filterManualProblemMarks(before);
+        if (before !== after) {
+          record.problemLines = splitProblemMarkEntries(after);
+          record.fields = record.fields || {};
+          record.fields['问题标记'] = after;
+          record.updated_at = new Date().toISOString();
+          changed++;
+        }
+      });
+      appendReviewEvent(store, 'cleanup-auto-problems', '', { changed });
+      return true;
+    }, 'Cleanup auto problem marks');
+    return res.json({ success: true, changed, changed_records: [], errors: [], storage: activeReviewStorageName(), savedToFeishu: false });
+  }
 
   try {
     const records = await listAllFeishuRecords();
@@ -2379,6 +2632,26 @@ app.post('/api/admin/cleanup-auto-problems', async (req, res) => {
 // ---- 管理接口：清理人工确认项中的解析说明/分类证据 ----
 app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
   if (!requireAdminConfirm(req, res, 'CLEANUP_MANUAL_CONFIRM')) return;
+
+  if (!useFeishuStorage()) {
+    const changedRecords = [];
+    await withReviewStore(store => {
+      Object.entries(store.records || {}).forEach(([recordId, record]) => {
+        const before = normalizeFeishuValue(record.fields && record.fields['人工确认项']);
+        const after = cleanManualConfirmText(before);
+        if (before !== after) {
+          record.fields = record.fields || {};
+          record.fields['人工确认项'] = after;
+          if (record.dataPatch) record.dataPatch.manual_confirm_fields = after;
+          record.updated_at = new Date().toISOString();
+          changedRecords.push({ recordId, fileName: normalizeFeishuValue(record.fields['文件名称']), before, after });
+        }
+      });
+      appendReviewEvent(store, 'cleanup-manual-confirm', '', { changed: changedRecords.length });
+      return true;
+    }, 'Cleanup manual confirm fields');
+    return res.json({ success: true, changed: changedRecords.length, changed_records: changedRecords, errors: [], storage: activeReviewStorageName(), savedToFeishu: false });
+  }
 
   try {
     const tableFields = await ensureTableFields();
@@ -2431,6 +2704,21 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
 // ---- 管理接口：批量导入新解析任务 ----
 app.post('/api/admin/import-records', async (req, res) => {
   if (!requireAdminConfirm(req, res, 'IMPORT_POLICY_RECORDS')) return;
+
+  if (!useFeishuStorage()) {
+    const records = Array.isArray(req.body.records) ? req.body.records : [];
+    if (!records.length) {
+      return res.status(400).json({ success: false, error: 'records 为空' });
+    }
+    const imported = await saveLocalImportedRecords(records);
+    return res.json({
+      success: true,
+      count: imported.length,
+      records: imported,
+      storage: activeReviewStorageName(),
+      savedToFeishu: false,
+    });
+  }
 
   try {
     const records = Array.isArray(req.body.records) ? req.body.records : [];
@@ -2514,12 +2802,12 @@ app.post('/api/admin/import-records', async (req, res) => {
       if (!records.length) {
         return res.status(400).json({ success: false, error: 'records 为空' });
       }
-      const imported = saveLocalImportedRecords(records);
+      const imported = await saveLocalImportedRecords(records);
       res.json({
         success: true,
         count: imported.length,
         records: imported,
-        storage: 'local',
+        storage: activeReviewStorageName(),
         savedToFeishu: false,
       });
     } else {
