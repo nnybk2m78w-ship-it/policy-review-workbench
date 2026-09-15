@@ -6,6 +6,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const Redis = require('ioredis');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,11 +22,14 @@ const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20'
 const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
 const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join(__dirname, '.review_state_store.json');
 const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
-const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || 'github').toLowerCase();
+const REVIEW_REDIS_URL = process.env.REVIEW_REDIS_URL || process.env.REDIS_URL || '';
+const REVIEW_REDIS_KEY = process.env.REVIEW_REDIS_KEY || 'policy-review-workbench:review-state';
+const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || (REVIEW_REDIS_URL ? 'redis' : 'github')).toLowerCase();
 const REVIEW_GITHUB_TOKEN = process.env.REVIEW_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || '';
 const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
 const REVIEW_GITHUB_PATH = process.env.REVIEW_GITHUB_PATH || 'data/review-state.json';
+let redisClient = null;
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -205,14 +209,51 @@ function useFeishuStorage() {
   return REVIEW_STORAGE_MODE === 'feishu';
 }
 
+function useRedisStorage() {
+  return REVIEW_STORAGE_MODE === 'redis' && !!REVIEW_REDIS_URL;
+}
+
 function useGithubStorage() {
   return REVIEW_STORAGE_MODE === 'github' && !!REVIEW_GITHUB_TOKEN && !!REVIEW_GITHUB_REPO;
 }
 
 function activeReviewStorageName() {
   if (useFeishuStorage()) return 'feishu';
+  if (useRedisStorage()) return 'redis';
   if (useGithubStorage()) return 'github';
   return 'local';
+}
+
+function getRedisClient() {
+  if (!redisClient) {
+    redisClient = new Redis(REVIEW_REDIS_URL, {
+      maxRetriesPerRequest: 2,
+      enableOfflineQueue: false,
+    });
+    redisClient.on('error', err => {
+      console.warn('[Redis审核记录] 连接异常:', err.message);
+    });
+  }
+  return redisClient;
+}
+
+async function loadRedisReviewStore() {
+  try {
+    const raw = await getRedisClient().get(REVIEW_REDIS_KEY);
+    if (!raw) return createEmptyReviewStore();
+    const parsed = JSON.parse(raw);
+    parsed.records = parsed.records && typeof parsed.records === 'object' ? parsed.records : {};
+    parsed.events = Array.isArray(parsed.events) ? parsed.events : [];
+    parsed.staticHidden = !!parsed.staticHidden;
+    return parsed;
+  } catch (e) {
+    console.warn('[Redis审核记录] 读取失败，退回本地缓存:', e.message);
+    return loadReviewStore();
+  }
+}
+
+async function saveRedisReviewStore(store) {
+  await getRedisClient().set(REVIEW_REDIS_KEY, JSON.stringify(store));
 }
 
 async function githubContentsRequest(method, body) {
@@ -269,6 +310,11 @@ async function saveGithubReviewStore(store, sha, message) {
 }
 
 async function loadReviewStoreForRead() {
+  if (useRedisStorage()) {
+    const store = await loadRedisReviewStore();
+    saveReviewStore(store);
+    return store;
+  }
   if (useGithubStorage()) {
     const result = await loadGithubReviewStore();
     saveReviewStore(result.store);
@@ -278,12 +324,22 @@ async function loadReviewStoreForRead() {
 }
 
 async function withReviewStore(mutator, message) {
-  const loaded = useGithubStorage()
+  const loaded = useRedisStorage()
+    ? { store: await loadRedisReviewStore(), sha: null }
+    : useGithubStorage()
     ? await loadGithubReviewStore()
     : { store: loadReviewStore(), sha: null };
   const result = await mutator(loaded.store);
   loaded.store.updatedAt = new Date().toISOString();
-  if (useGithubStorage() && !loaded.fallback) {
+  if (useRedisStorage()) {
+    try {
+      await saveRedisReviewStore(loaded.store);
+    } catch (e) {
+      console.warn('[Redis审核记录] 保存失败，退回本地文件:', e.message);
+      saveReviewStore(loaded.store);
+      return result;
+    }
+  } else if (useGithubStorage() && !loaded.fallback) {
     try {
       await saveGithubReviewStore(loaded.store, loaded.sha, message);
     } catch (e) {
@@ -2297,6 +2353,7 @@ app.get('/api/health', (req, res) => {
     authorized: useFeishuStorage() ? !!state.userRefreshToken : true,
     localReviewMode: LOCAL_REVIEW_MODE,
     storage: activeReviewStorageName(),
+    redisStorageConfigured: useRedisStorage(),
     githubStorageConfigured: useGithubStorage(),
   });
 });
