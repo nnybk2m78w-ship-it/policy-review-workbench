@@ -5508,24 +5508,12 @@ const REVIEW_POLICIES = [
         "product_type": "PAT:A；PAT:A#CGP"
       },
       "_field_definitions": {
-        "benefit_name": {
-          "label": "权益名称",
-          "json_key": "benefit_name",
-          "logic": "当原文描述赠送/包含酒店券、行李、里程、选座等附加权益名称时提取。"
-        },
-        "benefit_usage_rules": {
-          "label": "权益使用规则",
-          "json_key": "benefit_usage_rules",
-          "logic": "当原文包含附加权益的发放、激活、有效期、使用方式、限制条件时提取，仅提取当前文件自己的规则。"
-        },
         "not_applicable_flight_routes": {
           "label": "不适用航班/航线明细",
           "json_key": "not_applicable_flight_routes",
           "logic": "当原文列出不适用航线、航班号、日期、班期或附件表时提取明细；不得只写泛称。"
         }
       },
-      "benefit_name": "赠酒店券一张",
-      "benefit_usage_rules": "1.适用航线：深圳始发、深圳到达的深航实际承运国内航线，不含保底及代码共享航班； \n2.适用城市:深圳。 \n3.发放规则：发放礼包权益电子凭证至购票账户，可通过“深圳航空APP/小程序-我-我的礼券”查看。 \n4.券码有效期:权益于航班起飞前一天自动激活，激活之日起6个月内有效。 \n5.使用规则: 深航酒店客房兑换券 \n凭券可兑换深航酒店相应房型一间夜，可兑换房型（二选一）：豪华房、至尊房，含一份早餐。 \n1）适用城市：深圳。 \n2）激活规则：此权益于航班计划起飞当天自动激活。 \n3）使用说明： \n(1)需提前至少3天致电0755-88819999预订，视酒店情况而定。 \n(2)仅适用于周五至周一、及公共假期期间入住，大型展会期间不适用。 \n(3)如需周二至周四期间入住，则收取350元/间/晚差价。 \n(4)如要求升级至其他房型，按深航酒店客房优享价补房型差价。 \n(5)此券不可单独退款，不可兑换现金，不可与其他优惠同时使用。 \n(6)其他情况可致电0755-88819999咨询或现场咨询工作人员，以商家反馈为准。 \n(7)酒店地址：深圳市福田区深南大道6035号深航国际。",
       "not_applicable_flight_routes": "SZX-YIC/YIC-SZX/SZX-JUH/JUH-SZX"
     },
     "evidence": {
@@ -5967,7 +5955,7 @@ function getPolicyFileType(policyOrFields, parsed) {
     data.product_name,
   ].filter(Boolean).join(' ');
   if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
-  if (/旗舰店|旗舰店产品|产品代码|产品码|权益|礼包|升舱|安检|行李|甄选|早鸟|趣游/.test(text)) {
+  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码|产品操作规定/.test(text)) {
     return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
   }
   return '自营';
@@ -6002,6 +5990,7 @@ function definitionAppliesToPolicy(def, policy) {
 function isPromptAllowedFieldForType(fileType, field, def) {
   if (!field || field === FIELD_DEFINITIONS_KEY) return false;
   if ((BASE_PROMPT_FIELDS[fileType] || new Set()).has(field)) return true;
+  if (SOURCE_BOUND_FIELDS.has(field)) return false;
   if (def && (def.file_type || def.fileType) === fileType) return true;
   return field.startsWith(CUSTOM_FIELD_KEY_PREFIX);
 }
@@ -6009,6 +5998,7 @@ function isPromptAllowedFieldForType(fileType, field, def) {
 function isPromptAllowedField(policy, field) {
   const type = getPolicyFileType(policy);
   const def = getFieldDefinition(policy, field);
+  if (SOURCE_BOUND_FIELDS.has(field)) return isPromptAllowedFieldForType(type, field, def);
   return isPromptAllowedFieldForType(type, field, def) || (!!LABELS[field] && hasConcreteFieldValue(policy && policy.data && policy.data[field]));
 }
 
@@ -6028,6 +6018,7 @@ function hasEntitlementEvidence(policy) {
 
 function shouldRenderSourceBoundField(policy, field) {
   if (!SOURCE_BOUND_FIELDS.has(field)) return true;
+  if (!isPromptAllowedField(policy, field)) return false;
   const value = policy && policy.data && policy.data[field];
   if (!hasConcreteFieldValue(value)) return false;
   const edited = policy && policy.audit && Array.isArray(policy.audit.edited_fields) && policy.audit.edited_fields.includes(field);

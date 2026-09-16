@@ -109,6 +109,7 @@ const KEY_LABELS = {
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([key, label]) => [label, key]));
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
+const SOURCE_BOUND_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
 
 function canonicalizeFieldName(field) {
   return FIELD_LABEL_TO_KEY[field] || field;
@@ -416,7 +417,7 @@ function cloneJson(value) {
 function applyLocalRecordToPolicy(policy, localRecord) {
   const next = cloneJson(policy);
   next.data = next.data && typeof next.data === 'object' ? next.data : {};
-  if (!localRecord) return next;
+  if (!localRecord) return sanitizePolicyFields(next);
   Object.entries(localRecord.dataPatch || {}).forEach(([key, value]) => {
     next.data[key] = value;
   });
@@ -434,10 +435,50 @@ function applyLocalRecordToPolicy(policy, localRecord) {
   if (localRecord.confirmed_at !== undefined) next.confirmed_at = localRecord.confirmed_at;
   if (localRecord.confirmed_by !== undefined) next.confirmed_by = localRecord.confirmed_by;
   next._change_history = localRecord.changeHistory || [];
+  sanitizePolicyFields(next);
   return next;
 }
 
+function getPolicyFileTypeFromPolicy(policy) {
+  const data = (policy && policy.data) || {};
+  const text = [
+    policy && policy.file_name,
+    policy && policy.category,
+    data.scenario,
+    data.business_line,
+    data.product_family,
+    data.product_category,
+    data.product_name,
+  ].filter(Boolean).join(' ');
+  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
+  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码|产品操作规定/.test(text)) {
+    return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  }
+  return '自营';
+}
+
+function sourceBoundFieldAllowedForPolicy(policy, key) {
+  if (!SOURCE_BOUND_KEYS.has(key)) return true;
+  const fileType = getPolicyFileTypeFromPolicy(policy);
+  return fileType === '旗舰店code' || fileType === '旗舰店券类';
+}
+
+function sanitizePolicyFields(policy) {
+  if (!policy || !policy.data) return policy;
+  Object.keys(policy.data).forEach(key => {
+    if (!sourceBoundFieldAllowedForPolicy(policy, key)) {
+      delete policy.data[key];
+      if (policy.data[FIELD_DEFINITIONS_KEY]) delete policy.data[FIELD_DEFINITIONS_KEY][key];
+    }
+  });
+  if (policy.data[FIELD_DEFINITIONS_KEY] && !Object.keys(policy.data[FIELD_DEFINITIONS_KEY]).length) {
+    delete policy.data[FIELD_DEFINITIONS_KEY];
+  }
+  return policy;
+}
+
 function policyToFields(policy, localRecord) {
+  sanitizePolicyFields(policy);
   const fields = {
     '文件名称': policy.file_name || '',
     '文件类型': policy.source_type || '',
@@ -455,7 +496,7 @@ function policyToFields(policy, localRecord) {
     '问题标记': ((localRecord && localRecord.problemLines) || []).join('\n'),
   };
   Object.entries(KEY_LABELS).forEach(([key, label]) => {
-    if (policy.data && Object.prototype.hasOwnProperty.call(policy.data, key)) {
+    if (policy.data && sourceBoundFieldAllowedForPolicy(policy, key) && Object.prototype.hasOwnProperty.call(policy.data, key)) {
       fields[label] = normalizeFeishuValue(policy.data[key]);
     }
   });
