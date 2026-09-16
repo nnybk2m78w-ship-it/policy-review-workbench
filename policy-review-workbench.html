@@ -5512,9 +5512,27 @@ const REVIEW_POLICIES = [
           "label": "不适用航班/航线明细",
           "json_key": "not_applicable_flight_routes",
           "logic": "当原文列出不适用航线、航班号、日期、班期或附件表时提取明细；不得只写泛称。"
+        },
+        "benefit_name": {
+          "label": "权益名称",
+          "json_key": "benefit_name",
+          "value_type": "string",
+          "file_type": "自营",
+          "description": "旅客购买该产品后获得的具体附加权益名称。",
+          "logic": "当当前文件原文明确描述赠送/包含酒店券、礼包、行李、积分、选座等附加权益时，提取权益本体；不得复制其他文件的权益名称。"
+        },
+        "benefit_usage_rules": {
+          "label": "权益使用规则",
+          "json_key": "benefit_usage_rules",
+          "value_type": "string",
+          "file_type": "自营",
+          "description": "当前文件中该附加权益的领取、激活、有效期、兑换、适用范围和限制条件。",
+          "logic": "仅提取当前文件自己的权益发放/激活/有效期/兑换/使用限制段落；不得把产品总说明、退改签全文或其他文件权益规则复制到该字段。"
         }
       },
-      "not_applicable_flight_routes": "SZX-YIC/YIC-SZX/SZX-JUH/JUH-SZX"
+      "not_applicable_flight_routes": "SZX-YIC/YIC-SZX/SZX-JUH/JUH-SZX",
+      "benefit_name": "赠酒店券一张",
+      "benefit_usage_rules": "1.适用航线：深圳始发、深圳到达的深航实际承运国内航线，不含保底及代码共享航班； \n2.适用城市:深圳。 \n3.发放规则：发放礼包权益电子凭证至购票账户，可通过“深圳航空APP/小程序-我-我的礼券”查看。 \n4.券码有效期:权益于航班起飞前一天自动激活，激活之日起6个月内有效。 \n5.使用规则: 深航酒店客房兑换券 \n凭券可兑换深航酒店相应房型一间夜，可兑换房型（二选一）：豪华房、至尊房，含一份早餐。 \n1）适用城市：深圳。 \n2）激活规则：此权益于航班计划起飞当天自动激活。 \n3）使用说明： \n(1)需提前至少3天致电0755-88819999预订，视酒店情况而定。 \n(2)仅适用于周五至周一、及公共假期期间入住，大型展会期间不适用。 \n(3)如需周二至周四期间入住，则收取350元/间/晚差价。 \n(4)如要求升级至其他房型，按深航酒店客房优享价补房型差价。 \n(5)此券不可单独退款，不可兑换现金，不可与其他优惠同时使用。 \n(6)其他情况可致电0755-88819999咨询或现场咨询工作人员，以商家反馈为准。 \n(7)酒店地址：深圳市福田区深南大道6035号深航国际。"
     },
     "evidence": {
       "dates": "2025-08-15至2026-05-31",
@@ -5990,8 +6008,8 @@ function definitionAppliesToPolicy(def, policy) {
 function isPromptAllowedFieldForType(fileType, field, def) {
   if (!field || field === FIELD_DEFINITIONS_KEY) return false;
   if ((BASE_PROMPT_FIELDS[fileType] || new Set()).has(field)) return true;
-  if (SOURCE_BOUND_FIELDS.has(field)) return false;
   if (def && (def.file_type || def.fileType) === fileType) return true;
+  if (SOURCE_BOUND_FIELDS.has(field)) return false;
   return field.startsWith(CUSTOM_FIELD_KEY_PREFIX);
 }
 

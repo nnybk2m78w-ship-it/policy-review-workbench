@@ -460,7 +460,10 @@ function getPolicyFileTypeFromPolicy(policy) {
 function sourceBoundFieldAllowedForPolicy(policy, key) {
   if (!SOURCE_BOUND_KEYS.has(key)) return true;
   const fileType = getPolicyFileTypeFromPolicy(policy);
-  return fileType === '旗舰店code' || fileType === '旗舰店券类';
+  if (fileType === '旗舰店code' || fileType === '旗舰店券类') return true;
+  const def = policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY] && policy.data[FIELD_DEFINITIONS_KEY][key];
+  const defType = def && (def.file_type || def.fileType);
+  return !!defType && defType === fileType;
 }
 
 function sanitizePolicyFields(policy) {
@@ -501,7 +504,11 @@ function policyToFields(policy, localRecord) {
     }
   });
   if (localRecord && localRecord.fields) {
-    Object.assign(fields, localRecord.fields);
+    Object.entries(localRecord.fields).forEach(([label, value]) => {
+      const key = FIELD_LABEL_TO_KEY[label];
+      if (key && !sourceBoundFieldAllowedForPolicy(policy, key)) return;
+      fields[label] = value;
+    });
   }
   return fields;
 }
