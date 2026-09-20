@@ -5916,10 +5916,13 @@ const FIELD_GROUPS = [
   { title: '适用范围', fields: ['flight_type','trip_type_note','od','od_note','booking_cabin','cabin','cabin_count','office_scope','office_count'] },
   { title: '日期规则', fields: ['sale_date','redeem_date','use_date','depart_date','depart_date_note','advance_purchase_days','use_begin','refund_time'] },
   { title: '优惠与旅客', fields: ['discount_type','discount_per','passenger_type','customer_limit_group','age_limit','child_applicable','baby_applicable','realname_required','realname_limit','id_type_restriction','document_restrictions','membership_limit'] },
+  { title: '权益信息', fields: ['benefit_name','benefit_usage_rules'] },
   { title: '退改签与规则', fields: ['sign_and_transfer_rules','refund_rules','change_rules','refund_change_note','commission_rate','rounding_rule','fc_fn_fp_note'] },
-  { title: '次卡/权益', fields: ['usage_times','travel_class','product_show','json_count','use_limit','luggage_amount','benefit_name','benefit_usage_rules','not_applicable_flight_routes','not_applicable_od','price_groups_summary','use_code'] },
+  { title: '次卡/权益', fields: ['usage_times','travel_class','product_show','json_count','use_limit','luggage_amount','not_applicable_flight_routes','not_applicable_od','price_groups_summary','use_code'] },
+  { title: '其他信息', fields: [] },
   { title: '人工确认', fields: ['manual_confirm_fields'] },
 ];
+const GROUPED_FIELD_SET = new Set(FIELD_GROUPS.flatMap(group => group.fields || []));
 const BASE_PROMPT_FIELDS = {
   '自营': new Set(['scenario','business_line','channel_note','carrier','carrier_name','product_name','product_family','product_type','product_code','policy_code','fare_basis','corporate_code','flight_type','trip_type_note','od','od_note','booking_cabin','cabin','sale_date','depart_date','advance_purchase_days','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','commission_rate','manual_confirm_fields','luggage_amount','not_applicable_od']),
   '旗舰店code': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','product_code_raw','policy_code','fare_basis','corporate_code','flight_type','od','booking_cabin','cabin','sale_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','manual_confirm_fields','luggage_amount','benefit_name','benefit_usage_rules','not_applicable_flight_routes']),
@@ -6821,6 +6824,8 @@ function getFieldsForGroup(policy, group) {
   });
   const defs = (policy && policy.data && policy.data[FIELD_DEFINITIONS_KEY]) || {};
   Object.keys(defs).forEach(field => {
+    if (GROUPED_FIELD_SET.has(field)) return;
+    if (group.title !== '其他信息') return;
     if (definitionAppliesToPolicy(defs[field], policy) && !fields.includes(field)) {
       fields.push(field);
     }

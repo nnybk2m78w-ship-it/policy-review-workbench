@@ -110,6 +110,7 @@ const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([k
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const SOURCE_BOUND_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
+const DOCUMENT_LEVEL_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
 
 function canonicalizeFieldName(field) {
   return FIELD_LABEL_TO_KEY[field] || field;
@@ -1104,6 +1105,9 @@ function setParsedFieldDefinition(obj, key, fieldDefinition) {
 function setParsedField(parsed, key, value, fieldDefinition) {
   if (!parsed || !key) return false;
   let changed = false;
+  const targets = Array.isArray(parsed) && DOCUMENT_LEVEL_KEYS.has(key)
+    ? parsed.slice(0, 1)
+    : (Array.isArray(parsed) ? parsed : [parsed]);
   const applyOne = (obj) => {
     if (!obj || typeof obj !== 'object') return;
     if (normalizeFeishuValue(obj[key]) !== normalizeFeishuValue(value)) {
@@ -1121,8 +1125,20 @@ function setParsedField(parsed, key, value, fieldDefinition) {
       }
     }
   };
-  if (Array.isArray(parsed)) parsed.forEach(applyOne);
-  else applyOne(parsed);
+  targets.forEach(applyOne);
+  if (Array.isArray(parsed) && DOCUMENT_LEVEL_KEYS.has(key)) {
+    parsed.slice(1).forEach(obj => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        delete obj[key];
+        changed = true;
+      }
+      if (obj.data && typeof obj.data === 'object' && Object.prototype.hasOwnProperty.call(obj.data, key)) {
+        delete obj.data[key];
+        changed = true;
+      }
+    });
+  }
   return changed;
 }
 
@@ -1156,6 +1172,9 @@ function deleteParsedField(parsed, key) {
 function setParsedFieldDefinitionOnly(parsed, key, fieldDefinition) {
   if (!parsed || !key || !fieldDefinition) return false;
   let changed = false;
+  const targets = Array.isArray(parsed) && DOCUMENT_LEVEL_KEYS.has(key)
+    ? parsed.slice(0, 1)
+    : (Array.isArray(parsed) ? parsed : [parsed]);
   const applyOne = (obj) => {
     if (!obj || typeof obj !== 'object') return;
     changed = setParsedFieldDefinition(obj, key, fieldDefinition) || changed;
@@ -1163,8 +1182,20 @@ function setParsedFieldDefinitionOnly(parsed, key, fieldDefinition) {
       changed = setParsedFieldDefinition(obj.data, key, fieldDefinition) || changed;
     }
   };
-  if (Array.isArray(parsed)) parsed.forEach(applyOne);
-  else applyOne(parsed);
+  targets.forEach(applyOne);
+  if (Array.isArray(parsed) && DOCUMENT_LEVEL_KEYS.has(key)) {
+    parsed.slice(1).forEach(obj => {
+      if (!obj || typeof obj !== 'object') return;
+      if (obj[FIELD_DEFINITIONS_KEY] && typeof obj[FIELD_DEFINITIONS_KEY] === 'object' && Object.prototype.hasOwnProperty.call(obj[FIELD_DEFINITIONS_KEY], key)) {
+        delete obj[FIELD_DEFINITIONS_KEY][key];
+        changed = true;
+      }
+      if (obj.data && obj.data[FIELD_DEFINITIONS_KEY] && typeof obj.data[FIELD_DEFINITIONS_KEY] === 'object' && Object.prototype.hasOwnProperty.call(obj.data[FIELD_DEFINITIONS_KEY], key)) {
+        delete obj.data[FIELD_DEFINITIONS_KEY][key];
+        changed = true;
+      }
+    });
+  }
   return changed;
 }
 
