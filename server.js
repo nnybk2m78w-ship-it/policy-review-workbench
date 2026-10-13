@@ -19,7 +19,7 @@ const TABLE_ID = process.env.FEISHU_TABLE_ID || 'tblYWwuBfs3oylsh';
 const KNOWLEDGE_DOC_ID = process.env.FEISHU_KNOWLEDGE_DOC_ID || 'AyGydegiaoEXU6xFCnAc4gKBnDc';
 const VERSION_RECORD_DOC_TOKEN = process.env.FEISHU_VERSION_RECORD_DOC_TOKEN || 'C1d9w9WCIiLjCNkSecrcR7Bsnvh';
 const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20', 10);
-const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
+const FEISHU_OAUTH_SCOPES = sanitizeFeishuOAuthScopes(process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app');
 const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join(__dirname, '.review_state_store.json');
 const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
 const FEISHU_FALLBACK_TO_LOCAL = process.env.FEISHU_FALLBACK_TO_LOCAL === 'true';
@@ -112,6 +112,18 @@ const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const SOURCE_BOUND_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
 const DOCUMENT_LEVEL_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
+
+function sanitizeFeishuOAuthScopes(rawScopes) {
+  const deprecatedScopes = new Set(['base:record:read', 'base:record:write']);
+  const scopes = String(rawScopes || '')
+    .split(/\s+/)
+    .map(scope => scope.trim())
+    .filter(Boolean)
+    .filter(scope => !deprecatedScopes.has(scope));
+  if (!scopes.includes('offline_access')) scopes.unshift('offline_access');
+  if (!scopes.includes('bitable:app')) scopes.push('bitable:app');
+  return [...new Set(scopes)].join(' ');
+}
 
 function canonicalizeFieldName(field) {
   return FIELD_LABEL_TO_KEY[field] || field;
