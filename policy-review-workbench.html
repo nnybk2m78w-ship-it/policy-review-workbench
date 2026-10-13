@@ -5816,6 +5816,7 @@ const REVIEW_POLICIES = [
 
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
 const STORAGE_KEY = 'policy_review_state_batch_20260910_69';
+const CONFIRM_LEDGER_KEY = 'policy_review_confirm_ledger_v1';
 try {
   localStorage.removeItem('policy_review_state');
   localStorage.removeItem('policy_review_state_v2');
@@ -6338,6 +6339,93 @@ function saveState() {
     statusFilter: appState.statusFilter || '',
     serverSynced: !!appState.serverSynced,
   }));
+}
+
+function loadConfirmLedger() {
+  try {
+    const raw = localStorage.getItem(CONFIRM_LEDGER_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveConfirmLedger(ledger) {
+  try {
+    localStorage.setItem(CONFIRM_LEDGER_KEY, JSON.stringify(ledger || {}));
+  } catch (e) {}
+}
+
+function getTsNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (!value) return 0;
+  const parsed = Date.parse(String(value).replace(/\./g, '-'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rememberConfirmState(policy, status, confirmedAt, confirmedBy) {
+  if (!policy || !policy.id) return;
+  const ledger = loadConfirmLedger();
+  ledger[policy.id] = {
+    status: status === 'confirmed' ? 'confirmed' : 'reviewing',
+    file_name: policy.file_name || '',
+    confirmed_at: status === 'confirmed' ? (confirmedAt || policy.confirmed_at || Date.now()) : null,
+    confirmed_by: status === 'confirmed' ? (confirmedBy || policy.confirmed_by || null) : null,
+    updated_at: Date.now(),
+  };
+  saveConfirmLedger(ledger);
+}
+
+function seedConfirmLedgerFromPolicies(policies) {
+  const ledger = loadConfirmLedger();
+  let changed = false;
+  (policies || []).forEach(policy => {
+    if (!policy || !policy.id || policy.status !== 'confirmed') return;
+    const old = ledger[policy.id] || {};
+    const policyTs = getTsNumber(policy.confirmed_at) || Date.now();
+    const oldTs = getTsNumber(old.updated_at || old.confirmed_at);
+    if (old.status !== 'confirmed' || policyTs >= oldTs) {
+      ledger[policy.id] = {
+        status: 'confirmed',
+        file_name: policy.file_name || '',
+        confirmed_at: policy.confirmed_at || policyTs,
+        confirmed_by: policy.confirmed_by || null,
+        updated_at: Math.max(policyTs, Date.now()),
+      };
+      changed = true;
+    }
+  });
+  if (changed) saveConfirmLedger(ledger);
+}
+
+seedConfirmLedgerFromPolicies(appState.policies);
+
+function applyConfirmLedgerFallback(policy, statusEntry) {
+  if (!policy || !policy.id) return 0;
+  const ledgerEntry = loadConfirmLedger()[policy.id];
+  if (!ledgerEntry || ledgerEntry.status !== 'confirmed') return 0;
+  const serverConfirmed = statusEntry && statusEntry.status === 'confirmed';
+  if (serverConfirmed) return 0;
+  const serverTs = getTsNumber(statusEntry && (statusEntry.updated_at || statusEntry.confirmed_at));
+  const ledgerTs = getTsNumber(ledgerEntry.updated_at || ledgerEntry.confirmed_at);
+  if (serverTs && ledgerTs && serverTs > ledgerTs) return 0;
+
+  let changed = 0;
+  if (policy.status !== 'confirmed') {
+    policy.status = 'confirmed';
+    changed++;
+  }
+  if (ledgerEntry.confirmed_at && policy.confirmed_at !== formatSyncTs(ledgerEntry.confirmed_at)) {
+    policy.confirmed_at = formatSyncTs(ledgerEntry.confirmed_at);
+    changed++;
+  }
+  if (ledgerEntry.confirmed_by && JSON.stringify(policy.confirmed_by || null) !== JSON.stringify(ledgerEntry.confirmed_by)) {
+    policy.confirmed_by = ledgerEntry.confirmed_by;
+    changed++;
+  }
+  if (changed) policy._needsConfirmRestore = true;
+  return changed;
 }
 
 // ===== RENDER =====
@@ -8007,6 +8095,7 @@ async function confirmFile(id) {
       p.confirmed_at = result.confirmedAt || new Date().toLocaleString('zh-CN');
       p.confirmed_by = result.confirmedBy || p.confirmed_by || null;
       delete p._syncing;
+      rememberConfirmState(p, 'confirmed', p.confirmed_at, p.confirmed_by);
       saveState();
       showToast(`「${p.file_name}」已确认并同步到${syncTargetLabel(result)}`, 'success');
       render();
@@ -8018,7 +8107,7 @@ async function confirmFile(id) {
           const next = appState.policies.find(x => x.status !== 'confirmed' && x.id !== p.id);
           const siblings = appState.policies.filter(x => normalizeCategory(x.category) === normalizeCategory(p.category) && x.subcategory === p.subcategory && x.status !== 'confirmed' && x.id !== p.id);
           const target = siblings[0] || next;
-          if (target) { appState.currentFileId = target.id; render(); }
+          if (target) { appState.currentFileId = target.id; saveState(); render(); }
         }, 600);
       }
     } else if (result.needAuth) {
@@ -8064,6 +8153,7 @@ async function reopenFile(id) {
       p.confirmed_at = null;
       p.confirmed_by = null;
       delete p._syncing;
+      rememberConfirmState(p, 'reviewing', null, null);
       saveState();
       render();
       showToast(`「${p.file_name}」已恢复为待确认并同步到${syncTargetLabel(result)}`, 'success');
@@ -8494,6 +8584,32 @@ function restoreReviewStateToServer(policy) {
     });
 }
 
+function restoreConfirmStateToServer(policy) {
+  if (!policy || !policy._needsConfirmRestore || policy._confirmRestoreInFlight) return;
+  policy._confirmRestoreInFlight = true;
+  fetch('/api/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recordId: policy.id, fileName: policy.file_name }),
+  })
+    .then(resp => resp.json())
+    .then(result => {
+      if (result && result.success) {
+        policy.confirmed_at = result.confirmedAt || policy.confirmed_at;
+        policy.confirmed_by = result.confirmedBy || policy.confirmed_by || null;
+        rememberConfirmState(policy, 'confirmed', policy.confirmed_at, policy.confirmed_by);
+        delete policy._needsConfirmRestore;
+        delete policy._confirmRestoreInFlight;
+        saveState();
+      } else {
+        policy._confirmRestoreInFlight = false;
+      }
+    })
+    .catch(() => {
+      policy._confirmRestoreInFlight = false;
+    });
+}
+
 async function syncStatusesFromServer(showTip) {
   try {
     const resp = await fetch('/api/statuses', { cache: 'no-store' });
@@ -8550,6 +8666,7 @@ async function syncStatusesFromServer(showTip) {
         changed++;
       }
       if (s.status === 'confirmed') {
+        rememberConfirmState(p, 'confirmed', s.confirmed_at || p.confirmed_at, s.confirmed_by || p.confirmed_by || null);
         if (s.confirmed_by) {
           const nextBy = typeof s.confirmed_by === 'object' ? s.confirmed_by : { name: normalizeFeishuValue(s.confirmed_by) };
           if (JSON.stringify(p.confirmed_by || null) !== JSON.stringify(nextBy)) {
@@ -8565,13 +8682,15 @@ async function syncStatusesFromServer(showTip) {
           }
         }
       } else {
-        if (p.confirmed_at || p.confirmed_by) {
+        changed += applyConfirmLedgerFallback(p, s);
+        if (p.status !== 'confirmed' && (p.confirmed_at || p.confirmed_by)) {
           p.confirmed_at = null;
           p.confirmed_by = null;
           changed++;
         }
       }
       changed += applyFeishuFieldsToPolicy(p, s.fields);
+      if (p._needsConfirmRestore) restoreConfirmStateToServer(p);
       if (p._needsReviewStateRestore) restoreReviewStateToServer(p);
     });
     if (appState.currentFileId && !appState.policies.some(p => p.id === appState.currentFileId)) {

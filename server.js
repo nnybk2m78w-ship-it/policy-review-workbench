@@ -531,6 +531,7 @@ async function listLocalRecordStatuses() {
       problem_marks: fields['问题标记'] || null,
       fields,
       storage: activeReviewStorageName(),
+      updated_at: localRecord && localRecord.updated_at ? localRecord.updated_at : null,
     };
   });
   Object.entries(store.records).forEach(([recordId, localRecord]) => {
@@ -554,6 +555,7 @@ async function listLocalRecordStatuses() {
       problem_marks: fields['问题标记'] || null,
       fields,
       storage: activeReviewStorageName(),
+      updated_at: localRecord.updated_at || null,
     };
   });
   return statuses;
