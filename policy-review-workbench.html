@@ -5817,10 +5817,6 @@ const REVIEW_POLICIES = [
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
 const STORAGE_KEY = 'policy_review_state_batch_20260910_69';
 const CONFIRM_LEDGER_KEY = 'policy_review_confirm_ledger_v1';
-try {
-  localStorage.removeItem('policy_review_state');
-  localStorage.removeItem('policy_review_state_v2');
-} catch(e) {}
 
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
@@ -6399,6 +6395,20 @@ function seedConfirmLedgerFromPolicies(policies) {
   if (changed) saveConfirmLedger(ledger);
 }
 
+function seedConfirmLedgerFromLocalStateKeys() {
+  try {
+    const batches = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('policy_review_state')) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) || '{}');
+      if (Array.isArray(parsed.policies)) batches.push(parsed.policies);
+    }
+    batches.forEach(seedConfirmLedgerFromPolicies);
+  } catch (e) {}
+}
+
+seedConfirmLedgerFromLocalStateKeys();
 seedConfirmLedgerFromPolicies(appState.policies);
 
 function applyConfirmLedgerFallback(policy, statusEntry) {
