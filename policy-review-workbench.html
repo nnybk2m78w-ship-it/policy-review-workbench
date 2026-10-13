@@ -5929,6 +5929,7 @@ const BASE_PROMPT_FIELDS = {
   '旗舰店券类': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','coupon_resource_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','benefit_name','benefit_usage_rules','not_applicable_flight_routes','manual_confirm_fields']),
   '次卡': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','usage_times','travel_class','product_show','json_count','use_limit','use_begin','wether_depart_today','refund_time','price_groups_summary','manual_confirm_fields']),
 };
+const FIELD_FILE_TYPES = Object.freeze(['次卡', '旗舰店code', '旗舰店券类', '自营']);
 
 function normalizeFeishuValue(value) {
   if (value === null || value === undefined) return '';
@@ -5940,6 +5941,14 @@ function normalizeFeishuValue(value) {
     return JSON.stringify(value);
   }
   return String(value).trim();
+}
+
+function syncTargetLabel(result) {
+  return result && result.savedToFeishu === false ? '审核记录' : '飞书';
+}
+
+function syncFailureLabel(result) {
+  return syncTargetLabel(result) === '审核记录' ? '审核记录保存失败' : '飞书同步失败';
 }
 
 function parseJsonText(raw) {
@@ -6761,7 +6770,7 @@ function renderProblems(main) {
   let html = '<div class="problems-view">';
   html += `<div class="problems-header">
     <h3>解析问题清单 <span class="prob-total">${problemPolicies.length} 个文件</span></h3>
-    <span class="problems-hint">点击文件可跳转审核 · 问题已同步到飞书表格「问题标记」字段</span>
+    <span class="problems-hint">点击文件可跳转审核 · 问题会同步到当前审核记录</span>
   </div>`;
 
   problemPolicies.forEach(p => {
@@ -7534,7 +7543,7 @@ async function submitProblem() {
 	  render();
 	  showToast('已标记问题', 'success');
 
-  // 同步到飞书
+  // 同步到服务端审核记录
   try {
     const resp = await fetch('/api/mark-problem', {
       method: 'POST',
@@ -7546,7 +7555,7 @@ async function submitProblem() {
 	    });
 	    const result = await resp.json();
 	    if (result.success) {
-	      showToast('问题已同步到飞书', 'success');
+	      showToast(`问题已同步到${syncTargetLabel(result)}`, 'success');
 	      syncStatusesFromServer(false);
 	    } else if (result.needAuth) {
 	      p.problems = p.problems.filter(x => x !== problemEntry);
@@ -7558,14 +7567,14 @@ async function submitProblem() {
 	      p.problems = p.problems.filter(x => x !== problemEntry);
 	      saveState();
 	      render();
-	      showInlineSyncBar('问题同步失败: ' + (result.error || '未知错误'),
+	      showInlineSyncBar(`${syncFailureLabel(result)}: ` + (result.error || '未知错误'),
 	        `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
 	    }
 	  } catch (err) {
 	    p.problems = p.problems.filter(x => x !== problemEntry);
 	    saveState();
 	    render();
-	    showInlineSyncBar('飞书同步失败，本次问题标记未生效',
+	    showInlineSyncBar('审核记录同步失败，本次问题标记未生效',
 	      `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
 	  }
 	}
@@ -7915,7 +7924,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
   render();
   showToast('字段已保存，后台同步中', 'success');
 
-  // 后台同步到飞书。页面先完成修改，慢任务（自动矫正/知识图谱）由后端继续处理。
+  // 后台同步到服务端审核记录。页面先完成修改，慢任务（自动矫正/知识图谱）由后端继续处理。
   enqueueFieldSave(() => fetch('/api/save-field', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -7941,18 +7950,18 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
     .then(resp => resp.json())
     .then(result => {
       if (result.success) {
-        showToast('字段已同步到飞书，后台继续沉淀规则', 'success', 2600);
+        showToast(`字段已同步到${syncTargetLabel(result)}，后台继续沉淀规则`, 'success', 2600);
         syncStatusesFromServer(false);
       } else if (result.needAuth) {
         showInlineSyncBar('飞书授权已失效，页面已保留修改，请授权后刷新核对',
           `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
       } else {
-        showInlineSyncBar('飞书同步失败，页面已保留修改: ' + (result.error || '未知错误'),
+        showInlineSyncBar(`${syncFailureLabel(result)}，页面已保留修改: ` + (result.error || '未知错误'),
           `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
       }
     })
     .catch(() => {
-      showInlineSyncBar('飞书同步失败，页面已保留修改，请稍后刷新核对',
+      showInlineSyncBar('审核记录同步失败，页面已保留修改，请稍后刷新核对',
         `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
     });
 	}
@@ -7982,7 +7991,7 @@ async function confirmFile(id) {
   }
 
   p._syncing = true;
-  showToast('正在同步到飞书...', '');
+  showToast('正在同步审核记录...', '');
   render();
   
   try {
@@ -7999,7 +8008,7 @@ async function confirmFile(id) {
       p.confirmed_by = result.confirmedBy || p.confirmed_by || null;
       delete p._syncing;
       saveState();
-      showToast(`「${p.file_name}」已确认并同步到飞书`, 'success');
+      showToast(`「${p.file_name}」已确认并同步到${syncTargetLabel(result)}`, 'success');
       render();
       syncStatusesFromServer(false);
 
@@ -8026,7 +8035,7 @@ async function confirmFile(id) {
     }
   } catch (err) {
     delete p._syncing;
-    showInlineSyncBar('飞书同步失败，本次确认未生效，请稍后重试',
+    showInlineSyncBar('审核记录同步失败，本次确认未生效，请稍后重试',
       `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
     showToast('确认失败，页面未改为已确认', 'error');
     render();
@@ -8057,7 +8066,7 @@ async function reopenFile(id) {
       delete p._syncing;
       saveState();
       render();
-      showToast(`「${p.file_name}」已恢复为待确认并同步到飞书`, 'success');
+      showToast(`「${p.file_name}」已恢复为待确认并同步到${syncTargetLabel(result)}`, 'success');
       syncStatusesFromServer(false);
     } else if (result.needAuth) {
       delete p._syncing;
@@ -8073,7 +8082,7 @@ async function reopenFile(id) {
     }
   } catch (err) {
     delete p._syncing;
-    showInlineSyncBar('飞书同步失败，本次恢复未生效，请稍后重试',
+	    showInlineSyncBar('审核记录同步失败，本次恢复未生效，请稍后重试',
       `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`, 'error');
     showToast('恢复失败，页面未改为待确认', 'error');
     render();
@@ -8475,7 +8484,7 @@ function restoreReviewStateToServer(policy) {
     .then(result => {
       if (result && result.success) {
         delete policy._needsReviewStateRestore;
-        showToast(result.restored ? '已恢复旧修改/备注并同步到飞书' : '旧修改/备注已在飞书中，无需恢复', 'success', 2600);
+        showToast(result.restored ? `已恢复旧修改/备注并同步到${syncTargetLabel(result)}` : '旧修改/备注已在审核记录中，无需恢复', 'success', 2600);
       } else {
         policy._restoreInFlight = false;
       }
@@ -8496,7 +8505,7 @@ async function syncStatusesFromServer(showTip) {
     const serverIds = new Set(statusEntries.map(([id]) => id));
     if (!serverIds.size) {
       if (REVIEW_POLICIES.length > 0) {
-        if (showTip) showToast('飞书暂未返回记录，已保留当前静态解析队列', 'error', 2600);
+        if (showTip) showToast('审核记录暂未返回文件，已保留当前静态解析队列', 'error', 2600);
         return false;
       }
       if (!appState.serverSynced || appState.policies.length || appState.currentFileId) {
@@ -8505,7 +8514,7 @@ async function syncStatusesFromServer(showTip) {
         appState.currentFileId = null;
         saveState();
         render();
-        if (showTip) showToast('飞书记录已清空，页面队列已同步清空', 'success');
+        if (showTip) showToast('审核记录已清空，页面队列已同步清空', 'success');
         return true;
       }
       return true;
@@ -8576,7 +8585,7 @@ async function syncStatusesFromServer(showTip) {
     if (changed > 0) {
       saveState();
       render();
-      if (showTip) showToast(`已从飞书同步 ${changed} 条最新状态`, 'success');
+      if (showTip) showToast(`已同步 ${changed} 条最新审核状态`, 'success');
     }
     return true;
   } catch (e) {
