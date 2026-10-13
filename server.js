@@ -22,9 +22,10 @@ const AUTO_CORRECTION_LIMIT = parseInt(process.env.AUTO_CORRECTION_LIMIT || '20'
 const FEISHU_OAUTH_SCOPES = process.env.FEISHU_OAUTH_SCOPES || 'offline_access bitable:app base:record:read base:record:write';
 const LOCAL_REVIEW_STORE_FILE = process.env.LOCAL_REVIEW_STORE_FILE || path.join(__dirname, '.review_state_store.json');
 const LOCAL_REVIEW_MODE = process.env.LOCAL_REVIEW_MODE !== 'false';
+const FEISHU_FALLBACK_TO_LOCAL = process.env.FEISHU_FALLBACK_TO_LOCAL === 'true';
 const REVIEW_REDIS_URL = process.env.REVIEW_REDIS_URL || process.env.REDIS_URL || '';
 const REVIEW_REDIS_KEY = process.env.REVIEW_REDIS_KEY || 'policy-review-workbench:review-state';
-const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || (REVIEW_REDIS_URL ? 'redis' : 'github')).toLowerCase();
+const REVIEW_STORAGE_MODE = (process.env.REVIEW_STORAGE_MODE || 'feishu').toLowerCase();
 const REVIEW_GITHUB_TOKEN = process.env.REVIEW_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || '';
 const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
@@ -209,6 +210,10 @@ function saveReviewStore(store) {
 
 function useFeishuStorage() {
   return REVIEW_STORAGE_MODE === 'feishu';
+}
+
+function allowFeishuLocalFallback() {
+  return useFeishuStorage() && LOCAL_REVIEW_MODE && FEISHU_FALLBACK_TO_LOCAL;
 }
 
 function useRedisStorage() {
@@ -729,6 +734,15 @@ function isAuthOrPermissionError(err) {
     msg.includes('Unauthorized') ||
     msg.includes('permission') ||
     msg.includes('999916');
+}
+
+function sendFeishuAuthRequired(res, err) {
+  return res.status(401).json({
+    success: false,
+    error: '需要飞书授权',
+    needAuth: true,
+    detail: err && err.message ? err.message : String(err || ''),
+  });
 }
 
 // ---- 获取 app_access_token ----
@@ -1955,7 +1969,7 @@ app.get('/api/me', async (req, res) => {
       return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
     }
     if (!state.userRefreshToken) {
-      if (LOCAL_REVIEW_MODE) {
+      if (allowFeishuLocalFallback()) {
         return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
       }
       return res.json({ authorized: false, user: null });
@@ -1964,7 +1978,7 @@ app.get('/api/me', async (req, res) => {
     res.json({ authorized: true, user });
   } catch (err) {
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
-      if (LOCAL_REVIEW_MODE) {
+      if (allowFeishuLocalFallback()) {
         return res.json({ authorized: true, storage: activeReviewStorageName(), feishuAuthorized: false, user: fallbackUser() });
       }
       res.json({ authorized: false, user: null });
@@ -2036,7 +2050,7 @@ app.post('/api/confirm', async (req, res) => {
     });
   } catch (err) {
     console.error(`[确认] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const saved = await saveLocalConfirm(recordId, fileName, fallbackUser());
       console.log(`[确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
       res.json({
@@ -2046,6 +2060,8 @@ app.post('/api/confirm', async (req, res) => {
         savedToFeishu: false,
         storage: activeReviewStorageName(),
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2085,10 +2101,12 @@ app.post('/api/reopen', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error(`[恢复待确认] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       await saveLocalReopen(recordId, fileName);
       console.log(`[恢复待确认] ✓ 已写入本地审核记录 ${fileName || recordId}`);
       res.json({ success: true, savedToFeishu: false, storage: activeReviewStorageName() });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2279,7 +2297,7 @@ app.post('/api/save-field', async (req, res) => {
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const fieldKey = requestedFieldKey || FIELD_LABEL_TO_KEY[fieldLabel] || fieldLabel;
       const saved = await saveLocalFieldChange({
         recordId,
@@ -2292,13 +2310,15 @@ app.post('/api/save-field', async (req, res) => {
         fieldDefinition,
       });
       console.log(`[保存字段] ✓ 已写入本地审核记录 ${fieldLabel || fieldKey || ''}`);
-      res.json({
+      return res.json({
         success: true,
         historyCount: saved.historyCount,
         savedToFeishu: false,
         storage: activeReviewStorageName(),
         background: { autoCorrection: false, knowledge: false },
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2343,10 +2363,12 @@ app.post('/api/apply-field-definition', async (req, res) => {
     res.json({ success: true, updated, fileType: targetType, sourceRecordId: sourceRecordId || '' });
   } catch (err) {
     console.error(`[字段定义] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const updated = await saveLocalFieldDefinition(fieldKey, fieldDefinition);
       console.log(`[字段定义] ✓ 已写入本地审核记录 ${fieldKey} ${updated} 条`);
-      res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: activeReviewStorageName() });
+      return res.json({ success: true, updated, fileType: fieldDefinition.file_type, sourceRecordId: sourceRecordId || '', savedToFeishu: false, storage: activeReviewStorageName() });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2415,10 +2437,12 @@ app.post('/api/mark-problem', async (req, res) => {
     });
   } catch (err) {
     console.error(`[标记问题] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const saved = await saveLocalProblem(recordId, entry);
       console.log(`[标记问题] ✓ 已写入本地审核记录 ${recordId} 问题 ${saved.count} 条`);
       res.json({ success: true, count: saved.count, savedToFeishu: false, storage: activeReviewStorageName() });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2485,7 +2509,7 @@ app.get('/api/statuses', async (req, res) => {
     res.json({ success: true, count: Object.keys(statuses).length, statuses, storage: 'feishu' });
   } catch (err) {
     console.error(`[状态同步] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const statuses = await listLocalRecordStatuses();
       res.json({
         success: true,
@@ -2494,6 +2518,8 @@ app.get('/api/statuses', async (req, res) => {
         storage: activeReviewStorageName(),
         warning: '飞书不可用，当前使用站点本地审核记录',
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2616,6 +2642,8 @@ app.post('/api/restore-review-state', async (req, res) => {
     console.error(`[恢复审核状态] ✗ ${err.message}`);
     if (err.message === 'NOT_AUTHORIZED' || err.message === 'REFRESH_TOKEN_EXPIRED') {
       res.status(401).json({ success: false, error: '需要飞书授权', needAuth: true });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2692,9 +2720,9 @@ app.post('/api/admin/clear-records', async (req, res) => {
     });
   } catch (err) {
     console.error(`[清空记录] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       await clearLocalReviewRecords();
-      res.json({
+      return res.json({
         success: true,
         deleted: 0,
         storage: activeReviewStorageName(),
@@ -2702,6 +2730,8 @@ app.post('/api/admin/clear-records', async (req, res) => {
         remaining_estimate: 0,
         note: '飞书不可用，已清空站点本地审核记录并隐藏静态批次',
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2935,19 +2965,21 @@ app.post('/api/admin/import-records', async (req, res) => {
     res.json({ success: true, count: created.length, records: created });
   } catch (err) {
     console.error(`[导入记录] ✗ ${err.message}`);
-    if (LOCAL_REVIEW_MODE && isAuthOrPermissionError(err)) {
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
       const records = Array.isArray(req.body.records) ? req.body.records : [];
       if (!records.length) {
         return res.status(400).json({ success: false, error: 'records 为空' });
       }
       const imported = await saveLocalImportedRecords(records);
-      res.json({
+      return res.json({
         success: true,
         count: imported.length,
         records: imported,
         storage: activeReviewStorageName(),
         savedToFeishu: false,
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
