@@ -1888,10 +1888,17 @@ app.use((req, res, next) => {
 });
 
 // ---- 静态文件 ----
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+    }
+  },
+}));
 
 // 首页
 app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.sendFile(path.join(__dirname, 'policy-review-workbench.html'));
 });
 

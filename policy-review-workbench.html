@@ -5817,6 +5817,14 @@ const REVIEW_POLICIES = [
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
 const STORAGE_KEY = 'policy_review_state_batch_20260910_69';
 const CONFIRM_LEDGER_KEY = 'policy_review_confirm_ledger_v1';
+try {
+  const params = new URLSearchParams(window.location.search || '');
+  if (params.get('forceFeishu') === '1' || params.get('clearCache') === '1') {
+    Object.keys(localStorage).forEach(key => {
+      if (key && key.startsWith('policy_review_state')) localStorage.removeItem(key);
+    });
+  }
+} catch(e) {}
 
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
@@ -8628,6 +8636,22 @@ async function syncStatusesFromServer(showTip) {
     if (!result.success || !result.statuses) return false;
     let changed = 0;
     const statusEntries = Object.entries(result.statuses);
+    if (result.storage === 'feishu') {
+      const currentId = appState.currentFileId;
+      appState.policies = statusEntries.map(([recordId, statusEntry]) => policyFromFeishuStatus(recordId, statusEntry));
+      appState.serverSynced = true;
+      if (currentId && appState.policies.some(p => p.id === currentId)) {
+        appState.currentFileId = currentId;
+      } else {
+        appState.currentFileId = appState.policies[0] ? appState.policies[0].id : null;
+      }
+      propagateFieldDefinitionsByFileType();
+      ensureVisibleSidebarCategory();
+      saveState();
+      render();
+      if (showTip) showToast(`已从飞书同步 ${appState.policies.length} 份文件`, 'success');
+      return true;
+    }
     const serverIds = new Set(statusEntries.map(([id]) => id));
     if (!serverIds.size) {
       if (REVIEW_POLICIES.length > 0) {
