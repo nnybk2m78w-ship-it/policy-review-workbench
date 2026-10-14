@@ -1031,7 +1031,7 @@ function parseChangeHistory(raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
     } catch (e) { /* 不是 JSON，按文本行解析 */ }
-    return raw.split('\n').filter(Boolean);
+    return splitChangeHistoryEntries(raw);
   }
   if (Array.isArray(raw)) return raw;
   return [];
@@ -1047,10 +1047,66 @@ function formatChangeHistory(entries) {
     .join('\n');
 }
 
+function normalizeHistoryEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === 'string') {
+    const text = entry.trim();
+    if (!text) return null;
+    const match = text.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*([\s\S]*?)\s*→\s*([\s\S]*?)(?:\s*\|\s*原因[:：]\s*([\s\S]*))?$/);
+    if (!match) return null;
+    const fieldLabel = match[3].trim();
+    const field = canonicalizeFieldName(fieldLabel);
+    return {
+      time: match[1].trim(),
+      user: match[2].trim(),
+      fieldLabel,
+      field,
+      oldValue: (match[4] || '').trim(),
+      newValue: (match[5] || '').trim(),
+      reason: (match[6] || '').trim(),
+    };
+  }
+  if (typeof entry === 'object') {
+    const fieldLabel = entry.fieldLabel || entry.field_label || entry.label || entry.field || '';
+    const field = canonicalizeFieldName(entry.field || fieldLabel);
+    return {
+      time: entry.time || entry.created_at || entry.updated_at || '',
+      user: entry.user || entry.created_by || entry.operator || '',
+      fieldLabel: fieldLabel || KEY_LABELS[field] || field,
+      field,
+      oldValue: entry.oldValue !== undefined ? entry.oldValue : (entry.old_value !== undefined ? entry.old_value : ''),
+      newValue: entry.newValue !== undefined ? entry.newValue : (entry.new_value !== undefined ? entry.new_value : ''),
+      reason: entry.reason || entry.desc || '',
+    };
+  }
+  return null;
+}
+
 function appendProblemLine(rawProblemMarks, line) {
   const lines = normalizeFeishuValue(rawProblemMarks).split('\n').filter(Boolean);
   if (line && !lines.includes(line)) lines.push(line);
   return lines.join('\n');
+}
+
+function splitChangeHistoryEntries(raw) {
+  const lines = normalizeFeishuValue(raw).split('\n');
+  const entries = [];
+  let current = '';
+  const entryStart = /^\[\d{4}[-/]\d{1,2}[-/]\d{1,2}[^\]]*\]/;
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (entryStart.test(trimmed)) {
+      if (current) entries.push(current);
+      current = trimmed;
+    } else if (current) {
+      current += `\n${trimmed}`;
+    } else {
+      current = trimmed;
+    }
+  });
+  if (current) entries.push(current);
+  return entries;
 }
 
 function formatProblemMarks(entries) {
@@ -1631,6 +1687,98 @@ function clearManualConfirmByConcreteValues(parsed) {
   return changed;
 }
 
+function applyChangeHistoryToParsed(parsed, rawHistory) {
+  if (!parsed) return [];
+  const changes = [];
+  parseChangeHistory(rawHistory)
+    .map(normalizeHistoryEntry)
+    .filter(Boolean)
+    .forEach(entry => {
+      const fieldKey = canonicalizeFieldName(entry.field || entry.fieldLabel || '');
+      if (!fieldKey || fieldKey === 'manual_confirm_fields' || fieldKey === FIELD_DEFINITIONS_KEY) return;
+      const fieldLabel = entry.fieldLabel || KEY_LABELS[fieldKey] || fieldKey;
+      const before = getParsedValue(parsed, fieldKey);
+      if (/^删除字段[:：]/.test(entry.reason || '')) {
+        if (deleteParsedField(parsed, fieldKey)) {
+          changes.push({
+            key: fieldKey,
+            label: fieldLabel,
+            before,
+            after: '',
+            reason: '按人工删除记录回放到解析JSON',
+          });
+        }
+        return;
+      }
+      if (!hasConcreteFieldValue(entry.newValue)) return;
+      if (setParsedField(parsed, fieldKey, entry.newValue)) {
+        changes.push({
+          key: fieldKey,
+          label: fieldLabel,
+          before,
+          after: entry.newValue,
+          reason: '按人工修改历史回放到解析JSON',
+        });
+      }
+      clearParsedManualConfirmForField(parsed, fieldKey, fieldLabel);
+    });
+  if (cleanParsedManualConfirm(parsed)) {
+    changes.push({
+      key: 'manual_confirm_fields',
+      label: KEY_LABELS.manual_confirm_fields,
+      before: '',
+      after: getParsedValue(parsed, 'manual_confirm_fields'),
+      reason: '清理人工确认项中的无效占位',
+    });
+  }
+  return changes;
+}
+
+function repairConfirmedManualResidues(fields, parsed) {
+  if (!parsed || normalizeFeishuValue(fields && fields['审核状态']) !== '已确认') return [];
+  const changes = [];
+  const text = getSourceTextForLearning(fields, parsed);
+  const replaceManualValue = (key, after, reason) => {
+    const before = getParsedValue(parsed, key);
+    if (!isBlankish(before) && !/人工确认|需人工确认|未提取|未识别|无法确认/.test(before)) return;
+    if (setParsedField(parsed, key, after)) {
+      changes.push({ key, label: KEY_LABELS[key] || key, before, after, reason });
+      clearParsedManualConfirmForField(parsed, key, KEY_LABELS[key] || key);
+    }
+  };
+
+  const docRestriction = getParsedValue(parsed, 'document_restrictions');
+  if (/证件类型需人工确认|需人工确认/.test(docRestriction) && /学生|青年|长者|银发|年龄|周岁/.test(text)) {
+    const base = normalizeFeishuValue(docRestriction)
+      .split(/[；;\n]+/)
+      .map(x => x.trim())
+      .filter(Boolean)
+      .filter(x => !/证件类型需人工确认|需人工确认/.test(x));
+    if (!base.some(x => /身份证|居民身份证/.test(x))) base.push('居民身份证');
+    const after = base.join('；') || '居民身份证';
+    const before = docRestriction;
+    if (setParsedField(parsed, 'document_restrictions', after)) {
+      changes.push({
+        key: 'document_restrictions',
+        label: KEY_LABELS.document_restrictions,
+        before,
+        after,
+        reason: '已确认年龄/学生类产品按规则补齐证件限制为居民身份证',
+      });
+      clearParsedManualConfirmForField(parsed, 'document_restrictions', KEY_LABELS.document_restrictions);
+    }
+  }
+
+  ['booking_cabin', 'od', 'discount_per'].forEach(key => {
+    const before = getParsedValue(parsed, key);
+    if (/需人工确认|人工确认/.test(before) && /详见附件|见附件|以附件为准/.test(before + '\n' + text)) {
+      replaceManualValue(key, '详见附件', '已确认记录中该字段原文指向附件，归一为“详见附件”而非人工确认占位');
+    }
+  });
+
+  return changes;
+}
+
 function repairDateRangeOrder(value) {
   const text = normalizeFeishuValue(value);
   const m = text.match(/^(20\d{2})-(\d{2})-(\d{2})至(20\d{2})-(\d{2})-(\d{2})$/);
@@ -1833,6 +1981,9 @@ function applyCurrentLearningToParsed(fields, parsed) {
     if (normalizeFeishuValue(before) === normalizeFeishuValue(after)) return;
     changes.push({ key, label: KEY_LABELS[key] || key, before: normalizeFeishuValue(before), after: normalizeFeishuValue(after), reason });
   };
+
+  applyChangeHistoryToParsed(parsed, fields && fields['修改历史']).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
+  repairConfirmedManualResidues(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
   parsedObjects(parsed).forEach(obj => {
     const rawManual = obj.manual_confirm_fields;
@@ -3285,12 +3436,21 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
       Object.entries(store.records || {}).forEach(([recordId, record]) => {
         const before = normalizeFeishuValue(record.fields && record.fields['人工确认项']);
         const after = cleanManualConfirmText(before);
+        const parsed = record.dataPatch || null;
+        const jsonChanges = [
+          ...applyChangeHistoryToParsed(parsed, record.fields && record.fields['修改历史']),
+          ...repairConfirmedManualResidues(record.fields, parsed),
+        ];
         if (before !== after) {
           record.fields = record.fields || {};
           record.fields['人工确认项'] = after;
           if (record.dataPatch) record.dataPatch.manual_confirm_fields = after;
           record.updated_at = new Date().toISOString();
-          changedRecords.push({ recordId, fileName: normalizeFeishuValue(record.fields['文件名称']), before, after });
+        }
+        if (jsonChanges.length && parsed) record.dataPatch = parsed;
+        if (before !== after || jsonChanges.length) {
+          record.updated_at = new Date().toISOString();
+          changedRecords.push({ recordId, fileName: normalizeFeishuValue(record.fields && record.fields['文件名称']), before, after, jsonChanges: jsonChanges.length });
         }
       });
       appendReviewEvent(store, 'cleanup-manual-confirm', '', { changed: changedRecords.length });
@@ -3313,7 +3473,12 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
 
       const jsonFieldName = getJsonFieldName(item.fields);
       const parsed = parseJsonField(jsonFieldName ? item.fields[jsonFieldName] : null);
-      if (parsed && jsonFieldName && tableFields.includes(jsonFieldName) && cleanParsedManualConfirm(parsed)) {
+      const jsonChanges = parsed ? [
+        ...applyChangeHistoryToParsed(parsed, item.fields['修改历史']),
+        ...repairConfirmedManualResidues(item.fields, parsed),
+      ] : [];
+      const cleanedJson = parsed ? cleanParsedManualConfirm(parsed) : false;
+      if (parsed && jsonFieldName && tableFields.includes(jsonFieldName) && (jsonChanges.length || cleanedJson)) {
         updates[jsonFieldName] = stringifyJsonField(parsed);
       }
 
@@ -3327,6 +3492,7 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
         fileName: getFileName(item.fields, parsed),
         before,
         after,
+        jsonChanges: jsonChanges.length,
       });
       return { success: true, recordId: item.recordId };
     });

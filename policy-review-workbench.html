@@ -6212,12 +6212,33 @@ function parseProblemMarks(raw) {
     });
 }
 
+function splitChangeHistoryEntries(raw) {
+  const lines = normalizeFeishuValue(raw).split('\n');
+  const entries = [];
+  let current = '';
+  const entryStart = /^\[\d{4}[-/]\d{1,2}[-/]\d{1,2}[^\]]*\]/;
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (entryStart.test(trimmed)) {
+      if (current) entries.push(current);
+      current = trimmed;
+    } else if (current) {
+      current += `\n${trimmed}`;
+    } else {
+      current = trimmed;
+    }
+  });
+  if (current) entries.push(current);
+  return entries;
+}
+
 function normalizeHistoryEntry(entry) {
   if (!entry) return null;
   if (typeof entry === 'string') {
     const text = entry.trim();
     if (!text) return null;
-    const match = text.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*(.*?)\s*→\s*(.*?)(?:\s*\|\s*原因[:：]\s*(.*))?$/);
+    const match = text.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*([\s\S]*?)\s*→\s*([\s\S]*?)(?:\s*\|\s*原因[:：]\s*([\s\S]*))?$/);
     if (match) {
       const fieldLabel = match[3].trim();
       return {
@@ -6267,10 +6288,7 @@ function parseChangeHistoryText(raw) {
     if (Array.isArray(parsed)) return parseChangeHistoryText(parsed);
   } catch (e) {}
 
-  return text
-    .split(/\n+/)
-    .map(line => line.trim())
-    .filter(Boolean)
+  return splitChangeHistoryEntries(text)
     .map(normalizeHistoryEntry)
     .filter(Boolean);
 }
