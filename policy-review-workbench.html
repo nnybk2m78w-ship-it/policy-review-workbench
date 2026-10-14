@@ -5829,6 +5829,56 @@ try {
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const CUSTOM_FIELD_KEY_PREFIX = 'custom_';
+
+function requestJson(url, options = {}) {
+  const method = options.method || 'GET';
+  const headers = options.headers || {};
+  const body = options.body;
+  if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+    return window.fetch(url, { ...options, cache: options.cache || 'no-store' })
+      .then(async resp => {
+        const text = await resp.text();
+        let data = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          data = { success: false, error: text || e.message };
+        }
+        if (!resp.ok && data && data.success === undefined) {
+          data.success = false;
+          data.status = resp.status;
+        }
+        return data;
+      });
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url, true);
+      Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState !== 4) return;
+        let data = {};
+        try {
+          data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+        } catch (e) {
+          data = { success: false, error: xhr.responseText || e.message };
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          data.success = false;
+          data.status = xhr.status;
+        }
+        resolve(data);
+      };
+      xhr.onerror = () => reject(new Error('网络请求失败'));
+      xhr.send(body || null);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 const LABELS = {
   scenario: '解析场景',
   business_line: '业务线',
@@ -6089,7 +6139,7 @@ function applyFieldDefinitionToFileType(field, def) {
 
 async function syncFieldDefinitionToServer(policyId, field, def) {
   try {
-    await fetch('/api/apply-field-definition', {
+    await requestJson('/api/apply-field-definition', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sourceRecordId: policyId, fieldKey: field, fieldDefinition: def }),
@@ -7663,7 +7713,7 @@ async function submitProblem() {
 
   // 同步到服务端审核记录
   try {
-    const resp = await fetch('/api/mark-problem', {
+    const result = await requestJson('/api/mark-problem', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -7671,7 +7721,6 @@ async function submitProblem() {
 	        entry: problemEntry,
 	      }),
 	    });
-	    const result = await resp.json();
 	    if (result.success) {
 	      showToast(`问题已同步到${syncTargetLabel(result)}`, 'success');
 	      syncStatusesFromServer(false);
@@ -8043,7 +8092,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
   showToast('字段已保存，后台同步中', 'success');
 
   // 后台同步到服务端审核记录。页面先完成修改，慢任务（自动矫正/知识图谱）由后端继续处理。
-  enqueueFieldSave(() => fetch('/api/save-field', {
+  enqueueFieldSave(() => requestJson('/api/save-field', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -8065,7 +8114,6 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
         },
       }),
     }))
-    .then(resp => resp.json())
     .then(result => {
       if (result.success) {
         showToast(`字段已同步到${syncTargetLabel(result)}，后台继续沉淀规则`, 'success', 2600);
@@ -8113,12 +8161,11 @@ async function confirmFile(id) {
   render();
   
   try {
-    const resp = await fetch('/api/confirm', {
+    const result = await requestJson('/api/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recordId: p.id, fileName: p.file_name }),
     });
-    const result = await resp.json();
 
     if (result.success) {
       p.status = 'confirmed';
@@ -8142,8 +8189,7 @@ async function confirmFile(id) {
       }
     } else if (result.needAuth) {
       delete p._syncing;
-      const authResp = await fetch('/api/auth-url');
-      const authData = await authResp.json();
+      const authData = await requestJson('/api/auth-url');
       showInlineSyncBar('需要飞书授权', 
         `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
       render();
@@ -8171,12 +8217,11 @@ async function reopenFile(id) {
   render();
 
   try {
-    const resp = await fetch('/api/reopen', {
+    const result = await requestJson('/api/reopen', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recordId: p.id, fileName: p.file_name }),
     });
-    const result = await resp.json();
 
     if (result.success) {
       p.status = 'reviewing';
@@ -8190,8 +8235,7 @@ async function reopenFile(id) {
       syncStatusesFromServer(false);
     } else if (result.needAuth) {
       delete p._syncing;
-      const authResp = await fetch('/api/auth-url');
-      const authData = await authResp.json();
+      const authData = await requestJson('/api/auth-url');
       showInlineSyncBar('需要飞书授权',
         `<button class="btn-sm btn-sm-confirm" onclick="window.open('${authData.authUrl}','feishu_auth','width=500,height=600')">前往授权</button>`, 'error');
       render();
@@ -8321,8 +8365,7 @@ let authPollTimer = null;
 
 async function checkAuthStatus() {
   try {
-    const resp = await fetch('/api/auth-status', { method: 'GET' });
-    const result = await resp.json();
+    const result = await requestJson('/api/auth-status', { method: 'GET' });
     const banner = document.getElementById('authBanner');
     if (!result.authorized) {
       banner.style.display = 'flex';
@@ -8340,8 +8383,7 @@ async function checkAuthStatus() {
 
 async function startFeishuAuth() {
   try {
-    const resp = await fetch('/api/auth-url');
-    const data = await resp.json();
+    const data = await requestJson('/api/auth-url');
     window.open(data.authUrl, 'feishu_auth', 'width=520,height=640');
     showToast('请在弹窗中完成飞书授权', '');
     // 轮询授权状态
@@ -8589,7 +8631,7 @@ function mergeLegacyReviewState(target, legacy) {
 function restoreReviewStateToServer(policy) {
   if (!policy || !policy._needsReviewStateRestore || policy._restoreInFlight) return;
   policy._restoreInFlight = true;
-  fetch('/api/restore-review-state', {
+  requestJson('/api/restore-review-state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -8600,7 +8642,6 @@ function restoreReviewStateToServer(policy) {
       editedFields: (policy.audit && policy.audit.edited_fields) || [],
     }),
   })
-    .then(resp => resp.json())
     .then(result => {
       if (result && result.success) {
         delete policy._needsReviewStateRestore;
@@ -8617,12 +8658,11 @@ function restoreReviewStateToServer(policy) {
 function restoreConfirmStateToServer(policy) {
   if (!policy || !policy._needsConfirmRestore || policy._confirmRestoreInFlight) return;
   policy._confirmRestoreInFlight = true;
-  fetch('/api/confirm', {
+  requestJson('/api/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recordId: policy.id, fileName: policy.file_name }),
   })
-    .then(resp => resp.json())
     .then(result => {
       if (result && result.success) {
         policy.confirmed_at = result.confirmedAt || policy.confirmed_at;
@@ -8642,9 +8682,7 @@ function restoreConfirmStateToServer(policy) {
 
 async function syncStatusesFromServer(showTip) {
   try {
-    const resp = await fetch('/api/statuses', { cache: 'no-store' });
-    if (!resp.ok) return false;
-    const result = await resp.json();
+    const result = await requestJson('/api/statuses', { cache: 'no-store' });
     if (!result.success || !result.statuses) return false;
     let changed = 0;
     const statusEntries = Object.entries(result.statuses);
