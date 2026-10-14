@@ -138,6 +138,8 @@ let state = {
   tokenExpiresAt: 0,
   appAccessToken: null,
   appTokenExpiresAt: 0,
+  tenantAccessToken: null,
+  tenantTokenExpiresAt: 0,
   tableFields: null,   // 飞书表格字段名缓存
   currentUser: null,   // 当前授权用户信息
 };
@@ -784,6 +786,26 @@ async function getAppAccessToken() {
   return state.appAccessToken;
 }
 
+// ---- 获取 tenant_access_token：Render 无用户 OAuth 时使用应用身份读写多维表格 ----
+async function getTenantAccessToken() {
+  if (state.tenantAccessToken && Date.now() < state.tenantTokenExpiresAt - 60000) {
+    return state.tenantAccessToken;
+  }
+  if (!APP_SECRET) throw new Error('NOT_AUTHORIZED');
+  const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: APP_ID, app_secret: APP_SECRET }),
+  });
+  const data = await resp.json();
+  if (data.code !== 0 || !data.tenant_access_token) {
+    throw new Error(`获取 tenant_access_token 失败: ${data.msg || data.message || 'unknown'}`);
+  }
+  state.tenantAccessToken = data.tenant_access_token;
+  state.tenantTokenExpiresAt = Date.now() + (data.expire || 7200) * 1000;
+  return state.tenantAccessToken;
+}
+
 function normalizeOAuthTokenResponse(data) {
   const payload = data && (data.data || data);
   if (!payload) return null;
@@ -808,7 +830,7 @@ async function getUserAccessToken() {
     return state.userAccessToken;
   }
   if (!state.userRefreshToken) {
-    throw new Error('NOT_AUTHORIZED');
+    return getTenantAccessToken();
   }
 
   const resp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
@@ -829,7 +851,7 @@ async function getUserAccessToken() {
   if (isFeishuErrorResponse(data) || !tokenData || !tokenData.accessToken) {
     state.userRefreshToken = null;
     saveTokens();
-    throw new Error(`REFRESH_TOKEN_EXPIRED: ${getFeishuErrorMessage(data, '刷新用户授权失败')}`);
+    return getTenantAccessToken();
   }
 
   state.userAccessToken = tokenData.accessToken;
@@ -2723,10 +2745,11 @@ app.get('/api/health', (req, res) => {
     ok: true,
     time: new Date().toISOString(),
     mode: useFeishuStorage() ? 'render-oauth2' : 'review-store',
-    authorized: useFeishuStorage() ? hasFeishuUserAuth() : true,
-    tokenValid: useFeishuStorage() ? hasValidUserAccessToken() : true,
+    authorized: useFeishuStorage() ? (hasFeishuUserAuth() || !!APP_SECRET) : true,
+    tokenValid: useFeishuStorage() ? (hasValidUserAccessToken() || !!state.tenantAccessToken || !!APP_SECRET) : true,
     hasRefreshToken: useFeishuStorage() ? !!state.userRefreshToken : false,
     hasAppSecret: !!APP_SECRET,
+    hasTenantToken: !!state.tenantAccessToken,
     localReviewMode: LOCAL_REVIEW_MODE,
     storage: activeReviewStorageName(),
     redisStorageConfigured: useRedisStorage(),
