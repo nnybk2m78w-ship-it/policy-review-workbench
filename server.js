@@ -1690,12 +1690,12 @@ function summarizeBenefitRules(text, names) {
 
 function inferBenefitFields(fields, parsed) {
   const text = getSourceTextForLearning(fields, parsed);
-  if (!/(酒店券|客房券|酒店房券|机\+酒店|云饮礼包|饮品礼包|行李加享|优享行李|乐享行李|机票\+行李|优先选座|优享选座|免费提前选座|快速安检|速选升舱|特惠超经舱|特惠公务舱|积分优享|机\+PLUS|PLUS\s*月卡|额外.{0,8}里程|赠送里程|休息室|餐食|接送机|兑换券)/i.test(text)) return null;
+  if (!/(酒店券|客房券|酒店房券|机\+酒店|云饮礼包|饮品礼包|行李加享|优享行李|乐享行李|机票\+行李|优先选座|优享选座|免费提前选座|快速安检|速选升舱|特惠超经舱|特惠公务舱|积分优享|机\+PLUS|PLUS\s*月卡|额外.{0,8}里程|赠送里程|休息室|餐食|接送机|兑换券|优享退票|退票权益|超值权益|权益包)/i.test(text)) return null;
   const names = [];
   const add = name => { if (name && !names.includes(name)) names.push(name); };
   if (/酒店券|客房券|酒店房券|机\+酒店/.test(text)) add('酒店券');
   const luggage = text.match(/(\d+\s*(?:KG|kg|公斤).{0,8}(?:托运行李额|行李额))/);
-  if (/行李加享|优享行李|乐享行李|机票\+行李/.test(text)) add(luggage ? luggage[1].replace(/\s+/g, '') : '行李权益');
+  if (/行李加享|优享行李|乐享行李|机票\+行李|产品权益.{0,30}行李额|享.{0,8}(?:托运行李额|行李额)/.test(text)) add(luggage ? luggage[1].replace(/\s+/g, '') : '行李权益');
   if (/优先选座|优享选座|免费提前选座/.test(text)) add(/优享选座|免费提前选座/.test(text) ? '优享选座权益' : '优先选座');
   if (/PLUS\s*月卡|Plus\s*月卡|plus\s*月卡|机\+PLUS/i.test(text)) add('PLUS月卡');
   if (/积分优享|消费积分|赠送积分/.test(text) && !/不累积任何.{0,6}积分/.test(text)) add(/优享积分/.test(text) ? '优享积分' : '会员消费积分');
@@ -1704,13 +1704,17 @@ function inferBenefitFields(fields, parsed) {
   if (/快速安检/.test(text)) add('快速安检服务');
   if (/速选升舱|特惠超经舱/.test(text)) add('升舱权益');
   if (/特惠公务舱/.test(text)) add('公务舱权益');
+  if (/优享退票|退票权益/.test(text)) add('优享退票权益');
+  if (/超值权益|权益包/.test(text)) add('超值权益包');
   if (/休息室/.test(text)) add('休息室权益');
   if (/餐食/.test(text)) add('餐食权益');
   if (/接送机/.test(text)) add('接送机权益');
+  const rules = summarizeBenefitRules(text, names);
   if (!names.length) return null;
+  if (!rules && names.length === 1 && names[0] === '接送机权益') return null;
   return {
     benefit_name: names.join('；'),
-    benefit_usage_rules: summarizeBenefitRules(text, names),
+    benefit_usage_rules: rules,
   };
 }
 
@@ -1825,7 +1829,12 @@ function applyCurrentLearningToParsed(fields, parsed) {
       if (setParsedField(parsed, key, benefits[key], benefitDefinitions[key])) {
         recordChange(key, before, benefits[key], '按当前文件权益证据补齐文档级权益字段');
       }
-    } else if (before && (!hasConcreteFieldValue(before) || shouldRemoveUnsupportedBenefit(before, fields, parsed))) {
+    } else if (
+      before &&
+      (!hasConcreteFieldValue(before) ||
+        shouldRemoveUnsupportedBenefit(before, fields, parsed) ||
+        (key === 'benefit_usage_rules' && !benefits))
+    ) {
       if (deleteParsedField(parsed, key)) {
         recordChange(key, before, '', '权益字段无当前文件强证据或属于旧规则误补，移除');
       }
