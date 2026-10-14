@@ -1559,6 +1559,32 @@ function inferRelativeStartDateRange(fields, parsed, fieldKey) {
   return '';
 }
 
+function lastDayOfMonth(year, month) {
+  return new Date(Number(year), Number(month), 0).getDate();
+}
+
+function inferMonthEndDateRange(fields, parsed, fieldKey) {
+  if (!['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return '';
+  const current = getParsedValue(parsed, fieldKey);
+  if (!/人工确认|需人工确认/.test(current)) return '';
+  const text = getSourceTextForLearning(fields, parsed);
+  const labelPattern = fieldKey === 'sale_date'
+    ? '(?:销售|售卖|出票)(?:日期|时间)'
+    : fieldKey === 'depart_date'
+      ? '(?:航班|旅行|出行|乘机)(?:日期|时间)'
+      : '(?:兑换|使用)(?:日期|时间)';
+  const pattern = new RegExp(`${labelPattern}[^\\n]{0,20}?(20\\d{2})年\\s*(\\d{1,2})月\\s*(\\d{1,2})日?\\s*(?:至|到|-|—|~)\\s*(?:(20\\d{2})年)?\\s*(\\d{1,2})月(?!\\s*\\d{1,2}日)`);
+  const match = text.match(pattern);
+  if (!match) return '';
+  const year = match[1];
+  const startMonth = match[2].padStart(2, '0');
+  const startDay = match[3].padStart(2, '0');
+  const endYear = match[4] || year;
+  const endMonth = match[5].padStart(2, '0');
+  const endDay = String(lastDayOfMonth(endYear, endMonth)).padStart(2, '0');
+  return `${year}-${startMonth}-${startDay}至${endYear}-${endMonth}-${endDay}`;
+}
+
 function inferSamePeriodDate(fields, parsed, fieldKey) {
   if (!['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return '';
   const candidates = fieldKey === 'sale_date'
@@ -1855,9 +1881,18 @@ function fieldHasPresentedPolicyPlaceholder(text, fieldKey) {
     sale_date: /(?:适用)?(?:出票|销售)(?:日期|时间)[：:\s]*以具体呈报(?:的)?政策为准|(?:出票|销售)(?:日期|时间).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
     depart_date: /(?:适用)?(?:航班|旅行|乘机)(?:日期|时间)[：:\s]*以具体呈报(?:的)?政策为准|(?:航班|旅行|乘机)(?:日期|时间).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
     booking_cabin: /(?:适用)?(?:订座舱位|舱位)[：:\s]*以具体呈报(?:的)?政策为准|(?:订座舱位|舱位).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
-    discount_per: /(?:直加金额|加价金额|产品定价|产品价格|X\s*具体金额).{0,30}以(?:具体)?呈报(?:的)?政策为准/,
+    discount_per: /(?:直加金额|加价金额|产品定价|产品价格|定价模式|X\s*具体金额).{0,30}以(?:具体)?(?:政策)?呈报(?:的)?政策?为准|(?:定价模式|产品定价)[：:\s]*以政策呈报为准/,
   };
   return !!(fieldPatterns[fieldKey] && fieldPatterns[fieldKey].test(source));
+}
+
+function repairOpenEndedManualDate(fields, parsed, fieldKey) {
+  const current = getParsedValue(parsed, fieldKey);
+  const match = normalizeFeishuValue(current).match(/^(20\d{2}-\d{2}-\d{2})起[，,、；;\s]*(?:结束日|截止日)?(?:需)?人工确认$/);
+  if (!match) return '';
+  const text = getSourceTextForLearning(fields, parsed);
+  if (!/(起生效|自.{0,12}起|生效之日起|下发之日起|发布之日起)/.test(text)) return '';
+  return `${match[1]}起`;
 }
 
 function repairPresentedPolicyPlaceholders(fields, parsed) {
@@ -2035,7 +2070,10 @@ function applyCurrentLearningToParsed(fields, parsed) {
     const swapped = repairDateRangeOrder(before);
     const invalidFixed = repairInvalidDateFromTitle(fields, parsed, key);
     const missingStartFixed = inferMissingDateStart(fields, parsed, key);
-    const after = swapped || invalidFixed || missingStartFixed;
+    const relativeStartFixed = isBlankish(before) ? inferRelativeStartDateRange(fields, parsed, key) : '';
+    const monthEndFixed = inferMonthEndDateRange(fields, parsed, key);
+    const openEndedFixed = repairOpenEndedManualDate(fields, parsed, key);
+    const after = swapped || invalidFixed || missingStartFixed || monthEndFixed || openEndedFixed || relativeStartFixed;
     if (after && setParsedField(parsed, key, after)) {
       recordChange(key, before, after, '按当前文件日期证据修复日期范围');
     }
