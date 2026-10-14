@@ -6333,16 +6333,28 @@ if (saved) {
 function saveState() {
   const persistedPolicies = appState.policies.map(p => {
     const clean = { ...p };
+    // 原始文本可能非常大，飞书模式下刷新会重新拉取；本地只保存审核状态，避免
+    // localStorage 超限导致同步函数中断，页面继续显示旧计数。
+    delete clean.source_text;
+    delete clean.extracted_text;
+    delete clean.raw_text;
+    delete clean.original_text;
     delete clean._syncing;
+    delete clean._restoreInFlight;
+    delete clean._confirmRestoreInFlight;
     return clean;
   });
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    policies: persistedPolicies,
-    currentFileId: appState.currentFileId,
-    currentView: appState.currentView,
-    statusFilter: appState.statusFilter || '',
-    serverSynced: !!appState.serverSynced,
-  }));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      policies: persistedPolicies,
+      currentFileId: appState.currentFileId,
+      currentView: appState.currentView,
+      statusFilter: appState.statusFilter || '',
+      serverSynced: !!appState.serverSynced,
+    }));
+  } catch (e) {
+    console.warn('[审核状态] 本地缓存写入失败，已跳过，不影响飞书实时同步', e);
+  }
 }
 
 function loadConfirmLedger() {
@@ -8638,7 +8650,19 @@ async function syncStatusesFromServer(showTip) {
     const statusEntries = Object.entries(result.statuses);
     if (result.storage === 'feishu') {
       const currentId = appState.currentFileId;
-      appState.policies = statusEntries.map(([recordId, statusEntry]) => policyFromFeishuStatus(recordId, statusEntry));
+      appState.policies = statusEntries.map(([recordId, statusEntry]) => {
+        const policy = policyFromFeishuStatus(recordId, statusEntry);
+        // 飞书是多人审核状态的唯一事实来源。构建 policy 后再次强制写入，
+        // 避免 JSON 字段或历史本地状态把审核状态覆盖回待审核。
+        policy.status = statusEntry && statusEntry.status === 'confirmed' ? 'confirmed' : 'reviewing';
+        policy.confirmed_at = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_at
+          ? formatSyncTs(statusEntry.confirmed_at)
+          : null;
+        policy.confirmed_by = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_by
+          ? statusEntry.confirmed_by
+          : null;
+        return policy;
+      });
       appState.serverSynced = true;
       if (currentId && appState.policies.some(p => p.id === currentId)) {
         appState.currentFileId = currentId;
@@ -8647,7 +8671,6 @@ async function syncStatusesFromServer(showTip) {
       }
       propagateFieldDefinitionsByFileType();
       ensureVisibleSidebarCategory();
-      saveState();
       render();
       if (showTip) showToast(`已从飞书同步 ${appState.policies.length} 份文件`, 'success');
       return true;
@@ -8742,6 +8765,7 @@ async function syncStatusesFromServer(showTip) {
     }
     return true;
   } catch (e) {
+    console.warn('[状态同步] 同步失败，保留当前页面状态', e);
     return false; // API 不可用（本地静态打开等场景）保持静态数据
   }
 }
