@@ -6026,6 +6026,13 @@ function getPolicyFileType(policyOrFields, parsed) {
   const p = policyOrFields || {};
   const fields = parsed ? p : {};
   const data = parsed || p.data || {};
+  const explicitBusinessLine = normalizeFeishuValue(data.business_line || fields['业务线']);
+  const explicitScenario = normalizeFeishuValue(data.scenario || fields['解析场景']);
+  if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
+  if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
+  if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
+  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店code/.test(explicitScenario)) return '旗舰店code';
+
   const text = [
     p.file_name,
     p.category,

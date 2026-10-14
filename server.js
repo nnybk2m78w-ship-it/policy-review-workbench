@@ -1438,6 +1438,13 @@ function getPolicyText(fields, parsed) {
 }
 
 function getPolicyFileType(fields, parsed) {
+  const explicitBusinessLine = normalizeFeishuValue(getParsedValue(parsed, 'business_line') || (fields && fields['业务线']));
+  const explicitScenario = normalizeFeishuValue(getParsedValue(parsed, 'scenario') || (fields && fields['解析场景']));
+  if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
+  if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
+  if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
+  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店code/.test(explicitScenario)) return '旗舰店code';
+
   const text = [
     getFileName(fields, parsed),
     normalizeFeishuValue(fields && fields['解析场景']),
@@ -1451,6 +1458,26 @@ function getPolicyFileType(fields, parsed) {
   if (/次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
   if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
   return '自营';
+}
+
+function repairScenarioFromBusinessLine(fields, parsed) {
+  const businessLine = getParsedValue(parsed, 'business_line') || normalizeFeishuValue(fields && fields['业务线']);
+  if (!businessLine) return [];
+  const before = getParsedValue(parsed, 'scenario');
+  let next = '';
+  if (/次卡/.test(businessLine)) next = '次卡';
+  else if (/自营|自有票台/.test(businessLine)) next = '自营';
+  else if (/旗舰店券/.test(businessLine)) next = '旗舰店券类';
+  else if (/旗舰店|旗舰店票台/.test(businessLine)) next = '旗舰店code';
+  if (!next || before === next) return [];
+  if (!setParsedField(parsed, 'scenario', next)) return [];
+  return [{
+    key: 'scenario',
+    label: KEY_LABELS.scenario,
+    before,
+    after: next,
+    reason: '按人工确认后的业务线修正文件场景，避免跨场景字段集串用',
+  }];
 }
 
 function isBlankish(value) {
@@ -1983,6 +2010,7 @@ function applyCurrentLearningToParsed(fields, parsed) {
   };
 
   applyChangeHistoryToParsed(parsed, fields && fields['修改历史']).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
+  repairScenarioFromBusinessLine(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
   repairConfirmedManualResidues(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
   parsedObjects(parsed).forEach(obj => {
@@ -3439,6 +3467,7 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
         const parsed = record.dataPatch || null;
         const jsonChanges = [
           ...applyChangeHistoryToParsed(parsed, record.fields && record.fields['修改历史']),
+          ...repairScenarioFromBusinessLine(record.fields, parsed),
           ...repairConfirmedManualResidues(record.fields, parsed),
         ];
         if (before !== after) {
@@ -3475,6 +3504,7 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
       const parsed = parseJsonField(jsonFieldName ? item.fields[jsonFieldName] : null);
       const jsonChanges = parsed ? [
         ...applyChangeHistoryToParsed(parsed, item.fields['修改历史']),
+        ...repairScenarioFromBusinessLine(item.fields, parsed),
         ...repairConfirmedManualResidues(item.fields, parsed),
       ] : [];
       const cleanedJson = parsed ? cleanParsedManualConfirm(parsed) : false;
