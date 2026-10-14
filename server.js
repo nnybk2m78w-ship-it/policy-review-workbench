@@ -1671,6 +1671,66 @@ function inferMissingDateStart(fields, parsed, fieldKey) {
   return `${start}至${endMatch[1]}`;
 }
 
+function fieldHasPresentedPolicyPlaceholder(text, fieldKey) {
+  const source = normalizeFeishuValue(text);
+  if (!/呈报政策|政策呈报|以接口报出为准|销售后台|销售后台.*为准/.test(source)) return false;
+  const fieldPatterns = {
+    sale_date: /(?:适用)?(?:出票|销售)(?:日期|时间)[：:\s]*以具体呈报(?:的)?政策为准|(?:出票|销售)(?:日期|时间).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
+    depart_date: /(?:适用)?(?:航班|旅行|乘机)(?:日期|时间)[：:\s]*以具体呈报(?:的)?政策为准|(?:航班|旅行|乘机)(?:日期|时间).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
+    booking_cabin: /(?:适用)?(?:订座舱位|舱位)[：:\s]*以具体呈报(?:的)?政策为准|(?:订座舱位|舱位).{0,20}以(?:具体)?呈报(?:的)?政策为准/,
+    discount_per: /(?:直加金额|加价金额|产品定价|产品价格|X\s*具体金额).{0,30}以(?:具体)?呈报(?:的)?政策为准/,
+  };
+  return !!(fieldPatterns[fieldKey] && fieldPatterns[fieldKey].test(source));
+}
+
+function repairPresentedPolicyPlaceholders(fields, parsed) {
+  const text = getSourceTextForLearning(fields, parsed);
+  const fileType = getPolicyFileType(fields, parsed);
+  if (!/旗舰店/.test(fileType) && !/长龙|浙江长龙/.test(text)) return [];
+  const changes = [];
+  ['sale_date', 'depart_date', 'booking_cabin', 'discount_per'].forEach(key => {
+    const before = getParsedValue(parsed, key);
+    if (!isBlankish(before)) return;
+    if (!fieldHasPresentedPolicyPlaceholder(text, key)) return;
+    if (setParsedField(parsed, key, '以具体呈报政策为准')) {
+      changes.push({
+        key,
+        label: KEY_LABELS[key] || key,
+        before: normalizeFeishuValue(before),
+        after: '以具体呈报政策为准',
+        reason: '原文明确该字段以具体呈报政策为准，非当前通告可直接解析字段，去除人工确认占位',
+      });
+    }
+  });
+  return changes;
+}
+
+function repairDanglingManualValue(parsed) {
+  const changes = [];
+  parsedObjects(parsed).forEach(obj => {
+    const target = obj.data && typeof obj.data === 'object' ? obj.data : obj;
+    Object.entries(target).forEach(([key, value]) => {
+      if (key === 'manual_confirm_fields' || key === FIELD_DEFINITIONS_KEY) return;
+      if (!isBlankish(value)) return;
+      const label = KEY_LABELS[key] || key;
+      const note = `${label}需人工确认`;
+      const before = normalizeFeishuValue(target.manual_confirm_fields || obj.manual_confirm_fields);
+      appendManualNote(obj, note);
+      const after = normalizeFeishuValue(target.manual_confirm_fields || obj.manual_confirm_fields);
+      if (before !== after) {
+        changes.push({
+          key: 'manual_confirm_fields',
+          label: KEY_LABELS.manual_confirm_fields,
+          before,
+          after,
+          reason: `字段「${label}」仍为人工确认，占位值同步进入人工确认项，避免审核状态误判`,
+        });
+      }
+    });
+  });
+  return changes;
+}
+
 function summarizeBenefitRules(text, names) {
   const lines = normalizeFeishuValue(text)
     .split(/\n+/)
@@ -1800,8 +1860,11 @@ function applyCurrentLearningToParsed(fields, parsed) {
     }
   });
 
+  repairPresentedPolicyPlaceholders(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
+
   clearManualConfirmByConcreteValues(parsed);
   cleanParsedManualConfirm(parsed);
+  repairDanglingManualValue(parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
   const benefits = inferBenefitFields(fields, parsed);
   const fileType = getPolicyFileType(fields, parsed);

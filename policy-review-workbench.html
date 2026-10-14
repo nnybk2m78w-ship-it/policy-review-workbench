@@ -6418,9 +6418,11 @@ function propagateFieldDefinitionsByFileType() {
   return changed;
 }
 
+const SERVER_AUTHORITATIVE = typeof window !== 'undefined' && /^https?:/.test(window.location.protocol);
+
 // ===== STATE =====
 let appState = {
-  policies: JSON.parse(JSON.stringify(REVIEW_POLICIES)),
+  policies: SERVER_AUTHORITATIVE ? [] : JSON.parse(JSON.stringify(REVIEW_POLICIES)),
   currentFileId: null,
   currentView: 'review',
   editingField: null,
@@ -6431,8 +6433,6 @@ let appState = {
   statusFilter: '',        // 快速状态过滤：confirmed
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
-
-const SERVER_AUTHORITATIVE = typeof window !== 'undefined' && /^https?:/.test(window.location.protocol);
 
 // Load from localStorage — on hosted pages Feishu/server is authoritative, so only UI prefs are restored.
 const saved = localStorage.getItem(STORAGE_KEY);
