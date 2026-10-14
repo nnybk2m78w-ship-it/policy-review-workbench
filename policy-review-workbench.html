@@ -6212,6 +6212,69 @@ function parseProblemMarks(raw) {
     });
 }
 
+function normalizeHistoryEntry(entry) {
+  if (!entry) return null;
+  if (typeof entry === 'string') {
+    const text = entry.trim();
+    if (!text) return null;
+    const match = text.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*(.*?)\s*→\s*(.*?)(?:\s*\|\s*原因[:：]\s*(.*))?$/);
+    if (match) {
+      const fieldLabel = match[3].trim();
+      return {
+        time: match[1].trim(),
+        user: match[2].trim(),
+        fieldLabel,
+        field: canonicalizeLegacyFieldName(fieldLabel),
+        oldValue: (match[4] || '').trim(),
+        newValue: (match[5] || '').trim(),
+        reason: (match[6] || '').trim(),
+      };
+    }
+    return {
+      time: '',
+      user: '',
+      fieldLabel: '',
+      field: '',
+      oldValue: '',
+      newValue: '',
+      reason: text,
+    };
+  }
+  if (typeof entry === 'object') {
+    const fieldLabel = entry.fieldLabel || entry.field_label || entry.label || entry.field || '';
+    const field = canonicalizeLegacyFieldName(entry.field || fieldLabel);
+    return {
+      time: entry.time || entry.created_at || entry.updated_at || '',
+      user: entry.user || entry.created_by || entry.operator || '',
+      fieldLabel: fieldLabel || LABELS[field] || field,
+      field,
+      oldValue: entry.oldValue !== undefined ? entry.oldValue : (entry.old_value !== undefined ? entry.old_value : ''),
+      newValue: entry.newValue !== undefined ? entry.newValue : (entry.new_value !== undefined ? entry.new_value : ''),
+      reason: entry.reason || entry.desc || '',
+    };
+  }
+  return null;
+}
+
+function parseChangeHistoryText(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(normalizeHistoryEntry).filter(Boolean);
+
+  const text = normalizeFeishuValue(raw);
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parseChangeHistoryText(parsed);
+  } catch (e) {}
+
+  return text
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(normalizeHistoryEntry)
+    .filter(Boolean);
+}
+
 function hasActionableManualConfirmText(policy) {
   const text = cleanManualConfirmText(policy && policy.data && policy.data.manual_confirm_fields);
   if (!text) return false;
