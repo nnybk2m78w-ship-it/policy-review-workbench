@@ -1690,19 +1690,20 @@ function summarizeBenefitRules(text, names) {
 
 function inferBenefitFields(fields, parsed) {
   const text = getSourceTextForLearning(fields, parsed);
-  if (!/(权益|礼包|酒店券|客房券|行李额|优先选座|快速安检|升舱|积分|里程|休息室|餐食|接送机|兑换券|赠送)/.test(text)) return null;
+  if (!/(酒店券|客房券|酒店房券|机\+酒店|云饮礼包|饮品礼包|行李加享|优享行李|乐享行李|机票\+行李|优先选座|优享选座|免费提前选座|快速安检|速选升舱|特惠超经舱|特惠公务舱|积分优享|机\+PLUS|PLUS\s*月卡|额外.{0,8}里程|赠送里程|休息室|餐食|接送机|兑换券)/i.test(text)) return null;
   const names = [];
   const add = name => { if (name && !names.includes(name)) names.push(name); };
-  if (/酒店券|客房券|酒店房券/.test(text)) add('酒店券');
+  if (/酒店券|客房券|酒店房券|机\+酒店/.test(text)) add('酒店券');
   const luggage = text.match(/(\d+\s*(?:KG|kg|公斤).{0,8}(?:托运行李额|行李额))/);
-  if (luggage) add(luggage[1].replace(/\s+/g, ''));
-  if (/优先选座/.test(text)) add('优先选座');
-  if (/PLUS\s*月卡|Plus\s*月卡|plus\s*月卡/i.test(text)) add('PLUS月卡');
-  if (/消费积分|会员积分|赠送积分|优享积分/.test(text)) add(/优享积分/.test(text) ? '优享积分' : '会员消费积分');
+  if (/行李加享|优享行李|乐享行李|机票\+行李/.test(text)) add(luggage ? luggage[1].replace(/\s+/g, '') : '行李权益');
+  if (/优先选座|优享选座|免费提前选座/.test(text)) add(/优享选座|免费提前选座/.test(text) ? '优享选座权益' : '优先选座');
+  if (/PLUS\s*月卡|Plus\s*月卡|plus\s*月卡|机\+PLUS/i.test(text)) add('PLUS月卡');
+  if (/积分优享|消费积分|赠送积分/.test(text) && !/不累积任何.{0,6}积分/.test(text)) add(/优享积分/.test(text) ? '优享积分' : '会员消费积分');
   if (/额外.{0,8}里程|非定级里程|赠送里程/.test(text)) add('额外非定级里程');
   if (/云饮礼包|饮品礼包|饮品券|云饮/.test(text)) add('云饮礼包');
   if (/快速安检/.test(text)) add('快速安检服务');
-  if (/升舱|超级经济舱|公务舱/.test(text)) add(/公务舱/.test(text) ? '公务舱权益' : '升舱权益');
+  if (/速选升舱|特惠超经舱/.test(text)) add('升舱权益');
+  if (/特惠公务舱/.test(text)) add('公务舱权益');
   if (/休息室/.test(text)) add('休息室权益');
   if (/餐食/.test(text)) add('餐食权益');
   if (/接送机/.test(text)) add('接送机权益');
@@ -1711,6 +1712,20 @@ function inferBenefitFields(fields, parsed) {
     benefit_name: names.join('；'),
     benefit_usage_rules: summarizeBenefitRules(text, names),
   };
+}
+
+function shouldRemoveUnsupportedBenefit(currentValue, fields, parsed) {
+  const text = getSourceTextForLearning(fields, parsed);
+  const value = normalizeFeishuValue(currentValue);
+  if (!value) return false;
+  if (!inferBenefitFields(fields, parsed)) {
+    return /公务舱权益|升舱权益|会员消费积分|接送机权益/.test(value);
+  }
+  if (/会员消费积分/.test(value) && /不累积任何.{0,6}积分/.test(text)) return true;
+  if (/公务舱权益/.test(value) && !/特惠公务舱/.test(text)) return true;
+  if (/升舱权益/.test(value) && !/速选升舱|特惠超经舱/.test(text)) return true;
+  if (/接送机权益/.test(value) && !/接送机/.test(text)) return true;
+  return false;
 }
 
 function normalizeDocumentLevelField(parsed, key) {
@@ -1810,9 +1825,9 @@ function applyCurrentLearningToParsed(fields, parsed) {
       if (setParsedField(parsed, key, benefits[key], benefitDefinitions[key])) {
         recordChange(key, before, benefits[key], '按当前文件权益证据补齐文档级权益字段');
       }
-    } else if (before && !hasConcreteFieldValue(before)) {
+    } else if (before && (!hasConcreteFieldValue(before) || shouldRemoveUnsupportedBenefit(before, fields, parsed))) {
       if (deleteParsedField(parsed, key)) {
-        recordChange(key, before, '', '权益字段无当前文件证据且为占位值，移除');
+        recordChange(key, before, '', '权益字段无当前文件强证据或属于旧规则误补，移除');
       }
     }
     normalizeDocumentLevelField(parsed, key);
