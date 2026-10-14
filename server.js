@@ -1107,6 +1107,7 @@ function cleanManualConfirmText(raw) {
     .filter(part => !/按旗舰店(?:code)?政策审核/.test(part))
     .filter(part => !/旗舰店不解析PAT[:：]?A|旗舰店不解析出票指令|旗舰店不看出票指令/.test(part))
     .filter(part => !/^分类依据[:：]/.test(part))
+    .filter(part => !/^字段「.+」仍为人工确认/.test(part))
     .join('；');
 }
 
@@ -1864,7 +1865,6 @@ function applyCurrentLearningToParsed(fields, parsed) {
 
   clearManualConfirmByConcreteValues(parsed);
   cleanParsedManualConfirm(parsed);
-  repairDanglingManualValue(parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
   const benefits = inferBenefitFields(fields, parsed);
   const fileType = getPolicyFileType(fields, parsed);
