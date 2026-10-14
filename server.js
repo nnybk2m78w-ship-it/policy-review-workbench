@@ -112,6 +112,12 @@ const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const SOURCE_BOUND_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
 const DOCUMENT_LEVEL_KEYS = new Set(['benefit_name', 'benefit_usage_rules']);
+const SERVER_PROMPT_FIELDS = {
+  '自营': new Set(['scenario','business_line','channel_note','carrier','carrier_name','product_name','product_family','product_type','product_code','policy_code','fare_basis','corporate_code','flight_type','trip_type_note','od','od_note','booking_cabin','cabin','sale_date','depart_date','advance_purchase_days','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','commission_rate','manual_confirm_fields','luggage_amount','not_applicable_od']),
+  '旗舰店code': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','product_code_raw','policy_code','fare_basis','corporate_code','flight_type','od','booking_cabin','cabin','sale_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','sign_and_transfer_rules','refund_rules','change_rules','manual_confirm_fields','luggage_amount','benefit_name','benefit_usage_rules','not_applicable_flight_routes']),
+  '旗舰店券类': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','coupon_resource_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','discount_type','discount_per','passenger_type','age_limit','child_applicable','baby_applicable','realname_limit','document_restrictions','benefit_name','benefit_usage_rules','not_applicable_flight_routes','manual_confirm_fields']),
+  '次卡': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','usage_times','travel_class','product_show','json_count','use_limit','use_begin','wether_depart_today','refund_time','price_groups_summary','manual_confirm_fields']),
+};
 
 function sanitizeFeishuOAuthScopes(rawScopes) {
   const deprecatedScopes = new Set(['base:record:read', 'base:record:write']);
@@ -1480,6 +1486,29 @@ function repairScenarioFromBusinessLine(fields, parsed) {
   }];
 }
 
+function removeUnsupportedScenarioFields(fields, parsed) {
+  if (!parsed) return [];
+  const fileType = getPolicyFileType(fields, parsed);
+  const allowed = SERVER_PROMPT_FIELDS[fileType] || new Set();
+  const removable = ['redeem_date', 'use_date'];
+  const changes = [];
+  removable.forEach(key => {
+    if (allowed.has(key)) return;
+    const before = getParsedValue(parsed, key);
+    if (!before) return;
+    if (deleteParsedField(parsed, key)) {
+      changes.push({
+        key,
+        label: KEY_LABELS[key] || key,
+        before,
+        after: '',
+        reason: `当前文件类型为${fileType}，该字段不属于对应提示词字段集，移除跨场景残留字段`,
+      });
+    }
+  });
+  return changes;
+}
+
 function isBlankish(value) {
   const text = normalizeFeishuValue(value).trim();
   return !text ||
@@ -2046,6 +2075,7 @@ function applyCurrentLearningToParsed(fields, parsed) {
 
   applyChangeHistoryToParsed(parsed, fields && fields['修改历史']).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
   repairScenarioFromBusinessLine(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
+  removeUnsupportedScenarioFields(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
   repairConfirmedManualResidues(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
   parsedObjects(parsed).forEach(obj => {
@@ -2065,7 +2095,10 @@ function applyCurrentLearningToParsed(fields, parsed) {
     }
   });
 
+  const fileType = getPolicyFileType(fields, parsed);
+  const allowedFields = SERVER_PROMPT_FIELDS[fileType] || new Set();
   ['sale_date', 'depart_date', 'use_date', 'redeem_date'].forEach(key => {
+    if (!allowedFields.has(key) && !getParsedValue(parsed, key)) return;
     const before = getParsedValue(parsed, key);
     const swapped = repairDateRangeOrder(before);
     const invalidFixed = repairInvalidDateFromTitle(fields, parsed, key);
@@ -2085,7 +2118,6 @@ function applyCurrentLearningToParsed(fields, parsed) {
   cleanParsedManualConfirm(parsed);
 
   const benefits = inferBenefitFields(fields, parsed);
-  const fileType = getPolicyFileType(fields, parsed);
   const benefitDefinitions = {
     benefit_name: {
       label: '权益名称',
@@ -3506,6 +3538,7 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
         const jsonChanges = [
           ...applyChangeHistoryToParsed(parsed, record.fields && record.fields['修改历史']),
           ...repairScenarioFromBusinessLine(record.fields, parsed),
+          ...removeUnsupportedScenarioFields(record.fields, parsed),
           ...repairConfirmedManualResidues(record.fields, parsed),
         ];
         if (before !== after) {
@@ -3543,6 +3576,7 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
       const jsonChanges = parsed ? [
         ...applyChangeHistoryToParsed(parsed, item.fields['修改历史']),
         ...repairScenarioFromBusinessLine(item.fields, parsed),
+        ...removeUnsupportedScenarioFields(item.fields, parsed),
         ...repairConfirmedManualResidues(item.fields, parsed),
       ] : [];
       const cleanedJson = parsed ? cleanParsedManualConfirm(parsed) : false;
