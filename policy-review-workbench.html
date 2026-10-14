@@ -6160,6 +6160,58 @@ function cleanManualConfirmText(value) {
   return normalizeFeishuValue(value).replace(/未提取/g, '人工确认');
 }
 
+function parseProblemMarks(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map(item => {
+      if (item && typeof item === 'object') {
+        return {
+          field: item.field || '',
+          field_label: item.field_label || item.fieldLabel || item.field || '文件整体',
+          desc: item.desc || item.reason || item.text || '',
+          created_by: item.created_by || item.user || '',
+          created_at: item.created_at || item.time || '',
+        };
+      }
+      return { field: '', field_label: '文件整体', desc: normalizeFeishuValue(item), created_by: '', created_at: '' };
+    }).filter(item => item.desc || item.field_label);
+  }
+
+  const text = normalizeFeishuValue(raw);
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parseProblemMarks(parsed);
+  } catch (e) {}
+
+  return text.split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*(.*)$/);
+      if (match) {
+        return {
+          field: '',
+          field_label: match[3].trim() || '文件整体',
+          desc: match[4].trim(),
+          created_by: match[2].trim(),
+          created_at: match[1].trim(),
+        };
+      }
+      const simple = line.match(/^([^:：]+)[:：]\s*(.*)$/);
+      if (simple) {
+        return {
+          field: '',
+          field_label: simple[1].trim() || '文件整体',
+          desc: simple[2].trim(),
+          created_by: '',
+          created_at: '',
+        };
+      }
+      return { field: '', field_label: '文件整体', desc: line, created_by: '', created_at: '' };
+    });
+}
+
 function hasActionableManualConfirmText(policy) {
   const text = cleanManualConfirmText(policy && policy.data && policy.data.manual_confirm_fields);
   if (!text) return false;
@@ -8688,19 +8740,25 @@ async function syncStatusesFromServer(showTip) {
     const statusEntries = Object.entries(result.statuses);
     if (result.storage === 'feishu') {
       const currentId = appState.currentFileId;
-      appState.policies = statusEntries.map(([recordId, statusEntry]) => {
-        const policy = policyFromFeishuStatus(recordId, statusEntry);
-        // 飞书是多人审核状态的唯一事实来源。构建 policy 后再次强制写入，
-        // 避免 JSON 字段或历史本地状态把审核状态覆盖回待审核。
-        policy.status = statusEntry && statusEntry.status === 'confirmed' ? 'confirmed' : 'reviewing';
-        policy.confirmed_at = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_at
-          ? formatSyncTs(statusEntry.confirmed_at)
-          : null;
-        policy.confirmed_by = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_by
-          ? statusEntry.confirmed_by
-          : null;
-        return policy;
+      const nextPolicies = [];
+      statusEntries.forEach(([recordId, statusEntry]) => {
+        try {
+          const policy = policyFromFeishuStatus(recordId, statusEntry);
+          // 飞书是多人审核状态的唯一事实来源。构建 policy 后再次强制写入，
+          // 避免 JSON 字段或历史本地状态把审核状态覆盖回待审核。
+          policy.status = statusEntry && statusEntry.status === 'confirmed' ? 'confirmed' : 'reviewing';
+          policy.confirmed_at = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_at
+            ? formatSyncTs(statusEntry.confirmed_at)
+            : null;
+          policy.confirmed_by = policy.status === 'confirmed' && statusEntry && statusEntry.confirmed_by
+            ? statusEntry.confirmed_by
+            : null;
+          nextPolicies.push(policy);
+        } catch (recordErr) {
+          console.warn('[状态同步] 单条记录解析失败，已跳过', recordId, recordErr);
+        }
       });
+      appState.policies = nextPolicies;
       appState.serverSynced = true;
       if (currentId && appState.policies.some(p => p.id === currentId)) {
         appState.currentFileId = currentId;
