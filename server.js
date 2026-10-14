@@ -1582,6 +1582,11 @@ function inferRelativeStartDateRange(fields, parsed, fieldKey) {
   const end = endMatch ? `${endMatch[1]}-${endMatch[2].padStart(2, '0')}-${endMatch[3].padStart(2, '0')}` : '';
   const start = (end && compareDate(parseDate, end) > 0) ? docDate : (docDate || parseDate);
   if (!start) return '';
+  if (!docDate && !end) {
+    const parseYear = Number((parseDate.match(/^(20\d{2})/) || [])[1] || 0);
+    const years = [...text.matchAll(/20\d{2}/g)].map(m => Number(m[0]));
+    if (years.length && Math.max(...years) < parseYear) return '';
+  }
   if (end && compareDate(start, end) > 0) return '';
   if (end) return `${start}至${end}`;
   if (['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return `${start}起`;
