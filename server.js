@@ -228,6 +228,14 @@ function allowFeishuLocalFallback() {
   return useFeishuStorage() && LOCAL_REVIEW_MODE && FEISHU_FALLBACK_TO_LOCAL;
 }
 
+function hasValidUserAccessToken() {
+  return !!(state.userAccessToken && Date.now() < state.tokenExpiresAt - 60000);
+}
+
+function hasFeishuUserAuth() {
+  return !!state.userRefreshToken || hasValidUserAccessToken();
+}
+
 function useRedisStorage() {
   return REVIEW_STORAGE_MODE === 'redis' && !!REVIEW_REDIS_URL;
 }
@@ -1974,8 +1982,9 @@ app.get('/api/auth-status', (req, res) => {
     });
   }
   res.json({
-    authorized: !!state.userRefreshToken,
-    tokenValid: !!(state.userAccessToken && Date.now() < state.tokenExpiresAt - 60000),
+    authorized: hasFeishuUserAuth(),
+    tokenValid: hasValidUserAccessToken(),
+    hasRefreshToken: !!state.userRefreshToken,
     mode: 'render',
     user: state.currentUser || null,
   });
@@ -2474,7 +2483,10 @@ app.get('/api/health', (req, res) => {
     ok: true,
     time: new Date().toISOString(),
     mode: useFeishuStorage() ? 'render-oauth2' : 'review-store',
-    authorized: useFeishuStorage() ? !!state.userRefreshToken : true,
+    authorized: useFeishuStorage() ? hasFeishuUserAuth() : true,
+    tokenValid: useFeishuStorage() ? hasValidUserAccessToken() : true,
+    hasRefreshToken: useFeishuStorage() ? !!state.userRefreshToken : false,
+    hasAppSecret: !!APP_SECRET,
     localReviewMode: LOCAL_REVIEW_MODE,
     storage: activeReviewStorageName(),
     redisStorageConfigured: useRedisStorage(),

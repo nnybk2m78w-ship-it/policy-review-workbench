@@ -8446,6 +8446,7 @@ async function startFeishuAuth() {
         clearInterval(authPollTimer);
         authPollTimer = null;
         showToast('✅ 飞书授权成功！可以开始同步了', 'success');
+        syncStatusesFromServer(true);
       }
     }, 3000);
   } catch (e) {
@@ -8735,7 +8736,14 @@ function restoreConfirmStateToServer(policy) {
 async function syncStatusesFromServer(showTip) {
   try {
     const result = await requestJson('/api/statuses', { cache: 'no-store' });
-    if (!result.success || !result.statuses) return false;
+    if (!result.success || !result.statuses) {
+      if (result && result.needAuth) {
+        const banner = document.getElementById('authBanner');
+        if (banner) banner.style.display = 'flex';
+        if (showTip) showToast('飞书未授权，无法同步最新审核状态', 'error', 3600);
+      }
+      return false;
+    }
     let changed = 0;
     const statusEntries = Object.entries(result.statuses);
     if (result.storage === 'feishu') {
