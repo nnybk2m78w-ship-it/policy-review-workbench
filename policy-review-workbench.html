@@ -5815,7 +5815,7 @@ const REVIEW_POLICIES = [
 ];
 
 const FEISHU_BASE_URL = "https://hf7l9aiqzx.feishu.cn/base/EpBObMv3GaBOe3slKxdcOwJwnWc?table=tblYWwuBfs3oylsh&view=vew3eXfyFs";
-const STORAGE_KEY = 'policy_review_state_batch_20260910_69';
+const STORAGE_KEY = 'policy_review_state_batch_20261014_feishu_authoritative_69';
 const CONFIRM_LEDGER_KEY = 'policy_review_confirm_ledger_v1';
 try {
   const params = new URLSearchParams(window.location.search || '');
@@ -5975,7 +5975,6 @@ const FIELD_GROUPS = [
   { title: '退改签与规则', fields: ['sign_and_transfer_rules','refund_rules','change_rules','refund_change_note','commission_rate','rounding_rule','fc_fn_fp_note'] },
   { title: '次卡/权益', fields: ['usage_times','travel_class','product_show','json_count','use_limit','luggage_amount','not_applicable_flight_routes','not_applicable_od','price_groups_summary','use_code'] },
   { title: '其他信息', fields: [] },
-  { title: '人工确认', fields: ['manual_confirm_fields'] },
 ];
 const GROUPED_FIELD_SET = new Set(FIELD_GROUPS.flatMap(group => group.fields || []));
 const BASE_PROMPT_FIELDS = {
@@ -6030,6 +6029,7 @@ function getPolicyFileType(policyOrFields, parsed) {
   const text = [
     p.file_name,
     p.category,
+    p.source_text,
     fields['文件类型'],
     fields['解析场景'],
     fields['产品名称'],
@@ -6040,7 +6040,7 @@ function getPolicyFileType(policyOrFields, parsed) {
     data.product_name,
   ].filter(Boolean).join(' ');
   if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
-  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码|产品操作规定/.test(text)) {
+  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) {
     return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
   }
   return '自营';
@@ -6432,12 +6432,19 @@ let appState = {
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
 
-// Load from localStorage — merge status/edits INTO fresh REVIEW_POLICIES data
+const SERVER_AUTHORITATIVE = typeof window !== 'undefined' && /^https?:/.test(window.location.protocol);
+
+// Load from localStorage — on hosted pages Feishu/server is authoritative, so only UI prefs are restored.
 const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
   try {
     const parsed = JSON.parse(saved);
     const savedPolicies = Array.isArray(parsed.policies) ? parsed.policies : null;
+    if (SERVER_AUTHORITATIVE) {
+      appState.currentFileId = parsed.currentFileId || null;
+      appState.currentView = parsed.currentView || 'review';
+      appState.statusFilter = parsed.statusFilter || '';
+    } else {
     const staticIds = new Set(REVIEW_POLICIES.map(p => p.id));
     const savedIds = new Set((savedPolicies || []).map(p => p && p.id).filter(Boolean));
     const staleStaticBatch = REVIEW_POLICIES.length > 0 && (
@@ -6492,6 +6499,7 @@ if (saved) {
           return p;
         });
       }
+    }
     }
   } catch(e) {}
 }

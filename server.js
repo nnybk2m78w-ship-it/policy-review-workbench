@@ -1362,13 +1362,14 @@ function getPolicyFileType(fields, parsed) {
     getFileName(fields, parsed),
     normalizeFeishuValue(fields && fields['解析场景']),
     normalizeFeishuValue(fields && fields['产品名称']),
+    normalizeFeishuValue(fields && (fields['原始文本'] || fields['源文本'] || fields['文件内容'] || fields['解析文本'])),
     normalizeFeishuValue(getParsedValue(parsed, 'scenario')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_family')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_category')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_name')),
   ].filter(Boolean).join(' ');
   if (/次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
-  if (/旗舰店/.test(text)) return /券类|优惠券|券码|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
   return '自营';
 }
 
@@ -1377,6 +1378,10 @@ function isBlankish(value) {
   return !text ||
     ['null', 'undefined', '待确认', '需人工确认', '人工确认', '未提取', '未识别', '无法确认', '未获取', '(空)', '空', '暂无'].includes(text) ||
     /^(待确认|需人工确认|人工确认|未提取|未识别|无法确认|未获取)/.test(text);
+}
+
+function hasConcreteFieldValue(value) {
+  return !isBlankish(value);
 }
 
 function sameScope(sourceParsed, targetParsed) {
@@ -1557,6 +1562,241 @@ function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
     type: '字段修改原因沉淀规则',
     rule: `当同场景、同航司待审文件命中相同字段问题，且当前值为空或等于旧值时，按人工修改原因修正「${fieldLabel || fieldKey}」。`,
   };
+}
+
+function parsedObjects(parsed) {
+  if (!parsed) return [];
+  return Array.isArray(parsed) ? parsed.filter(x => x && typeof x === 'object') : [parsed].filter(x => x && typeof x === 'object');
+}
+
+function getSourceTextForLearning(fields, parsed) {
+  return [
+    getFileName(fields, parsed),
+    normalizeFeishuValue(fields && (fields['原始文本'] || fields['源文本'] || fields['文件内容'] || fields['解析文本'])),
+    normalizeFeishuValue(getParsedValue(parsed, 'source_text')),
+  ].filter(Boolean).join('\n');
+}
+
+function cleanGenericManualConfirm(value) {
+  const text = cleanManualConfirmText(value);
+  return /^(人工确认|需人工确认|待确认|未识别|无法确认|暂无|\(空\)|空)$/.test(text) ? '' : text;
+}
+
+function clearManualConfirmByConcreteValues(parsed) {
+  let changed = false;
+  parsedObjects(parsed).forEach(obj => {
+    Object.entries(obj).forEach(([key, value]) => {
+      if (key === 'manual_confirm_fields' || key === FIELD_DEFINITIONS_KEY || !hasConcreteFieldValue(value)) return;
+      const next = stripManualConfirmForField(obj.manual_confirm_fields, key, KEY_LABELS[key] || key);
+      if (normalizeFeishuValue(obj.manual_confirm_fields) !== next) {
+        obj.manual_confirm_fields = next;
+        changed = true;
+      }
+    });
+    if (obj.data && typeof obj.data === 'object') {
+      Object.entries(obj.data).forEach(([key, value]) => {
+        if (key === 'manual_confirm_fields' || key === FIELD_DEFINITIONS_KEY || !hasConcreteFieldValue(value)) return;
+        const next = stripManualConfirmForField(obj.data.manual_confirm_fields, key, KEY_LABELS[key] || key);
+        if (normalizeFeishuValue(obj.data.manual_confirm_fields) !== next) {
+          obj.data.manual_confirm_fields = next;
+          changed = true;
+        }
+      });
+    }
+  });
+  return changed;
+}
+
+function repairDateRangeOrder(value) {
+  const text = normalizeFeishuValue(value);
+  const m = text.match(/^(20\d{2})-(\d{2})-(\d{2})至(20\d{2})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  const start = `${m[1]}-${m[2]}-${m[3]}`;
+  const end = `${m[4]}-${m[5]}-${m[6]}`;
+  if (start <= end) return '';
+  return `${end}至${start}`;
+}
+
+function repairInvalidDateFromTitle(fields, parsed, fieldKey) {
+  const current = getParsedValue(parsed, fieldKey);
+  if (!/20\d{2}-\d{2}-00/.test(current)) return '';
+  const inferred = inferDateRangeFromTitle(getSourceTextForLearning(fields, parsed), fieldKey);
+  return inferred || '';
+}
+
+function extractYearMonthDay(text, suffixPattern) {
+  const m = text.match(suffixPattern);
+  if (!m) return '';
+  return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+}
+
+function inferMissingDateStart(fields, parsed, fieldKey) {
+  const current = getParsedValue(parsed, fieldKey);
+  const endMatch = normalizeFeishuValue(current).match(/^(?:需)?人工确认至(20\d{2}-\d{2}-\d{2})$/);
+  if (!endMatch) return '';
+  const text = getSourceTextForLearning(fields, parsed);
+  let start = '';
+  if (/文件下发之日起|政策下发之日起|自政策下发之日起|自下发之日起/.test(text)) {
+    start = extractDocumentDate(text);
+  }
+  if (!start && /即日起|上线之日起|产品生效之日起|运价生效日起/.test(text)) {
+    start = extractDocumentDate(text);
+  }
+  if (!start) {
+    start = extractYearMonthDay(text, /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  }
+  if (!start || start > endMatch[1]) return '';
+  return `${start}至${endMatch[1]}`;
+}
+
+function summarizeBenefitRules(text, names) {
+  const lines = normalizeFeishuValue(text)
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const keys = ['领取', '兑换', '激活', '有效期', '使用', '核销', '适用', '不适用', '退款', '退票', '变更', '签转', '会员', '短信', '订单', '行李', '选座', '积分', '里程', '酒店', '礼包', '安检', '升舱'];
+  const picked = [];
+  lines.forEach(line => {
+    if (picked.length >= 8) return;
+    if (!keys.some(k => line.includes(k))) return;
+    if (names && !names.some(name => line.includes(name.replace(/\d+\s*/g, '').slice(0, 2))) && !/(权益|礼包|酒店|行李|选座|积分|里程|安检|升舱)/.test(line)) return;
+    const compact = line.length > 180 ? `${line.slice(0, 180)}...` : line;
+    if (!picked.includes(compact)) picked.push(compact);
+  });
+  return picked.join('；');
+}
+
+function inferBenefitFields(fields, parsed) {
+  const text = getSourceTextForLearning(fields, parsed);
+  if (!/(权益|礼包|酒店券|客房券|行李额|优先选座|快速安检|升舱|积分|里程|休息室|餐食|接送机|兑换券|赠送)/.test(text)) return null;
+  const names = [];
+  const add = name => { if (name && !names.includes(name)) names.push(name); };
+  if (/酒店券|客房券|酒店房券/.test(text)) add('酒店券');
+  const luggage = text.match(/(\d+\s*(?:KG|kg|公斤).{0,8}(?:托运行李额|行李额))/);
+  if (luggage) add(luggage[1].replace(/\s+/g, ''));
+  if (/优先选座/.test(text)) add('优先选座');
+  if (/PLUS\s*月卡|Plus\s*月卡|plus\s*月卡/i.test(text)) add('PLUS月卡');
+  if (/消费积分|会员积分|赠送积分|优享积分/.test(text)) add(/优享积分/.test(text) ? '优享积分' : '会员消费积分');
+  if (/额外.{0,8}里程|非定级里程|赠送里程/.test(text)) add('额外非定级里程');
+  if (/云饮礼包|饮品礼包|饮品券|云饮/.test(text)) add('云饮礼包');
+  if (/快速安检/.test(text)) add('快速安检服务');
+  if (/升舱|超级经济舱|公务舱/.test(text)) add(/公务舱/.test(text) ? '公务舱权益' : '升舱权益');
+  if (/休息室/.test(text)) add('休息室权益');
+  if (/餐食/.test(text)) add('餐食权益');
+  if (/接送机/.test(text)) add('接送机权益');
+  if (!names.length) return null;
+  return {
+    benefit_name: names.join('；'),
+    benefit_usage_rules: summarizeBenefitRules(text, names),
+  };
+}
+
+function normalizeDocumentLevelField(parsed, key) {
+  if (!Array.isArray(parsed) || !DOCUMENT_LEVEL_KEYS.has(key)) return false;
+  let changed = false;
+  let firstValue = '';
+  for (const obj of parsed) {
+    const value = getParsedValue(obj, key);
+    if (hasConcreteFieldValue(value)) {
+      firstValue = value;
+      break;
+    }
+  }
+  parsed.forEach((obj, idx) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (idx === 0 && firstValue && normalizeFeishuValue(getParsedValue(obj, key)) !== normalizeFeishuValue(firstValue)) {
+      obj[key] = firstValue;
+      if (obj.data && typeof obj.data === 'object') obj.data[key] = firstValue;
+      changed = true;
+    }
+    if (idx > 0) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        delete obj[key];
+        changed = true;
+      }
+      if (obj.data && typeof obj.data === 'object' && Object.prototype.hasOwnProperty.call(obj.data, key)) {
+        delete obj.data[key];
+        changed = true;
+      }
+    }
+  });
+  return changed;
+}
+
+function applyCurrentLearningToParsed(fields, parsed) {
+  if (!parsed) return { changed: false, changes: [] };
+  const changes = [];
+  const recordChange = (key, before, after, reason) => {
+    if (normalizeFeishuValue(before) === normalizeFeishuValue(after)) return;
+    changes.push({ key, label: KEY_LABELS[key] || key, before: normalizeFeishuValue(before), after: normalizeFeishuValue(after), reason });
+  };
+
+  parsedObjects(parsed).forEach(obj => {
+    const rawManual = obj.manual_confirm_fields;
+    const cleanManual = cleanGenericManualConfirm(rawManual);
+    if (normalizeFeishuValue(rawManual) !== cleanManual) {
+      obj.manual_confirm_fields = cleanManual;
+      recordChange('manual_confirm_fields', rawManual, cleanManual, '清理无具体字段的人工确认占位');
+    }
+    if (obj.data && typeof obj.data === 'object') {
+      const dataManual = obj.data.manual_confirm_fields;
+      const cleanDataManual = cleanGenericManualConfirm(dataManual);
+      if (normalizeFeishuValue(dataManual) !== cleanDataManual) {
+        obj.data.manual_confirm_fields = cleanDataManual;
+        recordChange('manual_confirm_fields', dataManual, cleanDataManual, '清理无具体字段的人工确认占位');
+      }
+    }
+  });
+
+  ['sale_date', 'depart_date', 'use_date', 'redeem_date'].forEach(key => {
+    const before = getParsedValue(parsed, key);
+    const swapped = repairDateRangeOrder(before);
+    const invalidFixed = repairInvalidDateFromTitle(fields, parsed, key);
+    const missingStartFixed = inferMissingDateStart(fields, parsed, key);
+    const after = swapped || invalidFixed || missingStartFixed;
+    if (after && setParsedField(parsed, key, after)) {
+      recordChange(key, before, after, '按当前文件日期证据修复日期范围');
+    }
+  });
+
+  clearManualConfirmByConcreteValues(parsed);
+  cleanParsedManualConfirm(parsed);
+
+  const benefits = inferBenefitFields(fields, parsed);
+  const fileType = getPolicyFileType(fields, parsed);
+  const benefitDefinitions = {
+    benefit_name: {
+      label: '权益名称',
+      json_key: 'benefit_name',
+      value_type: 'string',
+      file_type: fileType,
+      description: '当前政策文件明确售卖或赠送的附加权益名称',
+      logic: '只提取当前文件原文出现的具体权益本体，如酒店券、行李额、优先选座、月卡、积分、里程、快速安检、升舱等；不是产品名或活动名。',
+    },
+    benefit_usage_rules: {
+      label: '权益使用规则',
+      json_key: 'benefit_usage_rules',
+      value_type: 'string',
+      file_type: fileType,
+      description: '当前政策文件中该附加权益的领取、激活、兑换、有效期、适用限制和退改影响',
+      logic: '仅概括当前文件中与权益使用直接相关的规则，不写整篇产品介绍、票价规则、航线规则或退改签章节。',
+    },
+  };
+  ['benefit_name', 'benefit_usage_rules'].forEach(key => {
+    const before = getParsedValue(parsed, key);
+    if (benefits && hasConcreteFieldValue(benefits[key])) {
+      if (setParsedField(parsed, key, benefits[key], benefitDefinitions[key])) {
+        recordChange(key, before, benefits[key], '按当前文件权益证据补齐文档级权益字段');
+      }
+    } else if (before && !hasConcreteFieldValue(before)) {
+      if (deleteParsedField(parsed, key)) {
+        recordChange(key, before, '', '权益字段无当前文件证据且为占位值，移除');
+      }
+    }
+    normalizeDocumentLevelField(parsed, key);
+  });
+
+  return { changed: changes.length > 0, changes };
 }
 
 function reasonLooksGeneral(reason) {
@@ -2689,6 +2929,102 @@ function requireAdminConfirm(req, res, expected) {
   }
   return true;
 }
+
+// ---- 管理接口：按最新人工学习规则修复当前待审记录 ----
+// 只修复可由当前文件原文确定的问题；不改已确认记录，不新增人工问题标记。
+app.post('/api/admin/relearn-pending-records', async (req, res) => {
+  if (!requireAdminConfirm(req, res, 'RELEARN_PENDING_RECORDS')) return;
+
+  if (!useFeishuStorage()) {
+    return res.status(400).json({
+      success: false,
+      error: '当前不是飞书存储模式，无法批量修复线上待审记录',
+      storage: activeReviewStorageName(),
+    });
+  }
+
+  try {
+    const tableFields = await ensureTableFields();
+    const records = await listAllFeishuRecords();
+    const changedRecords = [];
+    const skipped = [];
+
+    const results = await runLimited(records, 4, async item => {
+      const fields = item.fields || {};
+      if (!isPendingReview(fields)) return { success: true, skipped: true, reason: '已确认' };
+
+      const jsonFieldName = getJsonFieldName(fields);
+      const parsed = parseJsonField(jsonFieldName ? fields[jsonFieldName] : null);
+      if (!parsed) {
+        skipped.push({ recordId: item.recordId, fileName: getFileName(fields, parsed), reason: '解析JSON为空或不可解析' });
+        return { success: true, skipped: true };
+      }
+
+      const beforeJson = stringifyJsonField(parsed);
+      const learned = applyCurrentLearningToParsed(fields, parsed);
+      const afterJson = stringifyJsonField(parsed);
+      const manualAfter = normalizeFeishuValue(getParsedValue(parsed, 'manual_confirm_fields'));
+      const updates = {};
+
+      if (beforeJson !== afterJson && jsonFieldName && tableFields.includes(jsonFieldName)) {
+        updates[jsonFieldName] = afterJson;
+      }
+      if (tableFields.includes('人工确认项') && normalizeFeishuValue(fields['人工确认项']) !== manualAfter) {
+        updates['人工确认项'] = manualAfter;
+      }
+
+      (learned.changes || []).forEach(change => {
+        const label = KEY_LABELS[change.key];
+        if (!label || !tableFields.includes(label)) return;
+        updates[label] = normalizeFeishuValue(getParsedValue(parsed, change.key));
+      });
+
+      if (!Object.keys(updates).length) return { success: true, skipped: true, reason: '无可安全修复项' };
+      await updateFeishuRecord(item.recordId, updates);
+      changedRecords.push({
+        recordId: item.recordId,
+        fileName: getFileName(fields, parsed),
+        fields: [...new Set((learned.changes || []).map(x => x.label || x.key))],
+        reasons: [...new Set((learned.changes || []).map(x => x.reason).filter(Boolean))],
+      });
+      return { success: true, recordId: item.recordId };
+    });
+
+    const errors = results.filter(x => x && !x.success);
+    let versionRecord = { ok: false, skipped: true };
+    if (changedRecords.length) {
+      versionRecord = await appendVersionUpdateRecord({
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+        fileName: '当前待审文件批量学习修复',
+        userName: 'AUTO_RULE',
+        fieldLabel: '多字段',
+        oldValue: '旧解析结果',
+        newValue: '按最新人工学习规则修正',
+        reason: '根据已确认历史样本与当前人工反馈，修正权益字段、人工确认残留、日期范围等确定性问题',
+        ruleType: '当前待审文件学习修复',
+        rule: '权益名称/权益使用规则仅按当前文件证据、文档级最多一次；人工确认被具体值替换后必须清理；日期范围按当前文件发文日/标题/原文日期修复。',
+        autoApplied: changedRecords.length,
+        autoFiles: changedRecords.map(x => x.fileName || x.recordId),
+      });
+    }
+
+    res.json({
+      success: errors.length === 0,
+      changed: changedRecords.length,
+      changed_records: changedRecords,
+      skipped,
+      errors,
+      versionRecord,
+      storage: 'feishu',
+    });
+  } catch (err) {
+    console.error(`[待审学习修复] ✗ ${err.message}`);
+    if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 function filterKnownFields(fields, knownFields) {
   const filtered = {};
