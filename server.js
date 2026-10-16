@@ -1732,22 +1732,40 @@ function inferChildApplicable(fields, parsed) {
 function normalizeAgeRangeText(value, text = '') {
   const source = `${normalizeFeishuValue(value)}\n${normalizeFeishuValue(text)}`;
   if (!source) return '';
+  const results = [];
+  const add = (item) => {
+    if (item && !results.includes(item)) results.push(item);
+  };
+  const hasAgeContext = (nearby) => /年龄|周岁|岁|青年|少年|学生|长者|银发|老人|老年|适老/.test(nearby);
+  const looksLikePolicyCode = (nearby) => /号|编号|政策|通告|文件|DRGN|XLS|XS-CP|SC-CP/i.test(nearby);
   const rangeRe = /(\d{1,3})\s*(?:周岁|岁)?\s*(?:[-~至到]|—|－|--|—)\s*(\d{1,3})\s*(?:周岁|岁)?/g;
   for (const match of source.matchAll(rangeRe)) {
     const start = match.index || 0;
     const nearby = source.slice(Math.max(0, start - 18), start + match[0].length + 18);
-    if (/年龄|周岁|岁|青年|少年|学生|长者|银发|老人|老年|适老/.test(nearby) && !/号|编号|政策|通告|文件|DRGN|XLS|XS-CP|SC-CP/i.test(nearby)) {
-      return `${match[1]}-${match[2]}`;
+    const after = source.slice(start + match[0].length, start + match[0].length + 4);
+    if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) {
+      add(`${match[1]}-${match[2]}`);
     }
   }
-  const between = source.match(/(?:年龄|年纪|周岁)?.{0,8}?(\d{1,3})\s*(?:周岁|岁)?\s*(?:以上|及以上|含以上|（含）以上|\(含\)以上)/);
-  if (between) {
-    const start = Number(between[1]);
-    const end = /老年|长者|银发|老人|适老|青老年/.test(source) ? 110 : 200;
-    return `${start}-${end}`;
+  const aboveRe = /(\d{1,3})\s*(?:周岁|岁)?\s*(?:以上|及以上|含以上|（含）以上|\(含\)以上)/g;
+  for (const match of source.matchAll(aboveRe)) {
+    const start = match.index || 0;
+    const nearby = source.slice(Math.max(0, start - 18), start + match[0].length + 18);
+    const after = source.slice(start + match[0].length, start + match[0].length + 4);
+    if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) {
+      const from = Number(match[1]);
+      const end = /老年|长者|银发|老人|适老|青老年/.test(nearby) ? 110 : 200;
+      add(`${from}-${end}`);
+    }
   }
-  const under = source.match(/(\d{1,3})\s*(?:周岁|岁)?\s*(?:以下|及以下|含以下|（含）以下|\(含\)以下)/);
-  if (under) return `0-${under[1]}`;
+  const underRe = /(\d{1,3})\s*(?:周岁|岁)?\s*(?:以下|及以下|含以下|（含）以下|\(含\)以下)/g;
+  for (const match of source.matchAll(underRe)) {
+    const start = match.index || 0;
+    const nearby = source.slice(Math.max(0, start - 18), start + match[0].length + 18);
+    const after = source.slice(start + match[0].length, start + match[0].length + 4);
+    if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) add(`0-${match[1]}`);
+  }
+  if (results.length) return results.join('；');
   if (/青年|少年|学生/.test(source)) {
     const young = source.match(/(\d{1,3})\s*(?:周岁|岁)?[^\n]{0,12}?(\d{1,3})\s*(?:周岁|岁)?/);
     if (young) return `${young[1]}-${young[2]}`;
@@ -1757,7 +1775,7 @@ function normalizeAgeRangeText(value, text = '') {
 
 function inferPassengerCountLimit(text) {
   const source = normalizeFeishuValue(text);
-  const range = source.match(/(\d{1,2})\s*(?:[-~至到]|—|－|--)\s*(\d{1,2})\s*(?:人|名|位).{0,10}(?:同行|成团|同订|同时购买|一同出行|同一订单|购买|出行)/);
+  const range = source.match(/(?:[（(]\s*)?(\d{1,2})\s*(?:[-~至到]|—|－|--)\s*(\d{1,2})\s*(?:[）)]\s*)?(?:人|名|位).{0,10}(?:同行|成团|同订|同时购买|一同出行|同一订单|购买|出行)/);
   if (range) return `${range[1]}-${range[2]}人`;
   const min = source.match(/(?:至少|不少于|不低于|≥|>=|满|购买人数|同行人数|出行人数|成团人数|同一订单.{0,8}?)(\d{1,2})\s*(?:人|名|位)/);
   if (min) return `${min[1]}人及以上`;
