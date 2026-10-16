@@ -1765,7 +1765,13 @@ function normalizeAgeRangeText(value, text = '') {
     const after = source.slice(start + match[0].length, start + match[0].length + 4);
     if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) add(`0-${match[1]}`);
   }
-  if (results.length) return results.join('；');
+  if (results.length) {
+    const normalized = results.filter(item => {
+      const match = item.match(/^(\d{1,3})-200$/);
+      return !match || !results.includes(`${match[1]}-110`);
+    });
+    return normalized.join('；');
+  }
   if (/青年|少年|学生/.test(source)) {
     const young = source.match(/(\d{1,3})\s*(?:周岁|岁)?[^\n]{0,12}?(\d{1,3})\s*(?:周岁|岁)?/);
     if (young) return `${young[1]}-${young[2]}`;
