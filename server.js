@@ -1729,6 +1729,72 @@ function inferChildApplicable(fields, parsed) {
   return '';
 }
 
+function normalizeAgeRangeText(value, text = '') {
+  const source = `${normalizeFeishuValue(value)}\n${normalizeFeishuValue(text)}`;
+  if (!source) return '';
+  const explicitRange = source.match(/(\d{1,3})\s*(?:周岁|岁)?\s*(?:[-~至到]|—|－|--|—)\s*(\d{1,3})\s*(?:周岁|岁)?/);
+  if (explicitRange) return `${explicitRange[1]}-${explicitRange[2]}`;
+  const between = source.match(/(?:年龄|年纪|周岁)?.{0,8}?(\d{1,3})\s*(?:周岁|岁)?\s*(?:以上|及以上|含以上|（含）以上|\(含\)以上)/);
+  if (between) {
+    const start = Number(between[1]);
+    const end = /老年|长者|银发|老人|适老|青老年/.test(source) ? 110 : 200;
+    return `${start}-${end}`;
+  }
+  const under = source.match(/(\d{1,3})\s*(?:周岁|岁)?\s*(?:以下|及以下|含以下|（含）以下|\(含\)以下)/);
+  if (under) return `0-${under[1]}`;
+  if (/青年|少年|学生/.test(source)) {
+    const young = source.match(/(\d{1,3})\s*(?:周岁|岁)?[^\n]{0,12}?(\d{1,3})\s*(?:周岁|岁)?/);
+    if (young) return `${young[1]}-${young[2]}`;
+  }
+  return '';
+}
+
+function inferPassengerCountLimit(text) {
+  const source = normalizeFeishuValue(text);
+  const min = source.match(/(?:至少|不少于|不低于|≥|>=|满|购买人数|同行人数|出行人数|成团人数|同一订单.{0,8}?)(\d{1,2})\s*(?:人|名|位)/);
+  if (min) return `${min[1]}人及以上`;
+  const group = source.match(/(\d{1,2})\s*(?:人|名|位)(?:及以上|以上|起|同行|成团|同订|同时购买)/);
+  if (group) return `${group[1]}人及以上`;
+  if (/多人|拼团|同行|小团/.test(source)) return '2人及以上';
+  return '';
+}
+
+function inferFlagshipPassengerType(fields, parsed) {
+  const fileType = getPolicyFileType(fields, parsed);
+  if (fileType !== '旗舰店code' && fileType !== '旗舰店券类') return '';
+  const text = getSourceTextForLearning(fields, parsed) || getPolicyText(fields, parsed);
+  const productType = normalizeFeishuValue(getParsedValue(parsed, 'product_type'));
+  const productFamily = normalizeFeishuValue(getParsedValue(parsed, 'product_family'));
+  const ageLimit = normalizeFeishuValue(getParsedValue(parsed, 'age_limit'));
+  const current = normalizeFeishuValue(getParsedValue(parsed, 'passenger_type'));
+  const source = `${text}\n${productType}\n${productFamily}\n${ageLimit}`;
+
+  const parts = [];
+  const ageRange = normalizeAgeRangeText(ageLimit, source);
+  if (ageRange && !/^0-200$/.test(ageRange)) parts.push(ageRange);
+  const countLimit = inferPassengerCountLimit(source);
+  if (countLimit) parts.push(countLimit);
+  if (parts.length) return [...new Set(parts)].join('；');
+
+  if (/溢价产品|直加|加价|上浮|额外支付|付费.{0,8}(?:权益|行李|选座|升舱|积分|里程)|加享/.test(source)) {
+    return '成人适用';
+  }
+  if (/(?:仅限|只限|限).{0,8}(?:成人|正常散客)|成人(?:适用|可购买|旅客)|正常散客\s*[（(]\s*不含儿童/.test(source)) {
+    return '成人适用';
+  }
+  if (/儿童.{0,12}(不适用|不得|不可|不能|不享受|不支持|不允许)|不含儿童|婴儿.{0,12}(不适用|不得|不可|不能)|团队.{0,12}(不适用|不得|不可|不能)|特殊旅客.{0,12}(不适用|不得|不可|不能)/.test(source)) {
+    return '成人适用';
+  }
+  if (/全人群|不限旅客|所有旅客|成人儿童婴儿均适用/.test(source)) return '全人群适用';
+  if (
+    !/(成人|儿童|婴儿|团队|散客|特殊旅客|年龄|周岁|岁|学生|青年|长者|银发|老人|多人|拼团|同行|家庭|会员|人数)/.test(source) &&
+    (isBlankish(current) || /成人|人工确认|需人工确认/.test(current))
+  ) {
+    return '全人群适用';
+  }
+  return '';
+}
+
 function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
   const text = `${fieldKey} ${fieldLabel || ''} ${reason || ''} ${newValue || ''}`;
   if (['sale_date', 'depart_date'].includes(fieldKey) && /删除字段|不看此字段|不开此字段|配置不看|配置不开/.test(text)) {
@@ -1759,6 +1825,12 @@ function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
     return {
       type: '儿童适用显式语义规则',
       rule: '儿童适用只按当前文件明确儿童适用/不适用判断；仅排除婴儿或特殊票时不得等同于儿童不适用。',
+    };
+  }
+  if (fieldKey === 'passenger_type' && /旅客类型|适用旅客|成人|儿童|婴儿|团队|散客|年龄|人数|全人群|溢价/.test(text)) {
+    return {
+      type: '旗舰店旅客类型语义规则',
+      rule: '旗舰店 passenger_type 只表达适用旅客范围：溢价产品输出成人适用；有年龄/人数限制时输出对应年龄段和人数限制；没有成人/儿童/婴儿/团队等限制时输出全人群适用；无法判断才人工确认。',
     };
   }
   if (fieldKey === 'product_type' && /成人|儿童|CH|PAT[:：]?A/i.test(text) && /PAT[:：]?A/i.test(text)) {
@@ -2185,6 +2257,14 @@ function applyCurrentLearningToParsed(fields, parsed) {
 
   repairPresentedPolicyPlaceholders(fields, parsed).forEach(change => recordChange(change.key, change.before, change.after, change.reason));
 
+  if (allowedFields.has('passenger_type')) {
+    const before = getParsedValue(parsed, 'passenger_type');
+    const inferredPassengerType = inferFlagshipPassengerType(fields, parsed);
+    if (inferredPassengerType && normalizeFeishuValue(before) !== inferredPassengerType && setParsedField(parsed, 'passenger_type', inferredPassengerType)) {
+      recordChange('passenger_type', before, inferredPassengerType, '按旗舰店知识库旅客类型规则修正：溢价=成人适用，年龄/人数限制输出限制，无限制输出全人群适用');
+    }
+  }
+
   clearManualConfirmByConcreteValues(parsed);
   cleanParsedManualConfirm(parsed);
 
@@ -2302,6 +2382,9 @@ function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetPar
   }
   if (ruleType === '儿童适用显式语义规则') {
     return inferChildApplicable(targetFields, targetParsed) || null;
+  }
+  if (ruleType === '旗舰店旅客类型语义规则') {
+    return inferFlagshipPassengerType(targetFields, targetParsed) || null;
   }
   if (ruleType === '年龄限制产品证件默认规则') {
     const age = getParsedValue(targetParsed, 'age_limit');
