@@ -1732,8 +1732,14 @@ function inferChildApplicable(fields, parsed) {
 function normalizeAgeRangeText(value, text = '') {
   const source = `${normalizeFeishuValue(value)}\n${normalizeFeishuValue(text)}`;
   if (!source) return '';
-  const explicitRange = source.match(/(\d{1,3})\s*(?:周岁|岁)?\s*(?:[-~至到]|—|－|--|—)\s*(\d{1,3})\s*(?:周岁|岁)?/);
-  if (explicitRange) return `${explicitRange[1]}-${explicitRange[2]}`;
+  const rangeRe = /(\d{1,3})\s*(?:周岁|岁)?\s*(?:[-~至到]|—|－|--|—)\s*(\d{1,3})\s*(?:周岁|岁)?/g;
+  for (const match of source.matchAll(rangeRe)) {
+    const start = match.index || 0;
+    const nearby = source.slice(Math.max(0, start - 18), start + match[0].length + 18);
+    if (/年龄|周岁|岁|青年|少年|学生|长者|银发|老人|老年|适老/.test(nearby) && !/号|编号|政策|通告|文件|DRGN|XLS|XS-CP|SC-CP/i.test(nearby)) {
+      return `${match[1]}-${match[2]}`;
+    }
+  }
   const between = source.match(/(?:年龄|年纪|周岁)?.{0,8}?(\d{1,3})\s*(?:周岁|岁)?\s*(?:以上|及以上|含以上|（含）以上|\(含\)以上)/);
   if (between) {
     const start = Number(between[1]);
@@ -1751,6 +1757,8 @@ function normalizeAgeRangeText(value, text = '') {
 
 function inferPassengerCountLimit(text) {
   const source = normalizeFeishuValue(text);
+  const range = source.match(/(\d{1,2})\s*(?:[-~至到]|—|－|--)\s*(\d{1,2})\s*(?:人|名|位).{0,10}(?:同行|成团|同订|同时购买|一同出行|同一订单|购买|出行)/);
+  if (range) return `${range[1]}-${range[2]}人`;
   const min = source.match(/(?:至少|不少于|不低于|≥|>=|满|购买人数|同行人数|出行人数|成团人数|同一订单.{0,8}?)(\d{1,2})\s*(?:人|名|位)/);
   if (min) return `${min[1]}人及以上`;
   const group = source.match(/(\d{1,2})\s*(?:人|名|位)(?:及以上|以上|起|同行|成团|同订|同时购买)/);
