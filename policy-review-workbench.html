@@ -331,6 +331,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .change-history-item .ch-head { display:flex; align-items:center; gap:8px; }
 .change-history-item .ch-time { color:var(--muted); font-size:11px; min-width:120px; }
 .change-history-item .ch-field { font-weight:500; font-size:12px; color:#8e6e00; }
+.change-history-item .ch-source { border-radius:9px; padding:1px 7px; font-size:10px; font-weight:700; }
+.change-history-item .ch-source.human { color:#8e6e00; background:#fff1c2; }
+.change-history-item .ch-source.auto { color:#0e7a61; background:#e1fff6; }
 .change-history-item .ch-change { font-size:12px; margin-top:2px; }
 .change-history-item .ch-old { color:#e17055; text-decoration:line-through; font-size:11px; }
 .change-history-item .ch-arrow { color:var(--muted); font-size:11px; }
@@ -5997,6 +6000,26 @@ function normalizeFeishuValue(value) {
   return String(value).trim();
 }
 
+function displayTypeForFileType(fileType) {
+  if (fileType === '次卡') return '次卡';
+  if (fileType === '自营') return '自营';
+  if (fileType === '旗舰店code' || fileType === '旗舰店券类') return '旗舰店';
+  return '';
+}
+
+function normalizePolicyDisplayType(value) {
+  const text = normalizeFeishuValue(value);
+  if (!text) return '';
+  if (/次卡/.test(text)) return '次卡';
+  if (/自营|自有票台/.test(text)) return '自营';
+  if (/旗舰店|旗舰店票台|旗舰店code|旗舰店券类/.test(text)) return '旗舰店';
+  return text;
+}
+
+function inferFlagshipSubtypeFromText(text) {
+  return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text || '') ? '旗舰店券类' : '旗舰店code';
+}
+
 function syncTargetLabel(result) {
   return result && result.savedToFeishu === false ? '审核记录' : '飞书';
 }
@@ -6022,6 +6045,16 @@ function canonicalizeLegacyFieldName(field) {
   return FIELD_LABEL_TO_KEY[field] || field;
 }
 
+function normalizeChangeSource(entry = {}) {
+  const raw = normalizeFeishuValue(entry.source || entry.changeSource || entry.origin || entry.type).toLowerCase();
+  const user = normalizeFeishuValue(entry.user);
+  const reason = normalizeFeishuValue(entry.reason);
+  if (['auto', 'system', 'ai', 'batch', 'auto_rule'].includes(raw)) return 'auto';
+  if (/AUTO_RULE|^系统$|^auto/i.test(user)) return 'auto';
+  if (/^自动|自动矫正|系统自动|系统回滚|按当前文件.+修复|按当前原文复核拆分/.test(reason)) return 'auto';
+  return 'human';
+}
+
 function getPolicyFileType(policyOrFields, parsed) {
   const p = policyOrFields || {};
   const fields = parsed ? p : {};
@@ -6031,7 +6064,6 @@ function getPolicyFileType(policyOrFields, parsed) {
   if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
   if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
   if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
-  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店code/.test(explicitScenario)) return '旗舰店code';
 
   const text = [
     p.file_name,
@@ -6039,18 +6071,30 @@ function getPolicyFileType(policyOrFields, parsed) {
     p.source_text,
     fields['文件类型'],
     fields['解析场景'],
+    fields['业务线'],
     fields['产品名称'],
     data.scenario,
     data.business_line,
     data.product_family,
     data.product_category,
     data.product_name,
+    data.coupon_resource_code,
+    data.product_code,
+    data.coupon_name,
   ].filter(Boolean).join(' ');
+  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店|旗舰店票台|旗舰店code/.test(explicitScenario)) {
+    return inferFlagshipSubtypeFromText(text);
+  }
   if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
   if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) {
-    return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+    return inferFlagshipSubtypeFromText(text);
   }
   return '自营';
+}
+
+function getPolicyDisplayScenario(policy) {
+  const type = getPolicyFileType(policy);
+  return displayTypeForFileType(type) || normalizePolicyDisplayType(policy && policy.data && (policy.data.business_line || policy.data.scenario));
 }
 
 function categoryForFileType(type) {
@@ -6248,17 +6292,27 @@ function normalizeHistoryEntry(entry) {
     const match = text.match(/^\[([^\]]*)\]\s*([^|]*)\|\s*([^:：]+)[:：]\s*([\s\S]*?)\s*→\s*([\s\S]*?)(?:\s*\|\s*原因[:：]\s*([\s\S]*))?$/);
     if (match) {
       const fieldLabel = match[3].trim();
-      return {
+      let reason = (match[6] || '').trim();
+      let source = '';
+      const sourceMatch = reason.match(/([\s\S]*?)\s*\|\s*来源[:：]\s*(人工修改|系统修正|auto|human|system)\s*$/i);
+      if (sourceMatch) {
+        reason = sourceMatch[1].trim();
+        source = /系统|auto|system/i.test(sourceMatch[2]) ? 'auto' : 'human';
+      }
+      const normalized = {
         time: match[1].trim(),
         user: match[2].trim(),
         fieldLabel,
         field: canonicalizeLegacyFieldName(fieldLabel),
         oldValue: (match[4] || '').trim(),
         newValue: (match[5] || '').trim(),
-        reason: (match[6] || '').trim(),
+        reason,
+        source,
       };
+      normalized.source = normalizeChangeSource(normalized);
+      return normalized;
     }
-    return {
+    const normalized = {
       time: '',
       user: '',
       fieldLabel: '',
@@ -6266,12 +6320,15 @@ function normalizeHistoryEntry(entry) {
       oldValue: '',
       newValue: '',
       reason: text,
+      source: '',
     };
+    normalized.source = normalizeChangeSource(normalized);
+    return normalized;
   }
   if (typeof entry === 'object') {
     const fieldLabel = entry.fieldLabel || entry.field_label || entry.label || entry.field || '';
     const field = canonicalizeLegacyFieldName(entry.field || fieldLabel);
-    return {
+    const normalized = {
       time: entry.time || entry.created_at || entry.updated_at || '',
       user: entry.user || entry.created_by || entry.operator || '',
       fieldLabel: fieldLabel || LABELS[field] || field,
@@ -6279,7 +6336,10 @@ function normalizeHistoryEntry(entry) {
       oldValue: entry.oldValue !== undefined ? entry.oldValue : (entry.old_value !== undefined ? entry.old_value : ''),
       newValue: entry.newValue !== undefined ? entry.newValue : (entry.new_value !== undefined ? entry.new_value : ''),
       reason: entry.reason || entry.desc || '',
+      source: entry.source || entry.changeSource || entry.origin || '',
     };
+    normalized.source = normalizeChangeSource(normalized);
+    return normalized;
   }
   return null;
 }
@@ -6420,6 +6480,17 @@ function normalizePolicySchema(policy) {
       changed++;
     }
   });
+  const displayScenario = getPolicyDisplayScenario(policy);
+  if (displayScenario) {
+    if (normalizeFeishuValue(policy.data.scenario) !== displayScenario) {
+      policy.data.scenario = displayScenario;
+      changed++;
+    }
+    if (normalizeFeishuValue(policy.data.business_line) !== displayScenario) {
+      policy.data.business_line = displayScenario;
+      changed++;
+    }
+  }
   changed += applyManualHistoryValues(policy);
   changed += clearResolvedManualConfirmFields(policy);
   return changed;
@@ -7221,6 +7292,7 @@ function renderFieldRow(p, f, isExtra) {
 
 function getFieldDisplayValue(field, value, manualConfirm) {
   if (field === 'manual_confirm_fields') return cleanManualConfirmText(value);
+  if (field === 'scenario' || field === 'business_line') return normalizePolicyDisplayType(value);
   if (manualConfirm && !hasConcreteFieldValue(value)) return '人工确认';
   if (isManualConfirmValue(value)) return '人工确认';
   return typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
@@ -7440,6 +7512,7 @@ function renderReview(main) {
 
   const sourceHtml = renderSourceDocument(p);
   const inlineProblemsHtml = renderInlineProblemDetails(p);
+  const scenarioDisplay = getPolicyDisplayScenario(p);
 
   // Status badge
   const statusInfo = getStatusInfo(p);
@@ -7479,7 +7552,7 @@ function renderReview(main) {
     </div>
     <div class="review-right">
       <div class="review-header-actions">
-        <h4>🔍 解析结果 — ${escapeHtml(p.data.scenario || '')} | ${escapeHtml(p.data.carrier_name || '')} ${escapeHtml(p.data.product_name || '')}</h4>
+        <h4>🔍 解析结果 — ${escapeHtml(scenarioDisplay || '')} | ${escapeHtml(p.data.carrier_name || '')} ${escapeHtml(p.data.product_name || '')}</h4>
         <div class="actions-row">${addFieldBtn}${problemBtn}${confirmBtn}</div>
       </div>
       ${problemsHtml}
@@ -8223,6 +8296,7 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
     time: timeStr,
     user: (appState.user && appState.user.name) || '',
     reason: reason,
+      source: 'human',
   });
 
   if (normalizeFeishuValue(oldVal) !== normalizeFeishuValue(newVal)) {
@@ -8423,11 +8497,13 @@ function toggleChangeHistory(policyId, field) {
   if (changes.length === 0) {
     list.innerHTML = '<div style="padding:12px;color:var(--muted)">无修改记录</div>';
   } else {
-    list.innerHTML = changes.map(h =>
-      `<div class="change-history-item">
+    list.innerHTML = changes.map(h => {
+      const source = normalizeChangeSource(h);
+      return `<div class="change-history-item">
         <div class="ch-head">
           <span class="ch-time">${escapeHtml(h.time)}</span>
           <span class="ch-field">${escapeHtml(renderPlainFieldLabel(h.field, p))}</span>
+          <span class="ch-source ${source}">${source === 'auto' ? '系统修正' : '人工修改'}</span>
         </div>
         <div class="ch-change">
           <span class="ch-old">${escapeHtml(h.oldValue || '(空)')}</span>
@@ -8435,8 +8511,8 @@ function toggleChangeHistory(policyId, field) {
           <span class="ch-new">${escapeHtml(h.newValue || '(空)')}</span>
         </div>
         <div class="ch-reason">📝 原因：${escapeHtml(h.reason || '未填写')}</div>
-      </div>`
-    ).join('');
+      </div>`;
+    }).join('');
   }
   document.getElementById('historyOverlay').style.display = 'flex';
 }

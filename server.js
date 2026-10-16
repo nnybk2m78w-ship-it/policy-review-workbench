@@ -704,6 +704,7 @@ async function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, 
     oldValue: '',
     newValue: newValue !== undefined ? String(newValue) : '',
     reason: reason || '',
+    source: 'human',
   });
   record.changeHistory.push(entry);
   if (fieldDefinition) record.fieldDefinitions[key] = fieldDefinition;
@@ -1047,10 +1048,25 @@ function parseChangeHistory(raw) {
 function formatChangeHistory(entries) {
   return entries
     .map(e => {
-      if (typeof e === 'string') return e;
-      return `[${e.time}] ${e.user || ''} | ${e.fieldLabel || e.field || ''}: ${e.oldValue || '(空)'} → ${e.newValue || '(空)'} | 原因: ${e.reason || '未填写'}`.trim();
+      if (typeof e === 'string') {
+        const normalized = normalizeHistoryEntry(e);
+        if (!normalized) return e;
+        e = normalized;
+      }
+      const source = normalizeChangeSource(e);
+      return `[${e.time}] ${e.user || ''} | ${e.fieldLabel || e.field || ''}: ${e.oldValue || '(空)'} → ${e.newValue || '(空)'} | 原因: ${e.reason || '未填写'} | 来源: ${source === 'auto' ? '系统修正' : '人工修改'}`.trim();
     })
     .join('\n');
+}
+
+function normalizeChangeSource(entry = {}) {
+  const raw = normalizeFeishuValue(entry.source || entry.changeSource || entry.origin || entry.type).toLowerCase();
+  const user = normalizeFeishuValue(entry.user);
+  const reason = normalizeFeishuValue(entry.reason);
+  if (['auto', 'system', 'ai', 'batch', 'auto_rule'].includes(raw)) return 'auto';
+  if (/AUTO_RULE|^系统$|^auto/i.test(user)) return 'auto';
+  if (/^自动|自动矫正|系统自动|系统回滚|按当前文件.+修复|按当前原文复核拆分/.test(reason)) return 'auto';
+  return 'human';
 }
 
 function normalizeHistoryEntry(entry) {
@@ -1062,20 +1078,30 @@ function normalizeHistoryEntry(entry) {
     if (!match) return null;
     const fieldLabel = match[3].trim();
     const field = canonicalizeFieldName(fieldLabel);
-    return {
+    let reason = (match[6] || '').trim();
+    let source = '';
+    const sourceMatch = reason.match(/([\s\S]*?)\s*\|\s*来源[:：]\s*(人工修改|系统修正|auto|human|system)\s*$/i);
+    if (sourceMatch) {
+      reason = sourceMatch[1].trim();
+      source = /系统|auto|system/i.test(sourceMatch[2]) ? 'auto' : 'human';
+    }
+    const normalized = {
       time: match[1].trim(),
       user: match[2].trim(),
       fieldLabel,
       field,
       oldValue: (match[4] || '').trim(),
       newValue: (match[5] || '').trim(),
-      reason: (match[6] || '').trim(),
+      reason,
+      source,
     };
+    normalized.source = normalizeChangeSource(normalized);
+    return normalized;
   }
   if (typeof entry === 'object') {
     const fieldLabel = entry.fieldLabel || entry.field_label || entry.label || entry.field || '';
     const field = canonicalizeFieldName(entry.field || fieldLabel);
-    return {
+    const normalized = {
       time: entry.time || entry.created_at || entry.updated_at || '',
       user: entry.user || entry.created_by || entry.operator || '',
       fieldLabel: fieldLabel || KEY_LABELS[field] || field,
@@ -1083,7 +1109,10 @@ function normalizeHistoryEntry(entry) {
       oldValue: entry.oldValue !== undefined ? entry.oldValue : (entry.old_value !== undefined ? entry.old_value : ''),
       newValue: entry.newValue !== undefined ? entry.newValue : (entry.new_value !== undefined ? entry.new_value : ''),
       reason: entry.reason || entry.desc || '',
+      source: entry.source || entry.changeSource || entry.origin || '',
     };
+    normalized.source = normalizeChangeSource(normalized);
+    return normalized;
   }
   return null;
 }
@@ -1132,7 +1161,7 @@ function formatProblemMarks(entries) {
 
 function normalizeChangeEntry(entry, fallback) {
   const src = entry && typeof entry === 'object' ? entry : {};
-  return {
+  const normalized = {
     time: src.time || fallback.time || new Date().toLocaleString('zh-CN', { hour12: false }),
     user: src.user || fallback.user || '',
     fieldLabel: src.fieldLabel || src.field || fallback.fieldLabel || fallback.field || '',
@@ -1140,7 +1169,10 @@ function normalizeChangeEntry(entry, fallback) {
     oldValue: src.oldValue !== undefined ? src.oldValue : (fallback.oldValue || ''),
     newValue: src.newValue !== undefined ? src.newValue : (fallback.newValue || ''),
     reason: src.reason || fallback.reason || '',
+    source: src.source || src.changeSource || fallback.source || fallback.changeSource || '',
   };
+  normalized.source = normalizeChangeSource(normalized);
+  return normalized;
 }
 
 function normalizeFeishuValue(value) {
@@ -1443,47 +1475,81 @@ function getPolicyText(fields, parsed) {
   ].filter(Boolean).join('\n');
 }
 
+function displayTypeForFileType(fileType) {
+  if (fileType === '次卡') return '次卡';
+  if (fileType === '自营') return '自营';
+  if (fileType === '旗舰店code' || fileType === '旗舰店券类') return '旗舰店';
+  return '';
+}
+
+function normalizePolicyDisplayType(value) {
+  const text = normalizeFeishuValue(value);
+  if (!text) return '';
+  if (/次卡/.test(text)) return '次卡';
+  if (/自营|自有票台/.test(text)) return '自营';
+  if (/旗舰店|旗舰店票台|旗舰店code|旗舰店券类/.test(text)) return '旗舰店';
+  return text;
+}
+
+function inferFlagshipSubtypeFromText(text) {
+  return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text || '') ? '旗舰店券类' : '旗舰店code';
+}
+
 function getPolicyFileType(fields, parsed) {
   const explicitBusinessLine = normalizeFeishuValue(getParsedValue(parsed, 'business_line') || (fields && fields['业务线']));
   const explicitScenario = normalizeFeishuValue(getParsedValue(parsed, 'scenario') || (fields && fields['解析场景']));
   if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
   if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
   if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
-  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店code/.test(explicitScenario)) return '旗舰店code';
 
   const text = [
     getFileName(fields, parsed),
     normalizeFeishuValue(fields && fields['解析场景']),
+    normalizeFeishuValue(fields && fields['业务线']),
     normalizeFeishuValue(fields && fields['产品名称']),
     normalizeFeishuValue(fields && (fields['原始文本'] || fields['源文本'] || fields['文件内容'] || fields['解析文本'])),
     normalizeFeishuValue(getParsedValue(parsed, 'scenario')),
+    normalizeFeishuValue(getParsedValue(parsed, 'business_line')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_family')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_category')),
     normalizeFeishuValue(getParsedValue(parsed, 'product_name')),
+    normalizeFeishuValue(getParsedValue(parsed, 'coupon_resource_code')),
+    normalizeFeishuValue(getParsedValue(parsed, 'product_code')),
+    normalizeFeishuValue(getParsedValue(parsed, 'coupon_name')),
   ].filter(Boolean).join(' ');
+  if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店|旗舰店票台|旗舰店code/.test(explicitScenario)) {
+    return inferFlagshipSubtypeFromText(text);
+  }
   if (/次卡|权益卡|共享卡|畅游卡|无限飞|往返卡/.test(text)) return '次卡';
-  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text) ? '旗舰店券类' : '旗舰店code';
+  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) return inferFlagshipSubtypeFromText(text);
   return '自营';
 }
 
+function normalizeScenarioBusinessLineDisplay(fields, parsed) {
+  if (!parsed) return [];
+  const fileType = getPolicyFileType(fields, parsed);
+  const displayType = displayTypeForFileType(fileType);
+  if (!displayType) return [];
+  const changes = [];
+  ['scenario', 'business_line'].forEach(key => {
+    const before = getParsedValue(parsed, key) || normalizeFeishuValue(fields && fields[KEY_LABELS[key]]);
+    const after = normalizePolicyDisplayType(displayType);
+    if (!after || normalizePolicyDisplayType(before) === after) return;
+    if (setParsedField(parsed, key, after)) {
+      changes.push({
+        key,
+        label: KEY_LABELS[key],
+        before,
+        after,
+        reason: '统一展示口径：自有票台展示为自营，旗舰店票台展示为旗舰店；内部字段集路由保持不变',
+      });
+    }
+  });
+  return changes;
+}
+
 function repairScenarioFromBusinessLine(fields, parsed) {
-  const businessLine = getParsedValue(parsed, 'business_line') || normalizeFeishuValue(fields && fields['业务线']);
-  if (!businessLine) return [];
-  const before = getParsedValue(parsed, 'scenario');
-  let next = '';
-  if (/次卡/.test(businessLine)) next = '次卡';
-  else if (/自营|自有票台/.test(businessLine)) next = '自营';
-  else if (/旗舰店券/.test(businessLine)) next = '旗舰店券类';
-  else if (/旗舰店|旗舰店票台/.test(businessLine)) next = '旗舰店code';
-  if (!next || before === next) return [];
-  if (!setParsedField(parsed, 'scenario', next)) return [];
-  return [{
-    key: 'scenario',
-    label: KEY_LABELS.scenario,
-    before,
-    after: next,
-    reason: '按人工确认后的业务线修正文件场景，避免跨场景字段集串用',
-  }];
+  return normalizeScenarioBusinessLineDisplay(fields, parsed);
 }
 
 function removeUnsupportedScenarioFields(fields, parsed) {
@@ -2454,6 +2520,7 @@ async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceP
       oldValue: current,
       newValue: autoValue,
       reason: `自动矫正：基于「${getFileName(sourceFields, sourceParsed) || sourceRecordId}」的修改原因「${reason}」；规则=${rule.type}`,
+      source: 'auto',
     };
     history.push(entry);
 
@@ -2812,6 +2879,7 @@ app.post('/api/save-field', async (req, res) => {
       oldValue: '',
       newValue: newValue !== undefined ? String(newValue) : '',
       reason: reason || '',
+      source: systemGenerated ? 'auto' : 'human',
     });
 
     existingHistory.push(entry);
@@ -3552,6 +3620,12 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
           if (record.dataPatch) record.dataPatch.manual_confirm_fields = after;
           record.updated_at = new Date().toISOString();
         }
+        if (parsed) {
+          const displayScenario = getParsedValue(parsed, 'scenario');
+          const displayBusinessLine = getParsedValue(parsed, 'business_line');
+          if (displayScenario) record.fields['解析场景'] = displayScenario;
+          if (displayBusinessLine) record.fields['业务线'] = displayBusinessLine;
+        }
         if (jsonChanges.length && parsed) record.dataPatch = parsed;
         if (before !== after || jsonChanges.length) {
           record.updated_at = new Date().toISOString();
@@ -3587,6 +3661,14 @@ app.post('/api/admin/cleanup-manual-confirm', async (req, res) => {
       const cleanedJson = parsed ? cleanParsedManualConfirm(parsed) : false;
       if (parsed && jsonFieldName && tableFields.includes(jsonFieldName) && (jsonChanges.length || cleanedJson)) {
         updates[jsonFieldName] = stringifyJsonField(parsed);
+      }
+      if (parsed && tableFields.includes('解析场景')) {
+        const nextScenario = normalizeFeishuValue(getParsedValue(parsed, 'scenario'));
+        if (nextScenario && normalizeFeishuValue(item.fields['解析场景']) !== nextScenario) updates['解析场景'] = nextScenario;
+      }
+      if (parsed && tableFields.includes('业务线')) {
+        const nextBusinessLine = normalizeFeishuValue(getParsedValue(parsed, 'business_line'));
+        if (nextBusinessLine && normalizeFeishuValue(item.fields['业务线']) !== nextBusinessLine) updates['业务线'] = nextBusinessLine;
       }
 
       if (!Object.keys(updates).length) {
