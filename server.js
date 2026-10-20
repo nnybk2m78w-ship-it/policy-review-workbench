@@ -1642,17 +1642,11 @@ function compareDate(a, b) {
 function inferRelativeStartDateRange(fields, parsed, fieldKey) {
   const text = getPolicyText(fields, parsed);
   if (!/(即日起|上线之日起|产品生效之日起|自下发之日起|自发布之日起|本通告自下发之日起生效)/.test(text)) return '';
-  const parseDate = parseRecordDate(fields);
   const docDate = extractDocumentDate(text);
   const endMatch = text.match(/(?:至|到|截止至|截至|有效期至)\s*(20\d{2})[年\-/\.](\d{1,2})[月\-/\.](\d{1,2})日?/);
   const end = endMatch ? `${endMatch[1]}-${endMatch[2].padStart(2, '0')}-${endMatch[3].padStart(2, '0')}` : '';
-  const start = (end && compareDate(parseDate, end) > 0) ? docDate : (docDate || parseDate);
-  if (!start) return '';
-  if (!docDate && !end) {
-    const parseYear = Number((parseDate.match(/^(20\d{2})/) || [])[1] || 0);
-    const years = [...text.matchAll(/20\d{2}/g)].map(m => Number(m[0]));
-    if (years.length && Math.max(...years) < parseYear) return '';
-  }
+  if (!docDate) return end ? `需人工确认至${end}` : '人工确认';
+  const start = docDate;
   if (end && compareDate(start, end) > 0) return '';
   if (end) return `${start}至${end}`;
   if (['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) return `${start}起`;
