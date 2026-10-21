@@ -30,6 +30,14 @@ const REVIEW_GITHUB_TOKEN = process.env.REVIEW_GITHUB_TOKEN || process.env.GITHU
 const REVIEW_GITHUB_REPO = process.env.REVIEW_GITHUB_REPO || '';
 const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
 const REVIEW_GITHUB_PATH = process.env.REVIEW_GITHUB_PATH || 'data/review-state.json';
+const UPLOAD_BASE_TOKEN = process.env.FEISHU_UPLOAD_BASE_TOKEN || 'C6ZcbDr5RaxqOYsT0UAcx7S7nnc';
+const UPLOAD_TABLE_ID = process.env.FEISHU_UPLOAD_TABLE_ID || 'tblnpDn9US3ZxcfI';
+const WORKBENCH_AUTH_ENABLED = process.env.WORKBENCH_AUTH_ENABLED !== 'false';
+const WORKBENCH_SESSION_COOKIE = 'policy_review_session';
+const WORKBENCH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const WORKBENCH_AUTH_SECRET = process.env.WORKBENCH_AUTH_SECRET || APP_SECRET || 'policy-review-workbench-dev-secret';
+const WORKBENCH_DEFAULT_USER = process.env.WORKBENCH_USERNAME || 'admin';
+const WORKBENCH_DEFAULT_PASSWORD = process.env.WORKBENCH_PASSWORD || 'policy2026';
 let redisClient = null;
 
 const KEY_LABELS = {
@@ -147,6 +155,7 @@ let state = {
   tenantAccessToken: null,
   tenantTokenExpiresAt: 0,
   tableFields: null,   // 飞书表格字段名缓存
+  uploadQueueFields: null, // 上传队列表字段缓存
   currentUser: null,   // 当前授权用户信息
 };
 
@@ -257,6 +266,116 @@ function activeReviewStorageName() {
   if (useRedisStorage()) return 'redis';
   if (useGithubStorage()) return 'github';
   return 'local';
+}
+
+function parseCookies(header) {
+  const out = {};
+  String(header || '').split(';').forEach(part => {
+    const idx = part.indexOf('=');
+    if (idx <= 0) return;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key) out[key] = decodeURIComponent(value || '');
+  });
+  return out;
+}
+
+function base64UrlEncode(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function base64UrlDecode(value) {
+  return Buffer.from(value, 'base64url').toString('utf8');
+}
+
+function signSessionPayload(payload) {
+  return crypto.createHmac('sha256', WORKBENCH_AUTH_SECRET).update(payload).digest('base64url');
+}
+
+function createWorkbenchSession(user) {
+  const payload = base64UrlEncode(JSON.stringify({
+    user,
+    exp: Date.now() + WORKBENCH_SESSION_TTL_MS,
+  }));
+  return `${payload}.${signSessionPayload(payload)}`;
+}
+
+function readWorkbenchSession(req) {
+  if (!WORKBENCH_AUTH_ENABLED) {
+    return { authenticated: true, user: { username: 'auth-disabled', name: '免登录模式' } };
+  }
+  const token = parseCookies(req.headers.cookie)[WORKBENCH_SESSION_COOKIE];
+  if (!token || !token.includes('.')) return null;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return null;
+  const expected = signSessionPayload(payload);
+  const left = Buffer.from(sig);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
+  try {
+    const parsed = JSON.parse(base64UrlDecode(payload));
+    if (!parsed || parsed.exp < Date.now()) return null;
+    return { authenticated: true, user: parsed.user || null };
+  } catch (e) {
+    return null;
+  }
+}
+
+function getWorkbenchUsers() {
+  if (process.env.WORKBENCH_USERS) {
+    try {
+      const parsed = JSON.parse(process.env.WORKBENCH_USERS);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(item => ({
+            username: String(item.username || item.name || '').trim(),
+            password: String(item.password || ''),
+            passwordHash: String(item.passwordHash || item.password_sha256 || ''),
+            name: String(item.displayName || item.name || item.username || '').trim(),
+          }))
+          .filter(item => item.username && (item.password || item.passwordHash));
+      }
+    } catch (e) {
+      console.warn('[登录] WORKBENCH_USERS 解析失败，使用单账号配置:', e.message);
+    }
+  }
+  return [{
+    username: WORKBENCH_DEFAULT_USER,
+    password: WORKBENCH_DEFAULT_PASSWORD,
+    passwordHash: process.env.WORKBENCH_PASSWORD_SHA256 || '',
+    name: process.env.WORKBENCH_DISPLAY_NAME || WORKBENCH_DEFAULT_USER,
+  }];
+}
+
+function verifyWorkbenchPassword(user, password) {
+  if (!user) return false;
+  const input = String(password || '');
+  if (user.passwordHash) {
+    const hash = crypto.createHash('sha256').update(input).digest('hex');
+    if (hash.length !== user.passwordHash.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(user.passwordHash));
+  }
+  if (!user.password || input.length !== user.password.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(input), Buffer.from(user.password));
+}
+
+function requireWorkbenchAuthForApi(req, res, next) {
+  if (req.method === 'OPTIONS') return next();
+  const publicPaths = new Set([
+    '/api/health', '/health',
+    '/api/login-status', '/login-status',
+    '/api/login', '/login',
+    '/api/logout', '/logout',
+    '/api/oauth/callback', '/oauth/callback',
+  ]);
+  const originalPath = String(req.originalUrl || '').split('?')[0];
+  if (publicPaths.has(req.path) || publicPaths.has(originalPath)) return next();
+  const session = readWorkbenchSession(req);
+  if (!session || !session.authenticated) {
+    return res.status(401).json({ success: false, error: '需要登录后操作', needLogin: true });
+  }
+  req.workbenchUser = session.user || null;
+  next();
 }
 
 function getRedisClient() {
@@ -959,6 +1078,164 @@ const EXTRA_FIELDS = [
   { field_name: '修改历史', type: 1 },
   { field_name: '问题标记', type: 1 },
 ];
+
+const UPLOAD_QUEUE_FIELDS = [
+  { field_name: '文件名称', type: 1 },
+  { field_name: '原始文件', type: 17 },
+  { field_name: '文件类型', type: 1 },
+  { field_name: '文件大小', type: 1 },
+  { field_name: '文件Hash', type: 1 },
+  { field_name: '上传人', type: 1 },
+  { field_name: '上传人ID', type: 1 },
+  { field_name: '上传时间', type: 1 },
+  { field_name: '解析状态', type: 1 },
+  { field_name: '解析方式', type: 1 },
+  { field_name: '批次ID', type: 1 },
+  { field_name: '解析结果记录ID', type: 1 },
+  { field_name: '审核页记录ID', type: 1 },
+  { field_name: '附件缺失说明', type: 1 },
+  { field_name: '失败原因', type: 1 },
+  { field_name: '解析日志', type: 1 },
+  { field_name: '解析开始时间', type: 1 },
+  { field_name: '解析完成时间', type: 1 },
+  { field_name: '备注', type: 1 },
+];
+
+async function listBaseTableFields(baseToken, tableId) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/fields?page_size=200`;
+  const resp = await fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`获取表格字段失败: ${data.msg} (code=${data.code})`);
+  }
+  return data.data.items || [];
+}
+
+async function createBaseTableField(baseToken, tableId, field) {
+  const token = await getUserAccessToken();
+  const resp = await fetch(`https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/fields`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(field),
+  });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`创建字段「${field.field_name}」失败: ${data.msg} (code=${data.code})`);
+  }
+  return data.data && data.data.field;
+}
+
+async function ensureUploadQueueFields() {
+  if (state.uploadQueueFields) return state.uploadQueueFields;
+  let fields = await listBaseTableFields(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID);
+  const byName = new Map(fields.map(field => [field.field_name, field]));
+  for (const field of UPLOAD_QUEUE_FIELDS) {
+    if (byName.has(field.field_name)) continue;
+    try {
+      const created = await createBaseTableField(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, field);
+      console.log(`[上传队列] ✓ 已创建字段: ${field.field_name}`);
+      if (created) byName.set(created.field_name || field.field_name, created);
+    } catch (e) {
+      console.warn(`[上传队列] 创建字段 ${field.field_name} 失败: ${e.message}`);
+    }
+  }
+  fields = await listBaseTableFields(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID);
+  state.uploadQueueFields = {
+    names: fields.map(field => field.field_name),
+    byName: Object.fromEntries(fields.map(field => [field.field_name, field])),
+  };
+  return state.uploadQueueFields;
+}
+
+async function createBaseRecord(baseToken, tableId, fields) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/records`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields }),
+  });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`创建记录失败: ${data.msg} (code=${data.code})`);
+  }
+  return data.data.record;
+}
+
+async function updateBaseRecord(baseToken, tableId, recordId, fields) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/records/${recordId}`;
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields }),
+  });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`更新记录失败: ${data.msg} (code=${data.code})`);
+  }
+  return data;
+}
+
+async function listBaseRecords(baseToken, tableId) {
+  const token = await getUserAccessToken();
+  const records = [];
+  let offset = 0;
+  const pageSize = 200;
+  let guard = 0;
+  let hasMore = false;
+  do {
+    const url = `https://open.feishu.cn/open-apis/base/v3/bases/${baseToken}/tables/${tableId}/records?limit=${pageSize}&offset=${offset}`;
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    const body = await resp.json();
+    if (body.code !== 0) {
+      throw new Error(`读取记录失败: ${body.msg} (code=${body.code})`);
+    }
+    const inner = body.data || {};
+    const fieldNames = inner.fields || [];
+    const ids = inner.record_id_list || [];
+    const rows = inner.data || [];
+    rows.forEach((row, i) => {
+      const recordId = ids[i];
+      if (!recordId) return;
+      const fields = {};
+      fieldNames.forEach((name, j) => { fields[name] = row[j]; });
+      records.push({ recordId, fields });
+    });
+    hasMore = !!inner.has_more && rows.length > 0;
+    offset += rows.length;
+    guard++;
+  } while (hasMore && guard < 50);
+  return records;
+}
+
+async function uploadBaseAttachment({ baseToken, tableId, recordId, fieldId, fileName, buffer }) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/records/${recordId}/attachments/${fieldId}/upload`;
+  const form = new FormData();
+  const blob = new Blob([buffer]);
+  form.append('file', blob, fileName);
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+    body: form,
+  });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`上传附件失败: ${data.msg} (code=${data.code})`);
+  }
+  return data.data || data;
+}
 
 async function ensureTableFields() {
   if (state.tableFields) return state.tableFields;
@@ -2664,7 +2941,7 @@ async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceP
 }
 
 // ---- 中间件 ----
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '80mb' }));
 
 // CORS: 允许来自任何源的请求 (团队共享需要)
 app.use((req, res, next) => {
@@ -2688,6 +2965,38 @@ app.use(express.static(__dirname, {
 app.get('/', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.sendFile(path.join(__dirname, 'policy-review-workbench.html'));
+});
+
+app.get('/api/login-status', (req, res) => {
+  const session = readWorkbenchSession(req);
+  res.json({
+    success: true,
+    authEnabled: WORKBENCH_AUTH_ENABLED,
+    authenticated: !!(session && session.authenticated),
+    user: session && session.user ? session.user : null,
+    usingDefaultCredential: WORKBENCH_DEFAULT_USER === 'admin' && WORKBENCH_DEFAULT_PASSWORD === 'policy2026' && !process.env.WORKBENCH_USERS && !process.env.WORKBENCH_PASSWORD,
+  });
+});
+
+app.post('/api/login', (req, res) => {
+  if (!WORKBENCH_AUTH_ENABLED) {
+    return res.json({ success: true, authenticated: true, user: { username: 'auth-disabled', name: '免登录模式' } });
+  }
+  const { username, password } = req.body || {};
+  const user = getWorkbenchUsers().find(item => item.username === String(username || '').trim());
+  if (!verifyWorkbenchPassword(user, password)) {
+    return res.status(401).json({ success: false, error: '账号或密码错误' });
+  }
+  const safeUser = { username: user.username, name: user.name || user.username };
+  const token = createWorkbenchSession(safeUser);
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+  res.setHeader('Set-Cookie', `${WORKBENCH_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(WORKBENCH_SESSION_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
+  res.json({ success: true, authenticated: true, user: safeUser });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `${WORKBENCH_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.json({ success: true });
 });
 
 // ---- OAuth2 回调 ----
@@ -2748,6 +3057,8 @@ app.get('/api/oauth/callback', async (req, res) => {
     res.send(`<script>alert('授权错误: ${err.message}');window.close();</script>`);
   }
 });
+
+app.use('/api', requireWorkbenchAuthForApi);
 
 // ---- 授权状态 ----
 app.get('/api/auth-status', (req, res) => {
@@ -3255,6 +3566,168 @@ app.post('/api/mark-problem', async (req, res) => {
     } else {
       res.status(500).json({ success: false, error: err.message });
     }
+  }
+});
+
+function getUploadFileType(fileName) {
+  const lower = String(fileName || '').toLowerCase();
+  if (/\.(doc|docx)$/.test(lower)) return 'Word';
+  if (/\.pdf$/.test(lower)) return 'PDF';
+  if (/\.(xls|xlsx|csv)$/.test(lower)) return 'Excel';
+  if (/\.(zip|7z|rar)$/.test(lower)) return '压缩包';
+  return '其他';
+}
+
+function formatByteSize(size) {
+  const n = Number(size || 0);
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function normalizeUploadQueueRecord(record) {
+  const f = record.fields || {};
+  return {
+    recordId: record.recordId,
+    fileName: normalizeFeishuValue(f['文件名称']),
+    fileType: normalizeFeishuValue(f['文件类型']),
+    fileSize: normalizeFeishuValue(f['文件大小']),
+    fileHash: normalizeFeishuValue(f['文件Hash']),
+    uploader: normalizeFeishuValue(f['上传人']),
+    uploaderId: normalizeFeishuValue(f['上传人ID']),
+    uploadedAt: normalizeFeishuValue(f['上传时间']),
+    parseStatus: normalizeFeishuValue(f['解析状态']),
+    parseMode: normalizeFeishuValue(f['解析方式']),
+    batchId: normalizeFeishuValue(f['批次ID']),
+    reviewRecordId: normalizeFeishuValue(f['审核页记录ID']),
+    resultRecordId: normalizeFeishuValue(f['解析结果记录ID']),
+    missingAttachmentNote: normalizeFeishuValue(f['附件缺失说明']),
+    errorReason: normalizeFeishuValue(f['失败原因']),
+    parseLog: normalizeFeishuValue(f['解析日志']),
+    remark: normalizeFeishuValue(f['备注']),
+  };
+}
+
+app.get('/api/upload-queue', async (req, res) => {
+  try {
+    await ensureUploadQueueFields();
+    const records = await listBaseRecords(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID);
+    const items = records.map(normalizeUploadQueueRecord)
+      .sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')));
+    res.json({
+      success: true,
+      count: items.length,
+      items,
+      baseToken: UPLOAD_BASE_TOKEN,
+      tableId: UPLOAD_TABLE_ID,
+    });
+  } catch (err) {
+    console.error(`[上传队列] 读取失败: ${err.message}`);
+    if (isAuthOrPermissionError(err)) return sendFeishuAuthRequired(res, err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/upload-policy-files', async (req, res) => {
+  const files = Array.isArray(req.body && req.body.files) ? req.body.files : [];
+  if (!files.length) {
+    return res.status(400).json({ success: false, error: '未选择文件' });
+  }
+  if (files.length > 20) {
+    return res.status(400).json({ success: false, error: '单次最多上传 20 个文件' });
+  }
+
+  try {
+    const queueFields = await ensureUploadQueueFields();
+    const attachmentField = queueFields.byName && queueFields.byName['原始文件'];
+    const maxBytes = parseInt(process.env.UPLOAD_MAX_FILE_BYTES || String(35 * 1024 * 1024), 10);
+    const now = new Date().toLocaleString('zh-CN', { hour12: false });
+    const batchId = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const user = req.workbenchUser || {};
+    const created = [];
+
+    for (const file of files) {
+      const fileName = String(file.name || '').trim();
+      const rawBase64 = String(file.contentBase64 || '').replace(/^data:[^;]+;base64,/, '');
+      if (!fileName || !rawBase64) {
+        created.push({ fileName: fileName || '(未命名)', success: false, error: '缺少文件名或文件内容' });
+        continue;
+      }
+      const buffer = Buffer.from(rawBase64, 'base64');
+      if (!buffer.length) {
+        created.push({ fileName, success: false, error: '文件内容为空' });
+        continue;
+      }
+      if (buffer.length > maxBytes) {
+        created.push({ fileName, success: false, error: `文件超过上限 ${formatByteSize(maxBytes)}` });
+        continue;
+      }
+
+      const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+      const recordFields = {
+        '文件名称': fileName,
+        '文件类型': getUploadFileType(fileName),
+        '文件大小': formatByteSize(buffer.length),
+        '文件Hash': hash,
+        '上传人': user.name || user.username || '未知用户',
+        '上传人ID': user.username || '',
+        '上传时间': now,
+        '解析状态': '待解析',
+        '解析方式': '上传后队列扫描',
+        '批次ID': batchId,
+      };
+
+      const record = await createBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordFields);
+      const recordId = record && record.record_id;
+      const item = { fileName, recordId, hash, success: true, attachmentUploaded: false };
+
+      if (recordId && attachmentField && attachmentField.field_id) {
+        try {
+          const attachment = await uploadBaseAttachment({
+            baseToken: UPLOAD_BASE_TOKEN,
+            tableId: UPLOAD_TABLE_ID,
+            recordId,
+            fieldId: attachmentField.field_id,
+            fileName,
+            buffer,
+          });
+          item.attachmentUploaded = true;
+          item.attachment = attachment;
+          await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+            '解析日志': `已上传源文件，等待解析。hash=${hash}`,
+          });
+        } catch (uploadErr) {
+          item.attachmentError = uploadErr.message;
+          await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+            '解析状态': '上传失败',
+            '失败原因': uploadErr.message,
+            '解析日志': `队列记录已创建，但附件上传失败。hash=${hash}`,
+          });
+        }
+      } else if (recordId) {
+        item.attachmentError = '缺少原始文件附件字段';
+        await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+          '解析状态': '上传失败',
+          '失败原因': '缺少原始文件附件字段',
+          '解析日志': `队列记录已创建，但未找到原始文件附件字段。hash=${hash}`,
+        });
+      }
+
+      created.push(item);
+    }
+
+    res.json({
+      success: created.some(item => item.success),
+      batchId,
+      uploaded: created.filter(item => item.success && item.attachmentUploaded).length,
+      queued: created.filter(item => item.success).length,
+      items: created,
+    });
+  } catch (err) {
+    console.error(`[上传队列] 上传失败: ${err.message}`);
+    if (isAuthOrPermissionError(err)) return sendFeishuAuthRequired(res, err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

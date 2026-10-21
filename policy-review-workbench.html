@@ -9,6 +9,19 @@
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f5f6fa; color:#2d3436; }
 :root { --primary:#0984e3; --success:#00b894; --warning:#fdcb6e; --danger:#d63031; --bg:#f5f6fa; --card:#fff; --border:#dfe6e9; --text:#2d3436; --muted:#636e72; }
 
+.login-gate { position:fixed; inset:0; background:#f4f7fb; z-index:9999; display:none; align-items:center; justify-content:center; padding:24px; }
+.login-card { width:min(420px,100%); background:#fff; border:1px solid #dfe6e9; border-radius:10px; box-shadow:0 18px 60px rgba(16,24,40,0.12); padding:28px; }
+.login-title { font-size:22px; font-weight:750; margin-bottom:6px; color:#1f2933; }
+.login-sub { font-size:13px; color:var(--muted); line-height:1.6; margin-bottom:18px; }
+.login-form { display:flex; flex-direction:column; gap:12px; }
+.login-form input { height:40px; border:1px solid var(--border); border-radius:8px; padding:0 12px; font-size:14px; outline:none; }
+.login-form input:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(9,132,227,0.12); }
+.login-form button { height:40px; border:0; border-radius:8px; background:var(--primary); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
+.login-error { min-height:18px; color:var(--danger); font-size:12px; }
+.header-user { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+.header-user button { border:1px solid var(--border); background:#fff; color:var(--muted); border-radius:6px; padding:4px 9px; cursor:pointer; }
+.header-user button:hover { border-color:var(--primary); color:var(--primary); }
+
 /* Header */
 .header { background:#fff; border-bottom:1px solid var(--border); padding:10px 20px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
 .header-left { display:flex; flex-direction:column; gap:2px; min-width:170px; }
@@ -269,6 +282,33 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-sm-confirm:hover { background:#0773c5; }
 .btn-sm-confirm:disabled, .btn-confirm:disabled { opacity:0.45; cursor:not-allowed; }
 .btn-sm-confirmed { background:var(--success); color:#fff; cursor:default; }
+
+.upload-view { display:grid; grid-template-columns:minmax(320px,420px) minmax(0,1fr); gap:18px; align-items:start; }
+.upload-panel { background:#fff; border:1px solid var(--border); border-radius:8px; padding:18px; }
+.upload-panel h3 { font-size:16px; margin-bottom:8px; color:var(--text); }
+.upload-panel .muted { color:var(--muted); font-size:12px; line-height:1.6; margin-bottom:14px; }
+.upload-drop { border:2px dashed #b7c5d4; background:#f8fbff; border-radius:8px; min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; cursor:pointer; transition:all 0.15s; text-align:center; padding:20px; }
+.upload-drop:hover, .upload-drop.dragover { border-color:var(--primary); background:#eef7ff; }
+.upload-drop .icon { font-size:30px; }
+.upload-drop b { color:var(--text); }
+.upload-drop span { color:var(--muted); font-size:12px; }
+.upload-selected { margin-top:12px; border:1px solid #edf0f3; border-radius:8px; overflow:hidden; max-height:220px; overflow-y:auto; }
+.upload-selected-row { display:flex; gap:8px; justify-content:space-between; align-items:center; padding:9px 10px; border-bottom:1px solid #edf0f3; font-size:12px; }
+.upload-selected-row:last-child { border-bottom:none; }
+.upload-selected-row .name { font-weight:650; color:var(--text); word-break:break-all; }
+.upload-actions { display:flex; gap:10px; margin-top:14px; }
+.upload-actions button { border:1px solid var(--border); background:#fff; color:var(--text); border-radius:7px; padding:8px 13px; cursor:pointer; font-weight:650; }
+.upload-actions button.primary { border-color:var(--primary); background:var(--primary); color:#fff; }
+.upload-actions button:disabled { opacity:0.5; cursor:not-allowed; }
+.queue-table { width:100%; border-collapse:collapse; font-size:12px; }
+.queue-table th, .queue-table td { border-bottom:1px solid #edf0f3; padding:9px 8px; text-align:left; vertical-align:top; }
+.queue-table th { background:#f8faff; color:#667085; font-weight:700; position:sticky; top:0; }
+.queue-table td.file-name { font-weight:650; color:#2d3436; word-break:break-all; }
+.queue-status { display:inline-flex; align-items:center; border-radius:12px; padding:2px 8px; font-size:11px; font-weight:700; background:#eef2ff; color:#344054; white-space:nowrap; }
+.queue-status.pending { background:#fff5d6; color:#9a6b00; }
+.queue-status.failed { background:#fff1f1; color:#c92a2a; }
+.queue-status.done { background:#e8fff7; color:#008f72; }
+.upload-note { margin-top:12px; padding:10px 12px; border-radius:8px; background:#fff8e1; color:#7a5a00; font-size:12px; line-height:1.6; }
 .btn-sm-reopen { background:#fff; color:#b58900; border:1px solid #f1c75b; }
 .btn-sm-reopen:hover { background:#fff8dc; }
 .btn-sm-nav { background:#f1f2f6; color:var(--text); }
@@ -486,6 +526,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 </head>
 <body>
 
+<div id="loginGate" class="login-gate">
+  <div class="login-card">
+    <div class="login-title">政策审核工作台</div>
+    <div class="login-sub">请输入账号密码后继续。上传、审核、确认和字段修改都会记录到服务端，避免匿名误传或误改。</div>
+    <form class="login-form" onsubmit="submitWorkbenchLogin(event)">
+      <input id="loginUsername" autocomplete="username" placeholder="账号">
+      <input id="loginPassword" autocomplete="current-password" placeholder="密码" type="password">
+      <button id="loginSubmitBtn" type="submit">登录</button>
+      <div id="loginError" class="login-error"></div>
+    </form>
+  </div>
+</div>
+
 <div class="header">
   <div class="header-left">
     <div class="header-title">政策审核工作台<span id="syncIndicator" class="sync-indicator" style="display:none" onclick="showPendingSync()"></span></div>
@@ -501,10 +554,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   </div>
   <div class="nav-btns" id="viewSeg">
     <button class="seg-btn" data-view="review" onclick="switchView('review')">审核</button>
+    <button class="seg-btn" data-view="upload" onclick="switchView('upload')">上传解析</button>
     <button class="seg-btn" data-view="problems" onclick="switchView('problems')">问题清单<span class="seg-count" id="segProblemCount"></span></button>
     <button class="seg-btn" data-view="confirm" onclick="switchView('confirm')">逐文件确认</button>
     <button class="seg-btn" data-view="accuracy" onclick="switchView('accuracy')">准确率看板</button>
     <button class="seg-btn" data-view="result" onclick="switchView('result')">最终结果</button>
+  </div>
+  <div class="header-user" id="headerUser" style="display:none">
+    <span id="headerUserName"></span>
+    <button onclick="logoutWorkbench()">退出</button>
   </div>
 </div>
 
@@ -6641,6 +6699,10 @@ let appState = {
   problemFieldFilter: '',  // 问题清单按字段聚合筛选
   accuracyFieldFilter: '', // 准确率看板当前字段
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
+  session: null,
+  uploadFiles: [],
+  uploadQueue: [],
+  uploadLoading: false,
 };
 
 // Load from localStorage — on hosted pages Feishu/server is authoritative, so only UI prefs are restored.
@@ -7325,10 +7387,184 @@ function toggleConfirmed(group) {
 function renderMain() {
   const main = document.getElementById('mainContent');
   if (appState.currentView === 'review') renderReview(main);
+  else if (appState.currentView === 'upload') renderUpload(main);
   else if (appState.currentView === 'problems') renderProblems(main);
   else if (appState.currentView === 'confirm') renderConfirm(main);
   else if (appState.currentView === 'accuracy') renderAccuracy(main);
   else if (appState.currentView === 'result') renderResult(main);
+}
+
+// ===== 上传解析视图 =====
+function renderUpload(main) {
+  const rows = appState.uploadQueue || [];
+  const selected = appState.uploadFiles || [];
+  main.innerHTML = `
+    <div class="upload-view">
+      <div class="upload-panel">
+        <h3>上传政策文件</h3>
+        <div class="muted">支持 Word、PDF、Excel 和压缩包。上传后源文件统一存入飞书“政策文件上传队列”，解析任务再从队列消费。</div>
+        <input id="policyUploadInput" type="file" multiple style="display:none" onchange="selectUploadFiles(this.files)">
+        <div class="upload-drop" id="uploadDrop"
+          onclick="document.getElementById('policyUploadInput').click()"
+          ondragover="event.preventDefault();this.classList.add('dragover')"
+          ondragleave="this.classList.remove('dragover')"
+          ondrop="handleUploadDrop(event)">
+          <div class="icon">⬆</div>
+          <b>点击或拖拽文件到这里</b>
+          <span>单次最多 20 个文件，建议单个文件不超过 35MB</span>
+        </div>
+        <div class="upload-selected">
+          ${selected.length ? selected.map((file, idx) => `
+            <div class="upload-selected-row">
+              <div><div class="name">${escapeHtml(file.name)}</div><div class="muted">${formatUploadSize(file.size)}</div></div>
+              <button class="btn-sm btn-sm-nav" onclick="removeUploadFile(${idx})">移除</button>
+            </div>
+          `).join('') : '<div class="upload-selected-row"><span class="muted">尚未选择文件</span></div>'}
+        </div>
+        <div class="upload-actions">
+          <button onclick="clearUploadFiles()" ${selected.length ? '' : 'disabled'}>清空</button>
+          <button class="primary" onclick="uploadSelectedFiles()" ${selected.length && !appState.uploadLoading ? '' : 'disabled'}>${appState.uploadLoading ? '上传中...' : '上传到飞书队列'}</button>
+        </div>
+        <div class="upload-note">自动解析建议采用“准实时队列扫描”：上传本身不消耗模型 token；扫描队列元数据也不消耗 token；只有真正下载文件并调用模型解析时才消耗 token。</div>
+      </div>
+      <div class="upload-panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0">上传队列</h3>
+          <button class="btn-sm btn-sm-nav" onclick="loadUploadQueue(true)">刷新</button>
+        </div>
+        ${renderUploadQueueTable(rows)}
+      </div>
+    </div>
+  `;
+}
+
+function renderUploadQueueTable(rows) {
+  if (appState.uploadLoading && !rows.length) {
+    return '<div class="search-empty">正在读取上传队列...</div>';
+  }
+  if (!rows.length) {
+    return '<div class="search-empty">暂无上传记录</div>';
+  }
+  return `<div style="max-height:calc(100vh - 190px);overflow:auto;border:1px solid #edf0f3;border-radius:8px">
+    <table class="queue-table">
+      <thead><tr><th>文件</th><th>状态</th><th>上传人</th><th>上传时间</th><th>大小</th><th>说明</th></tr></thead>
+      <tbody>
+        ${rows.map(item => {
+          const status = item.parseStatus || '待解析';
+          const cls = /失败/.test(status) ? 'failed' : (/完成|待审核|已解析/.test(status) ? 'done' : 'pending');
+          const note = item.errorReason || item.parseLog || item.remark || '';
+          return `<tr>
+            <td class="file-name">${escapeHtml(item.fileName || '')}<div class="muted">${escapeHtml(item.fileType || '')} · ${escapeHtml(item.batchId || '')}</div></td>
+            <td><span class="queue-status ${cls}">${escapeHtml(status)}</span></td>
+            <td>${escapeHtml(item.uploader || '')}</td>
+            <td>${escapeHtml(item.uploadedAt || '')}</td>
+            <td>${escapeHtml(item.fileSize || '')}</td>
+            <td>${escapeHtml(note)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function formatUploadSize(size) {
+  const n = Number(size || 0);
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function selectUploadFiles(fileList) {
+  const next = Array.from(fileList || []);
+  if (!next.length) return;
+  appState.uploadFiles = [...(appState.uploadFiles || []), ...next].slice(0, 20);
+  render();
+}
+
+function handleUploadDrop(event) {
+  event.preventDefault();
+  const drop = document.getElementById('uploadDrop');
+  if (drop) drop.classList.remove('dragover');
+  selectUploadFiles(event.dataTransfer && event.dataTransfer.files);
+}
+
+function removeUploadFile(index) {
+  appState.uploadFiles.splice(index, 1);
+  render();
+}
+
+function clearUploadFiles() {
+  appState.uploadFiles = [];
+  render();
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadSelectedFiles() {
+  if (!appState.uploadFiles.length || appState.uploadLoading) return;
+  appState.uploadLoading = true;
+  render();
+  try {
+    const payloadFiles = [];
+    for (const file of appState.uploadFiles) {
+      payloadFiles.push({
+        name: file.name,
+        size: file.size,
+        type: file.type || '',
+        contentBase64: await readFileAsBase64(file),
+      });
+    }
+    const result = await requestJson('/api/upload-policy-files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: payloadFiles }),
+    });
+    if (result.success) {
+      showToast(`已上传 ${result.uploaded || 0} 个文件到飞书队列`, 'success', 2800);
+      appState.uploadFiles = [];
+      await loadUploadQueue(false);
+    } else if (result.needLogin) {
+      showLoginGate('登录已失效，请重新登录');
+    } else if (result.needAuth) {
+      showInlineSyncBar('飞书授权失效，上传队列无法写入',
+        `<button class="btn-sm btn-sm-confirm" onclick="startFeishuAuth()">前往飞书授权</button>`, 'error');
+    } else {
+      showToast(result.error || '上传失败', 'error', 3600);
+    }
+  } catch (e) {
+    showToast('上传失败：' + e.message, 'error', 3600);
+  } finally {
+    appState.uploadLoading = false;
+    render();
+  }
+}
+
+async function loadUploadQueue(showTip) {
+  try {
+    const result = await requestJson('/api/upload-queue', { cache: 'no-store' });
+    if (result.success) {
+      appState.uploadQueue = result.items || [];
+      if (showTip) showToast(`已刷新上传队列 ${appState.uploadQueue.length} 条`, 'success');
+      if (appState.currentView === 'upload') render();
+      return true;
+    }
+    if (result.needLogin) {
+      showLoginGate('登录已失效，请重新登录');
+      return false;
+    }
+    if (showTip) showToast(result.error || '上传队列读取失败', 'error');
+  } catch (e) {
+    if (showTip) showToast('上传队列读取失败：' + e.message, 'error');
+  }
+  return false;
 }
 
 // ===== 问题清单视图 =====
@@ -8310,6 +8546,7 @@ function switchView(view) {
     b.classList.toggle('active', b.dataset.view === view);
   });
   render();
+  if (view === 'upload') loadUploadQueue(false);
 }
 
 function setProblemFieldFilter(field) {
@@ -9165,6 +9402,92 @@ function showToast(msg, type, duration) {
   toast._t = setTimeout(() => { toast.style.display = 'none'; }, duration || 2000);
 }
 
+// ===== 工作台账号登录 =====
+function showLoginGate(message) {
+  const gate = document.getElementById('loginGate');
+  if (gate) gate.style.display = 'flex';
+  const err = document.getElementById('loginError');
+  if (err) err.textContent = message || '';
+}
+
+function hideLoginGate() {
+  const gate = document.getElementById('loginGate');
+  if (gate) gate.style.display = 'none';
+}
+
+function updateHeaderUser() {
+  const box = document.getElementById('headerUser');
+  const name = document.getElementById('headerUserName');
+  if (!box || !name) return;
+  if (appState.session && appState.session.authenticated) {
+    box.style.display = 'flex';
+    name.textContent = appState.session.user && appState.session.user.name
+      ? appState.session.user.name
+      : (appState.session.user && appState.session.user.username) || '已登录';
+  } else {
+    box.style.display = 'none';
+    name.textContent = '';
+  }
+}
+
+async function checkWorkbenchSession() {
+  const result = await requestJson('/api/login-status', { method: 'GET', cache: 'no-store' });
+  if (result && result.success && result.authenticated) {
+    appState.session = result;
+    hideLoginGate();
+    updateHeaderUser();
+    return true;
+  }
+  appState.session = null;
+  updateHeaderUser();
+  showLoginGate('');
+  return false;
+}
+
+async function submitWorkbenchLogin(event) {
+  if (event) event.preventDefault();
+  const btn = document.getElementById('loginSubmitBtn');
+  const err = document.getElementById('loginError');
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if (err) err.textContent = '';
+  if (!username || !password) {
+    if (err) err.textContent = '请填写账号和密码';
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const result = await requestJson('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!result.success || !result.authenticated) {
+      if (err) err.textContent = result.error || '登录失败';
+      return;
+    }
+    appState.session = result;
+    hideLoginGate();
+    updateHeaderUser();
+    await initWorkbenchAfterLogin();
+    showToast('登录成功', 'success');
+  } catch (e) {
+    if (err) err.textContent = '登录失败：' + e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function logoutWorkbench() {
+  await requestJson('/api/logout', { method: 'POST' });
+  appState.session = null;
+  appState.policies = [];
+  appState.uploadQueue = [];
+  updateHeaderUser();
+  showLoginGate('已退出登录');
+  render();
+}
+
 // ===== 飞书授权状态检查 =====
 let authPollTimer = null;
 
@@ -9490,6 +9813,10 @@ async function syncStatusesFromServer(showTip) {
   try {
     const result = await requestJson('/api/statuses', { cache: 'no-store' });
     if (!result.success || !result.statuses) {
+      if (result && result.needLogin) {
+        showLoginGate('登录已失效，请重新登录');
+        return false;
+      }
       if (result && result.needAuth) {
         const banner = document.getElementById('authBanner');
         if (banner) banner.style.display = 'flex';
@@ -9683,24 +10010,46 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ===== INIT =====
-const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
-const propagatedOnLoad = propagateFieldDefinitionsByFileType();
-if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
+let statusSyncTimer = null;
 
-if (appState.policies.length > 0 && (!appState.currentFileId || !appState.policies.some(p => p.id === appState.currentFileId))) {
-  appState.currentFileId = appState.policies[0].id;
+async function initWorkbenchAfterLogin() {
+  const normalizedOnLoad = appState.policies.reduce((sum, p) => sum + normalizePolicySchema(p), 0);
+  const propagatedOnLoad = propagateFieldDefinitionsByFileType();
+  if (normalizedOnLoad || propagatedOnLoad) setTimeout(saveState, 0);
+
+  if (appState.policies.length > 0 && (!appState.currentFileId || !appState.policies.some(p => p.id === appState.currentFileId))) {
+    appState.currentFileId = appState.policies[0].id;
+  }
+  ensureVisibleSidebarCategory();
+  document.querySelectorAll('.seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === appState.currentView);
+  });
+  render();
+  await checkAuthStatus();
+  await syncStatusesFromServer(false);
+  if (appState.currentView === 'upload') await loadUploadQueue(false);
+  if (!statusSyncTimer) {
+    statusSyncTimer = setInterval(() => syncStatusesFromServer(false), 60000);
+  }
 }
-ensureVisibleSidebarCategory();
-// 初始化 segmented 高亮
-document.querySelectorAll('.seg-btn').forEach(b => {
-  b.classList.toggle('active', b.dataset.view === appState.currentView);
+
+async function initWorkbench() {
+  try {
+    const ok = await checkWorkbenchSession();
+    if (!ok) return;
+    await initWorkbenchAfterLogin();
+  } catch (e) {
+    showLoginGate('登录状态检查失败，请重新登录');
+  }
+}
+
+initWorkbench();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && appState.session && appState.session.authenticated) {
+    syncStatusesFromServer(false);
+    if (appState.currentView === 'upload') loadUploadQueue(false);
+  }
 });
-render();
-checkAuthStatus();
-// 多人协作：加载后立即同步一次飞书最新状态，之后每60秒轮询 + 切回页面时同步
-syncStatusesFromServer(false);
-setInterval(() => syncStatusesFromServer(false), 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) syncStatusesFromServer(false); });
 </script>
 </body>
 </html>
