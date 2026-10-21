@@ -1202,6 +1202,24 @@ async function updateBaseRecord(baseToken, tableId, recordId, fields) {
   return data;
 }
 
+async function readFeishuJsonResponse(resp, action) {
+  const text = await resp.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    const snippet = text ? text.slice(0, 220).replace(/\s+/g, ' ') : '(empty body)';
+    throw new Error(`${action}失败: 飞书返回非JSON响应，HTTP ${resp.status}，内容: ${snippet}`);
+  }
+  if (!resp.ok) {
+    throw new Error(`${action}失败: HTTP ${resp.status} ${data.msg || data.error || ''}`.trim());
+  }
+  if (data.code !== 0) {
+    throw new Error(`${action}失败: ${data.msg || data.error || '未知错误'} (code=${data.code})`);
+  }
+  return data;
+}
+
 async function listBaseRecords(baseToken, tableId) {
   const token = await getUserAccessToken();
   const records = [];
@@ -1234,22 +1252,39 @@ async function listBaseRecords(baseToken, tableId) {
   return records;
 }
 
-async function uploadBaseAttachment({ baseToken, tableId, recordId, fieldId, fileName, buffer }) {
+async function uploadBitableMedia({ baseToken, fileName, buffer }) {
+  if (buffer.length > 20 * 1024 * 1024) {
+    throw new Error('当前飞书素材直传接口单文件上限为20MB，请先上传小于20MB的文件，或后续补充分片上传能力');
+  }
   const token = await getUserAccessToken();
-  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${baseToken}/tables/${tableId}/records/${recordId}/attachments/${fieldId}/upload`;
+  const url = 'https://open.feishu.cn/open-apis/drive/v1/medias/upload_all';
   const form = new FormData();
-  const blob = new Blob([buffer]);
+  const blob = new Blob([buffer], { type: 'application/octet-stream' });
+  form.append('file_name', fileName);
+  form.append('parent_type', 'bitable_file');
+  form.append('parent_node', baseToken);
+  form.append('size', String(buffer.length));
   form.append('file', blob, fileName);
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}` },
     body: form,
   });
-  const data = await resp.json();
-  if (data.code !== 0) {
-    throw new Error(`上传附件失败: ${data.msg} (code=${data.code})`);
+  const data = await readFeishuJsonResponse(resp, '上传附件素材');
+  const media = data.data || {};
+  const fileToken = media.file_token || media.fileToken || media.token;
+  if (!fileToken) {
+    throw new Error('上传附件素材失败: 飞书未返回 file_token');
   }
-  return data.data || data;
+  return { ...media, file_token: fileToken };
+}
+
+async function uploadBaseAttachment({ baseToken, tableId, recordId, fieldName, fileName, buffer }) {
+  const media = await uploadBitableMedia({ baseToken, fileName, buffer });
+  await updateBaseRecord(baseToken, tableId, recordId, {
+    [fieldName || '原始文件']: [{ file_token: media.file_token }],
+  });
+  return media;
 }
 
 function collectAttachmentMetas(value, out = [], seen = new Set()) {
@@ -4381,7 +4416,7 @@ app.post('/api/upload-policy-files', async (req, res) => {
   try {
     const queueFields = await ensureUploadQueueFields();
     const attachmentField = queueFields.byName && queueFields.byName['原始文件'];
-    const maxBytes = parseInt(process.env.UPLOAD_MAX_FILE_BYTES || String(35 * 1024 * 1024), 10);
+    const maxBytes = parseInt(process.env.UPLOAD_MAX_FILE_BYTES || String(20 * 1024 * 1024), 10);
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const batchId = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     const user = req.workbenchUser || {};
@@ -4422,13 +4457,13 @@ app.post('/api/upload-policy-files', async (req, res) => {
       const recordId = record && record.record_id;
       const item = { fileName, recordId, hash, success: true, attachmentUploaded: false };
 
-      if (recordId && attachmentField && attachmentField.field_id) {
+      if (recordId && attachmentField) {
         try {
           const attachment = await uploadBaseAttachment({
             baseToken: UPLOAD_BASE_TOKEN,
             tableId: UPLOAD_TABLE_ID,
             recordId,
-            fieldId: attachmentField.field_id,
+            fieldName: attachmentField.field_name || '原始文件',
             fileName,
             buffer,
           });
