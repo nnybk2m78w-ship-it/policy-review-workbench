@@ -6188,6 +6188,27 @@ function inferFlagshipSubtypeFromText(text) {
   return /券类|优惠券|券码|消费券|资源券|coupon/i.test(text || '') ? '旗舰店券类' : '旗舰店code';
 }
 
+function hasSelfTicketingEvidence(text) {
+  return /客运销售运价政策|内部运价政策|私有运价|投放单|运价政策|PAT\s*[:：]?\s*A|出票指令|运价基础|FARE\s*BASIS|票价级别|票价计算栏|EI项|BSP方向|OFFICE号|航协号|自营渠道|自有票台|自营配置|国内自营航班|运价引擎|不得手工改价/i.test(text || '');
+}
+
+function hasCoreFlagshipEvidence(text) {
+  return /旗舰店票台|官网旗舰店|指定官网旗舰店|官网或旗舰店|旗舰店客票|直连合作方|授权销售渠道|授权销售代理|直连客票|BSP客票|TC项|券码|资源编号|消费券|优惠券|coupon/i.test(text || '');
+}
+
+function inferPolicyTypeFromEvidence(rawText) {
+  const source = normalizeFeishuValue(rawText);
+  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞|兑换卡|卡包/.test(source)) return '次卡';
+  const selfEvidence = hasSelfTicketingEvidence(source);
+  const flagshipEvidence = hasCoreFlagshipEvidence(source);
+  const plainFlagshipMention = /旗舰店/.test(source);
+  if (selfEvidence && !flagshipEvidence) return '自营';
+  if (flagshipEvidence) return inferFlagshipSubtypeFromText(source);
+  if (selfEvidence) return '自营';
+  if (plainFlagshipMention) return inferFlagshipSubtypeFromText(source);
+  return '自营';
+}
+
 function syncTargetLabel(result) {
   return result && result.savedToFeishu === false ? '审核记录' : '飞书';
 }
@@ -6229,10 +6250,6 @@ function getPolicyFileType(policyOrFields, parsed) {
   const data = parsed || p.data || {};
   const explicitBusinessLine = normalizeFeishuValue(data.business_line || fields['业务线']);
   const explicitScenario = normalizeFeishuValue(data.scenario || fields['解析场景']);
-  if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
-  if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
-  if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
-
   const text = [
     p.file_name,
     p.category,
@@ -6250,14 +6267,15 @@ function getPolicyFileType(policyOrFields, parsed) {
     data.product_code,
     data.coupon_name,
   ].filter(Boolean).join(' ');
+  const evidenceType = inferPolicyTypeFromEvidence(text);
+  if (evidenceType === '自营' && hasSelfTicketingEvidence(text)) return '自营';
+  if (/次卡/.test(explicitBusinessLine) || /次卡/.test(explicitScenario)) return '次卡';
+  if (/自营|自有票台/.test(explicitBusinessLine) || explicitScenario === '自营') return '自营';
+  if (/旗舰店券/.test(explicitBusinessLine) || /旗舰店券类/.test(explicitScenario)) return '旗舰店券类';
   if (/旗舰店|旗舰店票台/.test(explicitBusinessLine) || /旗舰店|旗舰店票台|旗舰店code/.test(explicitScenario)) {
     return inferFlagshipSubtypeFromText(text);
   }
-  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞/.test(text)) return '次卡';
-  if (/旗舰店|官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码/.test(text)) {
-    return inferFlagshipSubtypeFromText(text);
-  }
-  return '自营';
+  return evidenceType;
 }
 
 function getPolicyDisplayScenario(policy) {
