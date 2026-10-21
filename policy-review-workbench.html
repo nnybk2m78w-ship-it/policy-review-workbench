@@ -367,11 +367,52 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .sync-indicator:hover { background:#e3ecff; }
 .sync-indicator.dirty { background:rgba(253,203,110,0.35); }
 
+.review-scope-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:12px 12px 8px; border-bottom:1px solid var(--border); background:#fff; }
+.review-scope-tab { border:1px solid var(--border); background:#f6f8fb; color:var(--muted); border-radius:8px; padding:10px 8px; font-size:13px; font-weight:700; cursor:pointer; text-align:center; transition:all .18s; }
+.review-scope-tab:hover { border-color:var(--primary); color:var(--primary); background:#eef6ff; }
+.review-scope-tab.active { background:var(--primary); color:#fff; border-color:var(--primary); box-shadow:0 4px 10px rgba(9,132,227,.22); }
+.review-scope-tab .n { margin-left:5px; font-size:12px; opacity:.88; }
+
+.accuracy-view { padding:24px; max-width:1360px; margin:0 auto; }
+.accuracy-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-end; margin-bottom:16px; }
+.accuracy-header h3 { margin:0; font-size:20px; }
+.accuracy-header .hint { color:var(--muted); font-size:13px; margin-top:6px; }
+.accuracy-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.metric-card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+.metric-card .label { color:var(--muted); font-size:12px; font-weight:700; }
+.metric-card .value { margin-top:8px; font-size:26px; font-weight:800; color:var(--text); }
+.metric-card .sub { margin-top:4px; font-size:12px; color:var(--muted); }
+.accuracy-layout { display:grid; grid-template-columns:minmax(360px,0.95fr) minmax(460px,1.35fr); gap:16px; align-items:start; }
+.accuracy-panel { background:#fff; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.accuracy-panel h4 { margin:0; padding:14px 16px; border-bottom:1px solid var(--border); font-size:16px; }
+.accuracy-panel .panel-note { color:var(--muted); font-size:12px; font-weight:400; margin-left:8px; }
+.sample-list { max-height:720px; overflow:auto; }
+.sample-row { padding:14px 16px; border-bottom:1px solid var(--border); cursor:pointer; }
+.sample-row:hover { background:#f6fbff; }
+.sample-row .name { font-weight:800; margin-bottom:6px; line-height:1.35; }
+.sample-row .meta { color:var(--muted); font-size:12px; display:flex; gap:8px; flex-wrap:wrap; }
+.sample-row .why { margin-top:8px; color:#8a5a00; background:#fff8db; border-left:3px solid #f5c542; padding:6px 8px; font-size:12px; line-height:1.45; }
+.field-error-table { width:100%; border-collapse:collapse; font-size:13px; }
+.field-error-table th { text-align:left; color:var(--muted); background:#f7f9fc; border-bottom:1px solid var(--border); padding:10px 12px; white-space:nowrap; }
+.field-error-table td { border-bottom:1px solid var(--border); padding:10px 12px; vertical-align:top; }
+.field-error-table .field-name { font-weight:800; color:var(--text); }
+.field-error-table .field-key-small { color:var(--muted); font-size:11px; margin-top:2px; }
+.error-rate { font-weight:800; color:#d63031; white-space:nowrap; }
+.accuracy-ok { color:var(--success); font-weight:800; }
+.field-history { margin-top:8px; border:1px solid #ffe0e0; background:#fff8f8; border-radius:8px; overflow:hidden; }
+.field-history summary { cursor:pointer; padding:8px 10px; color:#d63031; font-weight:800; }
+.field-history-row { padding:10px; border-top:1px dashed #ffd0d0; font-size:12px; line-height:1.55; }
+.field-history-row .file { font-weight:800; color:var(--text); }
+.judge-snippet { margin-top:6px; background:#f6f8fb; border-left:3px solid var(--primary); padding:6px 8px; color:var(--muted); }
+
 /* Responsive */
 @media (max-width:768px) {
   .layout { flex-direction:column; }
   .sidebar { width:100%; max-height:200px; }
   .review-panel { flex-direction:column; }
+  .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .accuracy-layout { grid-template-columns:1fr; }
 }
 </style>
 </head>
@@ -394,6 +435,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <button class="seg-btn" data-view="review" onclick="switchView('review')">审核</button>
     <button class="seg-btn" data-view="problems" onclick="switchView('problems')">问题清单<span class="seg-count" id="segProblemCount"></span></button>
     <button class="seg-btn" data-view="confirm" onclick="switchView('confirm')">逐文件确认</button>
+    <button class="seg-btn" data-view="accuracy" onclick="switchView('accuracy')">准确率看板</button>
     <button class="seg-btn" data-view="result" onclick="switchView('result')">最终结果</button>
   </div>
 </div>
@@ -6527,6 +6569,7 @@ let appState = {
   sidebarCat: '',           // 当前一级分类 Tab
   subFilter: '',           // 二级航司只看过滤
   statusFilter: '',        // 快速状态过滤：confirmed
+  reviewScope: 'pending',  // 待确认 / 已确认 / 抽检验证三个大区
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
 
@@ -6540,6 +6583,7 @@ if (saved) {
       appState.currentFileId = parsed.currentFileId || null;
       appState.currentView = parsed.currentView || 'review';
       appState.statusFilter = parsed.statusFilter || '';
+      appState.reviewScope = parsed.reviewScope || 'pending';
     } else {
     const staticIds = new Set(REVIEW_POLICIES.map(p => p.id));
     const savedIds = new Set((savedPolicies || []).map(p => p && p.id).filter(Boolean));
@@ -6554,6 +6598,7 @@ if (saved) {
       appState.currentFileId = parsed.currentFileId || null;
       appState.currentView = parsed.currentView || 'review';
       appState.statusFilter = parsed.statusFilter || '';
+      appState.reviewScope = parsed.reviewScope || 'pending';
     }
     if (!staleStaticBatch && savedPolicies) {
       appState.serverSynced = !!parsed.serverSynced;
@@ -6619,6 +6664,7 @@ function saveState() {
       currentFileId: appState.currentFileId,
       currentView: appState.currentView,
       statusFilter: appState.statusFilter || '',
+      reviewScope: appState.reviewScope || 'pending',
       serverSynced: !!appState.serverSynced,
     }));
   } catch (e) {
@@ -6738,6 +6784,7 @@ function render() {
 // ===== 侧边栏：搜索 + 一级Tab + 二级航司组 =====
 const CATEGORY_ORDER = ['03_自营', '02_旗舰店', '01_次卡'];
 const CATEGORY_NAMES = { '03_自营': '自营', '02_旗舰店': '旗舰店', '01_次卡': '次卡' };
+const REVIEW_SCOPE_LABELS = { pending: '待确认区', confirmed: '已确认区', sample: '抽检验证' };
 function normalizeCategory(cat) {
   const value = String(cat || '').trim();
   if (CATEGORY_NAMES[value]) return value;
@@ -6779,9 +6826,12 @@ function renderSidebar() {
   const catCount = {};
   CATEGORY_ORDER.forEach(c => catCount[c] = 0);
   appState.policies.forEach(p => {
+    if (!policyMatchesReviewScope(p)) return;
+    if (!policyMatchesStatusFilter(p)) return;
     const c = normalizeCategory(p.category);
     catCount[c] = (catCount[c] || 0) + 1;
   });
+  const scopeStats = getReviewScopeStats();
 
   // 静态区：标题 + 搜索框 + 一级Tab（渲染后不随列表刷新，保持输入焦点）
   let html = '<h3>文件队列</h3>';
@@ -6792,6 +6842,12 @@ function renderSidebar() {
       onkeydown="if(event.key==='Enter')event.target.blur();if(event.key==='Escape'&&this.value){clearSidebarSearch()}">
     ${query ? `<button class="sb-clear" onclick="clearSidebarSearch()" title="清除搜索">×</button>` : ''}
   </div>`;
+  html += `<div class="review-scope-tabs">`;
+  Object.entries(REVIEW_SCOPE_LABELS).forEach(([scope, label]) => {
+    const active = (appState.reviewScope || 'pending') === scope ? ' active' : '';
+    html += `<button class="review-scope-tab${active}" onclick="setReviewScope('${scope}')">${label}<span class="n">${scopeStats[scope] || 0}</span></button>`;
+  });
+  html += `</div>`;
   html += `<div class="sidebar-tabs">`;
   CATEGORY_ORDER.forEach(c => {
     const active = appState.sidebarCat === c ? ' active' : '';
@@ -6816,6 +6872,7 @@ function renderSidebarList() {
   if (appState.statusFilter) {
     const n = appState.policies.filter(p =>
       policyMatchesStatusFilter(p) &&
+      policyMatchesReviewScope(p) &&
       normalizeCategory(p.category) === (appState.sidebarCat || '03_自营')).length;
     html += `<div class="sub-filter-bar">仅显示：${getStatusFilterLabel(appState.statusFilter)} (${n}) <button class="sub-filter-clear" onclick="clearStatusFilter()" title="显示全部状态">✕</button></div>`;
   }
@@ -6823,6 +6880,8 @@ function renderSidebarList() {
   if (appState.subFilter) {
     const sub = appState.subFilter;
     const n = appState.policies.filter(p =>
+      policyMatchesReviewScope(p) &&
+      policyMatchesStatusFilter(p) &&
       normalizeCategory(p.category) === (appState.sidebarCat || '03_自营') &&
       (p.subcategory || '未标注航司') === sub).length;
     html += `<div class="sub-filter-bar">仅显示：${escapeHtml(sub)} (${n}) <button class="sub-filter-clear" onclick="clearSubFilter()" title="显示全部航司">✕</button></div>`;
@@ -6860,6 +6919,54 @@ function policyMatchesStatusFilter(p) {
   if (appState.statusFilter === 'problem') return hasProblems(p);
   if (appState.statusFilter === 'confirmed') return p.status === 'confirmed';
   return true;
+}
+
+function policyMatchesReviewScope(p) {
+  const scope = appState.reviewScope || 'pending';
+  if (scope === 'confirmed') return p.status === 'confirmed';
+  if (scope === 'sample') return isAuditSampleCandidate(p);
+  return p.status !== 'confirmed';
+}
+
+function getReviewScopeStats() {
+  return {
+    pending: appState.policies.filter(p => p.status !== 'confirmed').length,
+    confirmed: appState.policies.filter(p => p.status === 'confirmed').length,
+    sample: appState.policies.filter(isAuditSampleCandidate).length,
+  };
+}
+
+function setReviewScope(scope) {
+  appState.reviewScope = scope || 'pending';
+  if (scope === 'confirmed') appState.statusFilter = 'confirmed';
+  else if (scope === 'pending') appState.statusFilter = 'reviewing';
+  else if (scope === 'sample') appState.statusFilter = '';
+  appState.subFilter = '';
+  selectFirstVisiblePolicy();
+  render();
+}
+
+function selectFirstVisiblePolicy() {
+  const cat = appState.sidebarCat || '03_自营';
+  const current = appState.policies.find(p => p.id === appState.currentFileId);
+  const currentVisible = current &&
+    policyMatchesReviewScope(current) &&
+    policyMatchesStatusFilter(current) &&
+    normalizeCategory(current.category) === cat &&
+    (!appState.subFilter || (current.subcategory || '未标注航司') === appState.subFilter);
+  if (currentVisible) return;
+  const first = appState.policies.find(p =>
+    policyMatchesReviewScope(p) &&
+    policyMatchesStatusFilter(p) &&
+    normalizeCategory(p.category) === cat &&
+    (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
+  const fallback = first || appState.policies.find(p =>
+    policyMatchesReviewScope(p) &&
+    policyMatchesStatusFilter(p));
+  if (fallback) {
+    appState.currentFileId = fallback.id;
+    appState.sidebarCat = normalizeCategory(fallback.category);
+  }
 }
 
 function getStatusFilterLabel(status) {
@@ -6908,6 +7015,7 @@ function renderSearchResults(q) {
   const matches = appState.policies.filter(p =>
     policyMatches(p, q) &&
     policyMatchesStatusFilter(p) &&
+    policyMatchesReviewScope(p) &&
     (!subFilter || (p.subcategory || '未标注航司') === subFilter));
   const displayMatches = dedupePoliciesForDisplay(matches);
   if (displayMatches.length === 0) {
@@ -6942,6 +7050,7 @@ function renderGroups() {
     const sub = p.subcategory || '未标注航司';
     if (c !== cat) return;
     if (subFilter && sub !== subFilter) return;
+    if (!policyMatchesReviewScope(p)) return;
     if (!policyMatchesStatusFilter(p)) return;
     if (!groups[sub]) groups[sub] = [];
     groups[sub].push(p);
@@ -6956,7 +7065,7 @@ function renderGroups() {
   });
 
   // 一级分类信息条（强化 Tab 切换反馈）
-  const catAll = appState.policies.filter(p => normalizeCategory(p.category) === cat);
+  const catAll = appState.policies.filter(p => normalizeCategory(p.category) === cat && policyMatchesReviewScope(p) && policyMatchesStatusFilter(p));
   const catConfirmed = catAll.filter(p => p.status === 'confirmed').length;
   const catProblem = catAll.filter(hasProblems).length;
   let html = `<div class="cat-info-bar">
@@ -6967,8 +7076,9 @@ function renderGroups() {
   sortedSubs.forEach(sub => {
     const items = groups[sub];
     const confirmed = items.filter(p => p.status === 'confirmed');
-    const confirmedOnly = appState.statusFilter === 'confirmed';
-    const unconfirmed = confirmedOnly ? [] : items.filter(p => p.status !== 'confirmed');
+    const directListMode = appState.reviewScope === 'sample';
+    const confirmedOnly = appState.statusFilter === 'confirmed' || appState.reviewScope === 'confirmed';
+    const unconfirmed = directListMode ? items : (confirmedOnly ? [] : items.filter(p => p.status !== 'confirmed'));
     const subKey = cat + '||' + sub;
     const subActive = items.some(p => p.id === appState.currentFileId);
     const subFiltered = subFilter === sub;
@@ -6999,7 +7109,7 @@ function renderGroups() {
       </div>`;
     });
 
-    if (confirmedOnly) {
+    if (!directListMode && confirmedOnly) {
       confirmed.forEach(p => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
         const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
@@ -7013,7 +7123,7 @@ function renderGroups() {
           ${byTag}
         </div>`;
       });
-    } else if (confirmed.length > 0) {
+    } else if (!directListMode && confirmed.length > 0) {
       const curInConfirmed = confirmed.some(p => p.id === appState.currentFileId);
       html += `<div class="sidebar-confirmed-toggle" onclick="toggleConfirmed('${subKey}')" data-group="${subKey}">
         ▶ 显示 <span class="count">${confirmed.length}</span> 个已确认文件
@@ -7038,7 +7148,8 @@ function renderGroups() {
   });
 
   if (!sortedSubs.length) {
-    html += `<div class="search-empty">${appState.statusFilter ? `该分类暂无${getStatusFilterLabel(appState.statusFilter)}` : '该分类暂无文件'}</div>`;
+    const label = REVIEW_SCOPE_LABELS[appState.reviewScope || 'pending'] || getStatusFilterLabel(appState.statusFilter);
+    html += `<div class="search-empty">该分类暂无${escapeHtml(label)}文件</div>`;
   }
   return html;
 }
@@ -7059,6 +7170,7 @@ function setSidebarCat(cat) {
   if (appState.statusFilter) {
     const first = appState.policies.find(p =>
       policyMatchesStatusFilter(p) &&
+      policyMatchesReviewScope(p) &&
       normalizeCategory(p.category) === cat &&
       (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
     if (first) appState.currentFileId = first.id;
@@ -7099,26 +7211,21 @@ function clearSubFilter() {
 function toggleStatusFilter(status) {
   const next = appState.statusFilter === status ? '' : status;
   appState.statusFilter = next;
+  if (next === 'reviewing') appState.reviewScope = 'pending';
+  else if (next === 'confirmed') appState.reviewScope = 'confirmed';
+  else if (next === 'problem') appState.reviewScope = 'sample';
+  else if (!next) appState.reviewScope = 'pending';
   if (next) {
     appState.currentView = 'review';
-    const current = appState.policies.find(p => p.id === appState.currentFileId);
-    const currentVisible = current &&
-      policyMatchesStatusFilter(current) &&
-      normalizeCategory(current.category) === (appState.sidebarCat || '03_自营') &&
-      (!appState.subFilter || (current.subcategory || '未标注航司') === appState.subFilter);
-    if (!currentVisible) {
-      const first = appState.policies.find(p =>
-        policyMatchesStatusFilter(p) &&
-        normalizeCategory(p.category) === (appState.sidebarCat || '03_自营') &&
-        (!appState.subFilter || (p.subcategory || '未标注航司') === appState.subFilter));
-      if (first) appState.currentFileId = first.id;
-    }
+    selectFirstVisiblePolicy();
   }
   render();
 }
 
 function clearStatusFilter() {
   appState.statusFilter = '';
+  appState.reviewScope = 'pending';
+  selectFirstVisiblePolicy();
   render();
 }
 
@@ -7144,6 +7251,7 @@ function renderMain() {
   if (appState.currentView === 'review') renderReview(main);
   else if (appState.currentView === 'problems') renderProblems(main);
   else if (appState.currentView === 'confirm') renderConfirm(main);
+  else if (appState.currentView === 'accuracy') renderAccuracy(main);
   else if (appState.currentView === 'result') renderResult(main);
 }
 
@@ -7566,6 +7674,8 @@ function renderConfirm(main) {
   const confirmed = appState.policies.filter(p => p.status === 'confirmed').length;
   const total = appState.policies.length;
   const allDone = confirmed === total;
+  const pendingList = appState.policies.filter(p => p.status !== 'confirmed');
+  const confirmedList = appState.policies.filter(p => p.status === 'confirmed');
 
   let html = '<div class="confirm-view">';
   html += `<h3>逐文件确认 (${confirmed}/${total})</h3>`;
@@ -7577,52 +7687,289 @@ function renderConfirm(main) {
     </div>`;
   }
 
-  appState.policies.forEach(p => {
-    const isConfirmed = p.status === 'confirmed';
-    const hasProb = hasProblems(p);
-    const cardCls = isConfirmed ? ' confirmed' : (hasProb ? ' has-problem' : '');
-    const statusCls = isConfirmed ? 'done' : (hasProb ? 'problem' : 'waiting');
-    const statusTxt = isConfirmed ? (hasProb ? `已确认 ⚠${p.problems.length}` : '✓ 已确认') : (hasProb ? `有问题(${p.problems.length})` : '待审核');
-    
-    // Build key fields summary
-    let kvHtml = '';
-    const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit'];
-    keyFields.forEach(f => {
-      if (!isPromptAllowedField(p, f)) return;
-      if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
-        const v = getFieldDisplayValue(f, p.data[f]);
-        kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f, p)}：</span><span class="v">${v}</span></div>`;
-      }
-    });
+  html += `<div class="problems-header" style="margin-top:14px">
+    <h3>待确认文件 <span class="prob-total">${pendingList.length} 个</span></h3>
+    <span class="problems-hint">优先处理这里；已确认文件已移到下方独立区域</span>
+  </div>`;
+  if (pendingList.length === 0) {
+    html += '<div class="empty-state" style="min-height:120px"><p>暂无待确认文件</p></div>';
+  } else {
+    pendingList.forEach(p => { html += renderConfirmCard(p); });
+  }
 
-    html += `<div class="confirm-card${cardCls}" id="card_${p.id}">
-      <div class="card-header">
-        <div class="card-title">${escapeHtml(p.file_name)}${hasFileChanges(p) ? ' <span class="file-modified-badge">✎ 已修改</span>' : ''}</div>
-        <div class="card-status ${statusCls}">${statusTxt}</div>
-      </div>
-      <div class="card-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')} · 解析时间 ${escapeHtml(p.parsed_at || '')}${p.confirmed_by && p.confirmed_by.name ? ` · 确认人：${escapeHtml(p.confirmed_by.name)}` : ''}</div>
-      <div class="card-fields">${kvHtml}</div>`;
-
-    if (hasProb) {
-      html += `<div class="card-problems">`;
-      p.problems.forEach((pr, i) => {
-        html += `<div class="card-problem"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}<span class="card-problem-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</span></div>`;
-      });
-      html += '</div>';
-    }
-
-    const manualBlockMsg = getManualConfirmBlockMessage(p);
-    if (!isConfirmed) {
-      html += manualBlockMsg
-        ? `<button class="btn-confirm ready" disabled title="${escapeHtml(manualBlockMsg)}">确认此文件</button>`
-        : `<button class="btn-confirm ready" onclick="confirmFile('${p.id}')">确认此文件</button>`;
-    } else {
-      html += `<button class="btn-confirm done" disabled>已确认 ✓</button><button class="btn-sm btn-sm-reopen" style="margin-top:12px;margin-left:8px" onclick="reopenFile('${p.id}')">恢复待确认</button>`;
-    }
-    html += '</div>';
-  });
+  html += `<div class="problems-header" style="margin-top:22px">
+    <h3>已确认文件 <span class="prob-total">${confirmedList.length} 个</span></h3>
+    <span class="problems-hint">如发现误确认，可在这里恢复待确认</span>
+  </div>`;
+  if (confirmedList.length === 0) {
+    html += '<div class="empty-state" style="min-height:120px"><p>暂无已确认文件</p></div>';
+  } else {
+    confirmedList.forEach(p => { html += renderConfirmCard(p); });
+  }
 
   html += '</div>';
+  main.innerHTML = html;
+}
+
+function renderConfirmCard(p) {
+  const isConfirmed = p.status === 'confirmed';
+  const hasProb = hasProblems(p);
+  const cardCls = isConfirmed ? ' confirmed' : (hasProb ? ' has-problem' : '');
+  const statusCls = isConfirmed ? 'done' : (hasProb ? 'problem' : 'waiting');
+  const statusTxt = isConfirmed ? (hasProb ? `已确认 ${p.problems.length} 个问题` : '已确认') : (hasProb ? `有问题(${p.problems.length})` : '待审核');
+
+  let kvHtml = '';
+  const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit'];
+  keyFields.forEach(f => {
+    if (!isPromptAllowedField(p, f)) return;
+    if (p.data[f] !== undefined && p.data[f] !== null && p.data[f] !== '') {
+      const v = getFieldDisplayValue(f, p.data[f]);
+      kvHtml += `<div class="kv"><span class="k">${renderFieldLabel(f, p)}：</span><span class="v">${escapeHtml(v)}</span></div>`;
+    }
+  });
+
+  let html = `<div class="confirm-card${cardCls}" id="card_${p.id}">
+    <div class="card-header">
+      <div class="card-title">${escapeHtml(p.file_name)}${hasFileChanges(p) ? ' <span class="file-modified-badge">已修改</span>' : ''}</div>
+      <div class="card-status ${statusCls}">${escapeHtml(statusTxt)}</div>
+    </div>
+    <div class="card-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')} · 解析时间 ${escapeHtml(p.parsed_at || '')}${p.confirmed_by && p.confirmed_by.name ? ` · 确认人：${escapeHtml(p.confirmed_by.name)}` : ''}</div>
+    <div class="card-fields">${kvHtml}</div>`;
+
+  if (hasProb) {
+    html += `<div class="card-problems">`;
+    p.problems.forEach(pr => {
+      html += `<div class="card-problem"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}<span class="card-problem-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</span></div>`;
+    });
+    html += '</div>';
+  }
+
+  const manualBlockMsg = getManualConfirmBlockMessage(p);
+  if (!isConfirmed) {
+    html += manualBlockMsg
+      ? `<button class="btn-confirm ready" disabled title="${escapeHtml(manualBlockMsg)}">确认此文件</button>`
+      : `<button class="btn-confirm ready" onclick="confirmFile('${p.id}')">确认此文件</button>`;
+  } else {
+    html += `<button class="btn-confirm done" disabled>已确认</button><button class="btn-sm btn-sm-reopen" style="margin-top:12px;margin-left:8px" onclick="reopenFile('${p.id}')">恢复待确认</button>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function getHumanChangeEntries(policy) {
+  return ((policy && policy._change_history) || [])
+    .map(normalizeHistoryEntry)
+    .filter(Boolean)
+    .filter(entry => normalizeChangeSource(entry) === 'human')
+    .filter(entry => normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue));
+}
+
+function getHumanProblemEntries(policy) {
+  return ((policy && policy.problems) || []).filter(pr => {
+    if (!pr) return false;
+    if (pr.auto_from_change) return true;
+    const normalized = normalizeChangeSource({
+      source: pr.source,
+      user: pr.created_by || pr.user,
+      reason: pr.desc || pr.reason || '',
+    });
+    return normalized !== 'auto';
+  });
+}
+
+function getIssueFieldKey(raw) {
+  const value = normalizeFeishuValue(raw);
+  if (!value) return '';
+  return canonicalizeLegacyFieldName(value);
+}
+
+function getPolicyErrorFields(policy) {
+  const fields = new Set();
+  getHumanChangeEntries(policy).forEach(entry => {
+    const field = getIssueFieldKey(entry.field || entry.fieldLabel);
+    if (field) fields.add(field);
+  });
+  getHumanProblemEntries(policy).forEach(pr => {
+    const field = getIssueFieldKey(pr.field || pr.field_key || pr.field_label || pr.label);
+    if (field) fields.add(field);
+  });
+  return fields;
+}
+
+function getVisibleFieldKeys(policy) {
+  return Object.keys(getFilteredPolicyData(policy)).filter(key => key !== FIELD_DEFINITIONS_KEY);
+}
+
+function getManualConfirmFieldCount(policy) {
+  return getVisibleFieldKeys(policy).filter(key => isManualConfirmValue(policy.data && policy.data[key])).length;
+}
+
+function auditSampleScore(policy) {
+  const humanChanges = getHumanChangeEntries(policy).length;
+  const humanProblems = getHumanProblemEntries(policy).length;
+  const edited = policy && policy.audit && Array.isArray(policy.audit.edited_fields) ? policy.audit.edited_fields.length : 0;
+  const manual = getManualConfirmFieldCount(policy);
+  return humanChanges * 4 + humanProblems * 3 + edited * 2 + manual;
+}
+
+function isAuditSampleCandidate(policy) {
+  return auditSampleScore(policy) > 0 || hasProblems(policy) || hasFileChanges(policy);
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
+  return Math.max(0, Math.min(100, value)).toFixed(1).replace(/\.0$/, '') + '%';
+}
+
+function getFieldJudgementText(policy, field) {
+  const def = getFieldDefinition(policy, field) || {};
+  const value = policy && policy.data ? policy.data[field] : '';
+  const chunks = [];
+  if (def.logic) chunks.push('提取逻辑：' + def.logic);
+  if (def.description) chunks.push('字段简述：' + def.description);
+  if (hasConcreteFieldValue(value)) chunks.push('当前解析值：' + normalizeFeishuValue(value).slice(0, 160));
+  return chunks.join('；') || '当前记录没有独立保存证据片段，需结合左侧原文和字段规则复核。';
+}
+
+function buildAccuracyStats() {
+  const fieldMap = new Map();
+  const fileStats = appState.policies.map(policy => {
+    const visibleFields = getVisibleFieldKeys(policy);
+    const errorFields = getPolicyErrorFields(policy);
+    const humanChanges = getHumanChangeEntries(policy);
+    const humanProblems = getHumanProblemEntries(policy);
+    visibleFields.forEach(field => {
+      if (!fieldMap.has(field)) {
+        fieldMap.set(field, { field, label: renderPlainFieldLabel(field, policy), appearances: 0, errors: 0, histories: [] });
+      }
+      fieldMap.get(field).appearances++;
+    });
+    errorFields.forEach(field => {
+      if (!fieldMap.has(field)) {
+        fieldMap.set(field, { field, label: renderPlainFieldLabel(field, policy), appearances: 0, errors: 0, histories: [] });
+      }
+      const row = fieldMap.get(field);
+      row.errors++;
+      row.histories.push(...humanChanges.filter(entry => getIssueFieldKey(entry.field || entry.fieldLabel) === field).map(entry => ({ type: '修改', policy, entry })));
+      row.histories.push(...humanProblems.filter(pr => getIssueFieldKey(pr.field || pr.field_key || pr.field_label || pr.label) === field).map(problem => ({ type: '问题', policy, problem })));
+    });
+    const totalFields = visibleFields.length;
+    const errorCount = [...errorFields].filter(field => field !== '_file').length;
+    const accuracy = totalFields ? (totalFields - Math.min(errorCount, totalFields)) / totalFields * 100 : null;
+    return {
+      policy,
+      totalFields,
+      errorCount,
+      humanChanges,
+      humanProblems,
+      manualCount: getManualConfirmFieldCount(policy),
+      accuracy,
+      score: auditSampleScore(policy),
+    };
+  });
+
+  const totalAppearances = [...fieldMap.values()].reduce((sum, f) => sum + f.appearances, 0);
+  const totalErrors = [...fieldMap.values()].reduce((sum, f) => sum + f.errors, 0);
+  const fieldAccuracy = totalAppearances ? (totalAppearances - totalErrors) / totalAppearances * 100 : null;
+  const correctedFiles = fileStats.filter(s => s.humanChanges.length || s.humanProblems.length).length;
+  const highRiskFields = [...fieldMap.values()]
+    .filter(f => f.errors > 0)
+    .sort((a, b) => (b.errors / Math.max(1, b.appearances)) - (a.errors / Math.max(1, a.appearances)) || b.errors - a.errors);
+  const sampleFiles = fileStats
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score || b.errorCount - a.errorCount)
+    .slice(0, 30);
+  return { fileStats, fieldMap, totalAppearances, totalErrors, fieldAccuracy, correctedFiles, highRiskFields, sampleFiles };
+}
+
+function renderAccuracy(main) {
+  const stats = buildAccuracyStats();
+  const total = appState.policies.length;
+  const confirmed = appState.policies.filter(p => p.status === 'confirmed').length;
+  const pending = total - confirmed;
+
+  let html = `<div class="accuracy-view">
+    <div class="accuracy-header">
+      <div>
+        <h3>准确率与回归看板</h3>
+        <div class="hint">基于人工有效修改和人工问题标记统计；自动矫正不计入错误率。</div>
+      </div>
+      <div class="accuracy-actions">
+        <button class="btn-sm btn-sm-nav" onclick="setReviewScope('pending');switchView('review')">查看待确认</button>
+        <button class="btn-sm btn-sm-nav" onclick="setReviewScope('sample');switchView('review')">查看抽检队列</button>
+        <button class="btn-sm btn-sm-nav" onclick="setReviewScope('confirmed');switchView('review')">查看已确认</button>
+      </div>
+    </div>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="label">文件总数</div><div class="value">${total}</div><div class="sub">待确认 ${pending} · 已确认 ${confirmed}</div></div>
+      <div class="metric-card"><div class="label">人工发现问题文件</div><div class="value">${stats.correctedFiles}</div><div class="sub">含字段修改、字段新增/删除、人工问题标记</div></div>
+      <div class="metric-card"><div class="label">字段维度准确率</div><div class="value">${formatPercent(stats.fieldAccuracy)}</div><div class="sub">${Math.max(0, stats.totalAppearances - stats.totalErrors)}/${stats.totalAppearances} 个字段未被人工纠错</div></div>
+      <div class="metric-card"><div class="label">高频错误字段</div><div class="value">${stats.highRiskFields.length}</div><div class="sub">用于优先更新知识库和规则校验</div></div>
+    </div>
+    <div class="accuracy-layout">
+      <div class="accuracy-panel">
+        <h4>建议抽检文件 <span class="panel-note">按人工改动、问题标记、人工确认字段排序</span></h4>
+        <div class="sample-list">`;
+
+  if (!stats.sampleFiles.length) {
+    html += '<div class="empty-state" style="min-height:160px"><p>暂无抽检候选文件</p></div>';
+  } else {
+    stats.sampleFiles.forEach(item => {
+      const p = item.policy;
+      const reasons = [];
+      if (item.humanChanges.length) reasons.push(`人工修改 ${item.humanChanges.length} 次`);
+      if (item.humanProblems.length) reasons.push(`人工问题 ${item.humanProblems.length} 条`);
+      if (item.manualCount) reasons.push(`人工确认字段 ${item.manualCount} 个`);
+      html += `<div class="sample-row" onclick="selectFile('${p.id}')">
+        <div class="name">${escapeHtml(p.file_name)}</div>
+        <div class="meta"><span>${escapeHtml(getPolicyDisplayScenario(p) || '')}</span><span>${escapeHtml(p.data.carrier_name || '')}</span><span>${p.status === 'confirmed' ? '已确认' : '待确认'}</span><span>字段准确率 ${formatPercent(item.accuracy)}</span></div>
+        <div class="why">${escapeHtml(reasons.join(' · ') || '历史表现需要复核')}</div>
+      </div>`;
+    });
+  }
+
+  html += `</div></div>
+      <div class="accuracy-panel">
+        <h4>字段错误率 <span class="panel-note">点击展开可看历史错误和当时判断依据</span></h4>
+        <table class="field-error-table">
+          <thead><tr><th>字段</th><th>错误率</th><th>错误/出现</th><th>历史记录</th></tr></thead>
+          <tbody>`;
+
+  if (!stats.highRiskFields.length) {
+    html += '<tr><td colspan="4"><div class="empty-state" style="min-height:120px"><p>暂无字段错误记录</p></div></td></tr>';
+  } else {
+    stats.highRiskFields.forEach(row => {
+      const rate = row.appearances ? row.errors / row.appearances * 100 : 100;
+      const historyHtml = row.histories.slice(0, 8).map(h => {
+        const p = h.policy;
+        if (h.type === '修改') {
+          const e = h.entry;
+          return `<div class="field-history-row">
+            <div class="file">${escapeHtml(p.file_name)}</div>
+            <div>${escapeHtml(normalizeFeishuValue(e.oldValue) || '(空)')} → ${escapeHtml(normalizeFeishuValue(e.newValue) || '(空)')}</div>
+            <div>原因：${escapeHtml(e.reason || '未填写')}</div>
+            <div>${escapeHtml(e.user || '')} · ${escapeHtml(e.time || '')}</div>
+            <div class="judge-snippet">${escapeHtml(getFieldJudgementText(p, row.field))}</div>
+          </div>`;
+        }
+        const pr = h.problem;
+        return `<div class="field-history-row">
+          <div class="file">${escapeHtml(p.file_name)}</div>
+          <div>问题：${escapeHtml(pr.desc || pr.reason || '')}</div>
+          <div>${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</div>
+          <div class="judge-snippet">${escapeHtml(getFieldJudgementText(p, row.field))}</div>
+        </div>`;
+      }).join('');
+      html += `<tr>
+        <td><div class="field-name">${escapeHtml(row.label)}</div><div class="field-key-small">${escapeHtml(row.field)}</div></td>
+        <td><span class="error-rate">${formatPercent(rate)}</span></td>
+        <td>${row.errors}/${row.appearances}</td>
+        <td><details class="field-history"><summary>查看 ${row.histories.length} 条</summary>${historyHtml}</details></td>
+      </tr>`;
+    });
+  }
+
+  html += `</tbody></table></div></div></div>`;
   main.innerHTML = html;
 }
 
