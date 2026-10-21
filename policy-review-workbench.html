@@ -182,6 +182,41 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .prob-item:last-child { border-bottom:none; }
 .prob-desc { flex:1; }
 .prob-meta { font-size:11px; color:var(--muted); white-space:nowrap; }
+.problem-dashboard { display:grid; grid-template-columns:260px minmax(0,1fr); gap:14px; align-items:start; }
+.problem-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+.problem-metric { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+.problem-metric .label { color:var(--muted); font-size:12px; font-weight:700; }
+.problem-metric .value { margin-top:6px; font-size:22px; font-weight:800; color:var(--text); }
+.problem-field-rail { background:#fff; border:1px solid var(--border); border-radius:8px; overflow:hidden; position:sticky; top:12px; }
+.problem-field-rail h4 { margin:0; padding:12px 14px; font-size:14px; border-bottom:1px solid var(--border); }
+.problem-field-list { max-height:680px; overflow:auto; padding:8px; }
+.problem-field-chip { width:100%; border:1px solid transparent; background:#fff; border-radius:6px; padding:9px 10px; text-align:left; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; margin-bottom:4px; }
+.problem-field-chip:hover { background:#f7f9fc; border-color:var(--border); }
+.problem-field-chip.active { background:#fff5f5; border-color:#ffb8b8; }
+.problem-field-chip .name { font-size:13px; font-weight:800; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.problem-field-chip .key { grid-column:1/-1; color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.problem-field-chip .count { background:#eef2f7; color:#52606d; border-radius:999px; font-size:12px; font-weight:800; padding:2px 7px; }
+.problem-field-chip.active .count { background:#d63031; color:#fff; }
+.problem-feed { min-width:0; }
+.problem-toolbar { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.problem-toolbar .title { font-weight:800; }
+.problem-toolbar .sub { color:var(--muted); font-size:12px; margin-top:3px; }
+.problem-card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:all .15s; }
+.problem-card:hover { border-color:#d63031; box-shadow:0 2px 8px rgba(214,48,49,.08); }
+.problem-card-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.problem-card-name { font-weight:800; line-height:1.35; }
+.problem-card-meta { color:var(--muted); font-size:12px; margin-top:5px; display:flex; gap:8px; flex-wrap:wrap; }
+.problem-card-actions { display:flex; gap:8px; flex-shrink:0; }
+.problem-field-tags { display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 4px; }
+.problem-tag { background:#fff2f2; border:1px solid #ffd1d1; color:#c92a2a; border-radius:999px; padding:2px 8px; font-size:12px; font-weight:700; }
+.problem-preview { margin-top:8px; border-top:1px dashed var(--border); padding-top:8px; }
+.problem-preview-line { font-size:13px; line-height:1.55; color:#2d3436; margin:3px 0; }
+.problem-preview-line .who { color:var(--muted); font-size:12px; margin-left:8px; }
+.problem-more { color:var(--muted); font-size:12px; margin-top:6px; }
+.problem-empty-filter { min-height:220px; display:flex; align-items:center; justify-content:center; color:var(--muted); background:#fff; border:1px dashed var(--border); border-radius:8px; }
+.file-problem-group { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:10px; background:#fff; }
+.file-problem-group-head { background:#f7f9fc; padding:8px 10px; font-weight:900; font-size:13px; display:flex; justify-content:space-between; gap:8px; }
+.file-problem-group-count { color:var(--muted); font-size:12px; font-weight:700; }
 
 /* 分类信息条问题计数 */
 .cat-problem-count { color:#d63031; margin-right:8px; font-weight:600; }
@@ -405,6 +440,35 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .field-history-row { padding:10px; border-top:1px dashed #ffd0d0; font-size:12px; line-height:1.55; }
 .field-history-row .file { font-weight:800; color:var(--text); }
 .judge-snippet { margin-top:6px; background:#f6f8fb; border-left:3px solid var(--primary); padding:6px 8px; color:var(--muted); }
+.accuracy-workspace { display:grid; grid-template-columns:330px minmax(0,1fr); gap:16px; align-items:start; }
+.risk-list { background:#fff; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.risk-list-head { padding:14px 16px; border-bottom:1px solid var(--border); }
+.risk-list-head h4 { margin:0; font-size:16px; }
+.risk-list-head .sub { color:var(--muted); font-size:12px; margin-top:4px; }
+.risk-items { max-height:760px; overflow:auto; padding:8px; }
+.risk-item { width:100%; border:1px solid transparent; background:#fff; border-radius:8px; padding:11px 12px; text-align:left; cursor:pointer; margin-bottom:6px; }
+.risk-item:hover { background:#f7f9fc; border-color:var(--border); }
+.risk-item.active { background:#fff5f5; border-color:#ffb8b8; }
+.risk-item-top { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.risk-item-name { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.risk-rate { color:#d63031; font-weight:900; white-space:nowrap; }
+.risk-item-meta { margin-top:5px; color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:8px; }
+.risk-detail { background:#fff; border:1px solid var(--border); border-radius:8px; overflow:hidden; min-width:0; }
+.risk-detail-head { padding:16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.risk-detail-title { font-size:18px; font-weight:900; margin-bottom:4px; }
+.risk-detail-key { color:var(--muted); font-size:12px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.risk-detail-metrics { display:flex; gap:8px; flex-wrap:wrap; }
+.risk-pill { background:#f1f3f5; border:1px solid var(--border); border-radius:999px; padding:4px 10px; font-size:12px; font-weight:800; white-space:nowrap; }
+.risk-pill.hot { background:#fff5f5; border-color:#ffc9c9; color:#d63031; }
+.risk-detail-body { padding:14px 16px; }
+.risk-section-title { font-size:13px; font-weight:900; color:#4b5563; margin:4px 0 10px; }
+.risk-history-list { display:grid; gap:10px; }
+.risk-history-card { border:1px solid var(--border); border-radius:8px; padding:12px; background:#fff; }
+.risk-history-card .file { font-weight:900; line-height:1.35; margin-bottom:6px; }
+.risk-history-card .change { font-size:13px; line-height:1.55; color:#2d3436; }
+.risk-history-card .reason { margin-top:6px; background:#fff8db; border-left:3px solid #f5c542; padding:6px 8px; font-size:12px; line-height:1.5; color:#6f5200; }
+.risk-history-card .meta { margin-top:7px; color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.risk-judge { margin-top:8px; background:#f7f9fc; border-left:3px solid var(--primary); padding:8px 10px; color:#52606d; font-size:12px; line-height:1.5; }
 
 /* Responsive */
 @media (max-width:768px) {
@@ -413,6 +477,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   .review-panel { flex-direction:column; }
   .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .accuracy-layout { grid-template-columns:1fr; }
+  .problem-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .problem-dashboard, .accuracy-workspace { grid-template-columns:1fr; }
+  .problem-field-rail { position:static; }
+  .risk-detail-head { flex-direction:column; }
 }
 </style>
 </head>
@@ -6570,6 +6638,8 @@ let appState = {
   subFilter: '',           // 二级航司只看过滤
   statusFilter: '',        // 快速状态过滤：confirmed
   reviewScope: 'pending',  // 待确认 / 已确认 / 抽检验证三个大区
+  problemFieldFilter: '',  // 问题清单按字段聚合筛选
+  accuracyFieldFilter: '', // 准确率看板当前字段
   serverSynced: false,     // 已从飞书拉取过完整记录集，刷新时不再混入旧静态包
 };
 
@@ -6584,6 +6654,8 @@ if (saved) {
       appState.currentView = parsed.currentView || 'review';
       appState.statusFilter = parsed.statusFilter || '';
       appState.reviewScope = parsed.reviewScope || 'pending';
+      appState.problemFieldFilter = parsed.problemFieldFilter || '';
+      appState.accuracyFieldFilter = parsed.accuracyFieldFilter || '';
     } else {
     const staticIds = new Set(REVIEW_POLICIES.map(p => p.id));
     const savedIds = new Set((savedPolicies || []).map(p => p && p.id).filter(Boolean));
@@ -6599,6 +6671,8 @@ if (saved) {
       appState.currentView = parsed.currentView || 'review';
       appState.statusFilter = parsed.statusFilter || '';
       appState.reviewScope = parsed.reviewScope || 'pending';
+      appState.problemFieldFilter = parsed.problemFieldFilter || '';
+      appState.accuracyFieldFilter = parsed.accuracyFieldFilter || '';
     }
     if (!staleStaticBatch && savedPolicies) {
       appState.serverSynced = !!parsed.serverSynced;
@@ -6665,6 +6739,8 @@ function saveState() {
       currentView: appState.currentView,
       statusFilter: appState.statusFilter || '',
       reviewScope: appState.reviewScope || 'pending',
+      problemFieldFilter: appState.problemFieldFilter || '',
+      accuracyFieldFilter: appState.accuracyFieldFilter || '',
       serverSynced: !!appState.serverSynced,
     }));
   } catch (e) {
@@ -7256,37 +7332,134 @@ function renderMain() {
 }
 
 // ===== 问题清单视图 =====
-function renderProblems(main) {
+function getProblemFieldInfo(problem, policy) {
+  const rawField = problem && (problem.field || problem.field_key || problem.field_label || problem.label);
+  const field = getIssueFieldKey(rawField) || (problem && problem.field ? canonicalizeLegacyFieldName(problem.field) : '') || '_file';
+  const label = field === '_file'
+    ? '文件整体'
+    : (problem && problem.field_label) || renderPlainFieldLabel(field, policy) || field;
+  return { field, label };
+}
+
+function buildProblemInsights() {
   const problemPolicies = appState.policies.filter(hasProblems);
+  const fieldMap = new Map();
+  let entryCount = 0;
+  problemPolicies.forEach(policy => {
+    (policy.problems || []).forEach((problem, idx) => {
+      const info = getProblemFieldInfo(problem, policy);
+      if (!fieldMap.has(info.field)) {
+        fieldMap.set(info.field, {
+          field: info.field,
+          label: info.label,
+          entries: [],
+          files: new Set(),
+        });
+      }
+      const group = fieldMap.get(info.field);
+      group.entries.push({ policy, problem, idx });
+      group.files.add(policy.id);
+      entryCount++;
+    });
+  });
+  const groups = [...fieldMap.values()].sort((a, b) => b.entries.length - a.entries.length || a.label.localeCompare(b.label, 'zh-Hans-CN'));
+  return { problemPolicies, groups, entryCount };
+}
+
+function renderProblems(main) {
+  const insights = buildProblemInsights();
+  const problemPolicies = insights.problemPolicies;
   if (problemPolicies.length === 0) {
     main.innerHTML = `<div class="empty-state"><div class="icon">🎉</div><p>暂无解析问题，继续审核吧</p></div>`;
     return;
   }
-  let html = '<div class="problems-view">';
-  html += `<div class="problems-header">
-    <h3>解析问题清单 <span class="prob-total">${problemPolicies.length} 个文件</span></h3>
-    <span class="problems-hint">点击文件可跳转审核 · 问题会同步到当前审核记录</span>
-  </div>`;
 
-  problemPolicies.forEach(p => {
-    const probCount = p.problems.length;
-    html += `<div class="prob-file" onclick="selectFile('${p.id}')">
-      <div class="prob-file-head">
-        <div class="prob-file-name">${escapeHtml(p.file_name)}<span class="prob-badge">${probCount}</span></div>
-        <div class="prob-file-meta">${escapeHtml(p.data.carrier_name || '')} · ${escapeHtml(p.data.product_name || '')}</div>
+  const selectedField = insights.groups.some(g => g.field === appState.problemFieldFilter) ? appState.problemFieldFilter : '';
+  if (appState.problemFieldFilter && !selectedField) appState.problemFieldFilter = '';
+  const selectedGroup = selectedField ? insights.groups.find(g => g.field === selectedField) : null;
+  const filteredPolicies = selectedField
+    ? problemPolicies.filter(p => (p.problems || []).some(pr => getProblemFieldInfo(pr, p).field === selectedField))
+    : problemPolicies;
+  const pendingProblemFiles = problemPolicies.filter(p => p.status !== 'confirmed').length;
+  const confirmedProblemFiles = problemPolicies.length - pendingProblemFiles;
+
+  let html = `<div class="problems-view">
+    <div class="problems-header">
+      <div>
+        <h3>问题清单 <span class="prob-total">${problemPolicies.length} 个文件 · ${insights.entryCount} 条问题</span></h3>
+        <div class="problems-hint">先看高频字段，再进入文件处理；详情默认收起，减少扫读负担。</div>
       </div>
-      <div class="prob-list">`;
-    p.problems.forEach((pr, i) => {
-      html += `<div class="prob-item">
-        <div class="prob-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
-        <div class="prob-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
-          <button class="prob-resolve" onclick="event.stopPropagation();removeProblem('${p.id}',${i})" title="标记为已解决">✓ 已解决</button>
-        </div>
-      </div>`;
-    });
-    html += `</div></div>`;
+      <button class="btn-sm btn-sm-nav" onclick="setProblemFieldFilter('')">查看全部字段</button>
+    </div>
+    <div class="problem-summary">
+      <div class="problem-metric"><div class="label">问题文件</div><div class="value">${problemPolicies.length}</div></div>
+      <div class="problem-metric"><div class="label">问题记录</div><div class="value">${insights.entryCount}</div></div>
+      <div class="problem-metric"><div class="label">涉及字段</div><div class="value">${insights.groups.length}</div></div>
+      <div class="problem-metric"><div class="label">待审/已确认</div><div class="value">${pendingProblemFiles}/${confirmedProblemFiles}</div></div>
+    </div>
+    <div class="problem-dashboard">
+      <aside class="problem-field-rail">
+        <h4>高频问题字段</h4>
+        <div class="problem-field-list">
+          <button class="problem-field-chip${selectedField ? '' : ' active'}" onclick="setProblemFieldFilter('')">
+            <span class="name">全部问题</span><span class="count">${insights.entryCount}</span>
+            <span class="key">${problemPolicies.length} 个文件</span>
+          </button>`;
+
+  insights.groups.forEach(group => {
+    const active = selectedField === group.field ? ' active' : '';
+    html += `<button class="problem-field-chip${active}" onclick="setProblemFieldFilter('${jsArg(group.field)}')" title="${escapeHtml(group.label)}">
+      <span class="name">${escapeHtml(group.label)}</span><span class="count">${group.entries.length}</span>
+      <span class="key">${escapeHtml(group.field === '_file' ? 'file_level' : group.field)} · ${group.files.size} 个文件</span>
+    </button>`;
   });
-  html += '</div>';
+
+  const toolbarTitle = selectedGroup ? `${selectedGroup.label} 相关问题` : '全部问题文件';
+  const toolbarSub = selectedGroup
+    ? `${selectedGroup.entries.length} 条问题 · ${selectedGroup.files.size} 个文件`
+    : `${insights.entryCount} 条问题 · ${problemPolicies.length} 个文件`;
+
+  html += `</div></aside><section class="problem-feed">
+    <div class="problem-toolbar">
+      <div><div class="title">${escapeHtml(toolbarTitle)}</div><div class="sub">${escapeHtml(toolbarSub)}</div></div>
+      ${selectedGroup ? `<button class="btn-sm btn-sm-nav" onclick="setProblemFieldFilter('')">清除字段筛选</button>` : ''}
+    </div>`;
+
+  if (!filteredPolicies.length) {
+    html += '<div class="problem-empty-filter">当前筛选下暂无问题</div>';
+  } else {
+    filteredPolicies.forEach(p => {
+      const displayProblems = selectedField
+        ? (p.problems || []).map((pr, idx) => ({ pr, idx })).filter(item => getProblemFieldInfo(item.pr, p).field === selectedField)
+        : (p.problems || []).map((pr, idx) => ({ pr, idx }));
+      const fieldLabels = [...new Set(displayProblems.map(item => getProblemFieldInfo(item.pr, p).label))].slice(0, 6);
+      const preview = displayProblems.slice(0, 2).map(item => {
+        const info = getProblemFieldInfo(item.pr, p);
+        const meta = [item.pr.created_by, item.pr.created_at].filter(Boolean).join(' · ');
+        return `<div class="problem-preview-line"><span class="prob-field-tag">${escapeHtml(info.label)}</span>${escapeHtml(item.pr.desc || '')}${meta ? `<span class="who">${escapeHtml(meta)}</span>` : ''}</div>`;
+      }).join('');
+      html += `<article class="problem-card" onclick="selectFile('${jsArg(p.id)}')">
+        <div class="problem-card-head">
+          <div>
+            <div class="problem-card-name">${escapeHtml(p.file_name)}<span class="prob-badge">${displayProblems.length}</span></div>
+            <div class="problem-card-meta">
+              <span>${escapeHtml(getPolicyDisplayScenario(p) || '')}</span>
+              <span>${escapeHtml(p.data.carrier_name || '')}</span>
+              <span>${p.status === 'confirmed' ? '已确认' : '待审核'}</span>
+            </div>
+          </div>
+          <div class="problem-card-actions">
+            <button class="btn-sm btn-sm-nav" onclick="event.stopPropagation();openFileProblems('${jsArg(p.id)}')">详情</button>
+            <button class="btn-sm btn-sm-confirm" onclick="event.stopPropagation();selectFile('${jsArg(p.id)}')">去审核</button>
+          </div>
+        </div>
+        <div class="problem-field-tags">${fieldLabels.map(label => `<span class="problem-tag">${escapeHtml(label)}</span>`).join('')}</div>
+        <div class="problem-preview">${preview}${displayProblems.length > 2 ? `<div class="problem-more">还有 ${displayProblems.length - 2} 条，点击“详情”查看</div>` : ''}</div>
+      </article>`;
+    });
+  }
+
+  html += '</section></div></div>';
   main.innerHTML = html;
 }
 
@@ -7887,6 +8060,13 @@ function renderAccuracy(main) {
   const total = appState.policies.length;
   const confirmed = appState.policies.filter(p => p.status === 'confirmed').length;
   const pending = total - confirmed;
+  const selectedField = stats.highRiskFields.some(row => row.field === appState.accuracyFieldFilter)
+    ? appState.accuracyFieldFilter
+    : (stats.highRiskFields[0] && stats.highRiskFields[0].field) || '';
+  if (appState.accuracyFieldFilter && appState.accuracyFieldFilter !== selectedField) {
+    appState.accuracyFieldFilter = selectedField;
+  }
+  const selectedRow = stats.highRiskFields.find(row => row.field === selectedField);
 
   let html = `<div class="accuracy-view">
     <div class="accuracy-header">
@@ -7906,10 +8086,82 @@ function renderAccuracy(main) {
       <div class="metric-card"><div class="label">字段维度准确率</div><div class="value">${formatPercent(stats.fieldAccuracy)}</div><div class="sub">${Math.max(0, stats.totalAppearances - stats.totalErrors)}/${stats.totalAppearances} 个字段未被人工纠错</div></div>
       <div class="metric-card"><div class="label">高频错误字段</div><div class="value">${stats.highRiskFields.length}</div><div class="sub">用于优先更新知识库和规则校验</div></div>
     </div>
-    <div class="accuracy-layout">
-      <div class="accuracy-panel">
-        <h4>建议抽检文件 <span class="panel-note">按人工改动、问题标记、人工确认字段排序</span></h4>
-        <div class="sample-list">`;
+    <div class="accuracy-workspace">
+      <aside class="risk-list">
+        <div class="risk-list-head">
+          <h4>字段错误排行</h4>
+          <div class="sub">按错误率和错误次数排序，点击查看明细</div>
+        </div>
+        <div class="risk-items">`;
+
+  if (!stats.highRiskFields.length) {
+    html += '<div class="empty-state" style="min-height:160px"><p>暂无字段错误记录</p></div>';
+  } else {
+    stats.highRiskFields.forEach(row => {
+      const rate = row.appearances ? row.errors / row.appearances * 100 : 100;
+      const active = row.field === selectedField ? ' active' : '';
+      html += `<button class="risk-item${active}" onclick="setAccuracyFieldFilter('${jsArg(row.field)}')" title="${escapeHtml(row.label)}">
+        <div class="risk-item-top"><span class="risk-item-name">${escapeHtml(row.label)}</span><span class="risk-rate">${formatPercent(rate)}</span></div>
+        <div class="risk-item-meta"><span>${escapeHtml(row.field)}</span><span>${row.errors}/${row.appearances}</span></div>
+      </button>`;
+    });
+  }
+
+  html += `</div></aside><section class="risk-detail">`;
+
+  if (!selectedRow) {
+    html += '<div class="empty-state" style="min-height:320px"><p>暂无可分析的字段错误记录</p></div>';
+  } else {
+    const rate = selectedRow.appearances ? selectedRow.errors / selectedRow.appearances * 100 : 100;
+    html += `<div class="risk-detail-head">
+      <div>
+        <div class="risk-detail-title">${escapeHtml(selectedRow.label)}</div>
+        <div class="risk-detail-key">${escapeHtml(selectedRow.field)}</div>
+      </div>
+      <div class="risk-detail-metrics">
+        <span class="risk-pill hot">错误率 ${formatPercent(rate)}</span>
+        <span class="risk-pill">错误 ${selectedRow.errors}</span>
+        <span class="risk-pill">出现 ${selectedRow.appearances}</span>
+        <span class="risk-pill">历史 ${selectedRow.histories.length}</span>
+      </div>
+    </div>
+    <div class="risk-detail-body">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px">
+        <div class="risk-section-title">历史错误记录与解析依据</div>
+        <button class="btn-sm btn-sm-nav" onclick="setProblemFieldFilter('${jsArg(selectedRow.field)}');switchView('problems')">去问题清单看这个字段</button>
+      </div>
+      <div class="risk-history-list">`;
+    selectedRow.histories.slice(0, 30).forEach(h => {
+      const p = h.policy;
+      if (h.type === '修改') {
+        const e = h.entry;
+        html += `<div class="risk-history-card">
+          <div class="file">${escapeHtml(p.file_name)}</div>
+          <div class="change">${escapeHtml(normalizeFeishuValue(e.oldValue) || '(空)')} → <b>${escapeHtml(normalizeFeishuValue(e.newValue) || '(空)')}</b></div>
+          <div class="reason">原因：${escapeHtml(e.reason || '未填写')}</div>
+          <div class="risk-judge">${escapeHtml(getFieldJudgementText(p, selectedRow.field))}</div>
+          <div class="meta"><span>${escapeHtml(e.user || '')} · ${escapeHtml(e.time || '')}</span><button class="btn-sm btn-sm-confirm" onclick="selectFile('${jsArg(p.id)}')">打开文件</button></div>
+        </div>`;
+      } else {
+        const pr = h.problem;
+        html += `<div class="risk-history-card">
+          <div class="file">${escapeHtml(p.file_name)}</div>
+          <div class="change">问题：${escapeHtml(pr.desc || pr.reason || '')}</div>
+          <div class="risk-judge">${escapeHtml(getFieldJudgementText(p, selectedRow.field))}</div>
+          <div class="meta"><span>${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</span><button class="btn-sm btn-sm-confirm" onclick="selectFile('${jsArg(p.id)}')">打开文件</button></div>
+        </div>`;
+      }
+    });
+    if (selectedRow.histories.length > 30) {
+      html += `<div class="problem-more">已显示前 30 条，剩余 ${selectedRow.histories.length - 30} 条可通过问题清单继续查看。</div>`;
+    }
+    html += '</div></div>';
+  }
+
+  html += `</section></div>
+    <div class="accuracy-panel" style="margin-top:16px">
+      <h4>建议抽检文件 <span class="panel-note">按人工改动、问题标记、人工确认字段排序</span></h4>
+      <div class="sample-list">`;
 
   if (!stats.sampleFiles.length) {
     html += '<div class="empty-state" style="min-height:160px"><p>暂无抽检候选文件</p></div>';
@@ -7920,7 +8172,7 @@ function renderAccuracy(main) {
       if (item.humanChanges.length) reasons.push(`人工修改 ${item.humanChanges.length} 次`);
       if (item.humanProblems.length) reasons.push(`人工问题 ${item.humanProblems.length} 条`);
       if (item.manualCount) reasons.push(`人工确认字段 ${item.manualCount} 个`);
-      html += `<div class="sample-row" onclick="selectFile('${p.id}')">
+      html += `<div class="sample-row" onclick="selectFile('${jsArg(p.id)}')">
         <div class="name">${escapeHtml(p.file_name)}</div>
         <div class="meta"><span>${escapeHtml(getPolicyDisplayScenario(p) || '')}</span><span>${escapeHtml(p.data.carrier_name || '')}</span><span>${p.status === 'confirmed' ? '已确认' : '待确认'}</span><span>字段准确率 ${formatPercent(item.accuracy)}</span></div>
         <div class="why">${escapeHtml(reasons.join(' · ') || '历史表现需要复核')}</div>
@@ -7928,48 +8180,7 @@ function renderAccuracy(main) {
     });
   }
 
-  html += `</div></div>
-      <div class="accuracy-panel">
-        <h4>字段错误率 <span class="panel-note">点击展开可看历史错误和当时判断依据</span></h4>
-        <table class="field-error-table">
-          <thead><tr><th>字段</th><th>错误率</th><th>错误/出现</th><th>历史记录</th></tr></thead>
-          <tbody>`;
-
-  if (!stats.highRiskFields.length) {
-    html += '<tr><td colspan="4"><div class="empty-state" style="min-height:120px"><p>暂无字段错误记录</p></div></td></tr>';
-  } else {
-    stats.highRiskFields.forEach(row => {
-      const rate = row.appearances ? row.errors / row.appearances * 100 : 100;
-      const historyHtml = row.histories.slice(0, 8).map(h => {
-        const p = h.policy;
-        if (h.type === '修改') {
-          const e = h.entry;
-          return `<div class="field-history-row">
-            <div class="file">${escapeHtml(p.file_name)}</div>
-            <div>${escapeHtml(normalizeFeishuValue(e.oldValue) || '(空)')} → ${escapeHtml(normalizeFeishuValue(e.newValue) || '(空)')}</div>
-            <div>原因：${escapeHtml(e.reason || '未填写')}</div>
-            <div>${escapeHtml(e.user || '')} · ${escapeHtml(e.time || '')}</div>
-            <div class="judge-snippet">${escapeHtml(getFieldJudgementText(p, row.field))}</div>
-          </div>`;
-        }
-        const pr = h.problem;
-        return `<div class="field-history-row">
-          <div class="file">${escapeHtml(p.file_name)}</div>
-          <div>问题：${escapeHtml(pr.desc || pr.reason || '')}</div>
-          <div>${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}</div>
-          <div class="judge-snippet">${escapeHtml(getFieldJudgementText(p, row.field))}</div>
-        </div>`;
-      }).join('');
-      html += `<tr>
-        <td><div class="field-name">${escapeHtml(row.label)}</div><div class="field-key-small">${escapeHtml(row.field)}</div></td>
-        <td><span class="error-rate">${formatPercent(rate)}</span></td>
-        <td>${row.errors}/${row.appearances}</td>
-        <td><details class="field-history"><summary>查看 ${row.histories.length} 条</summary>${historyHtml}</details></td>
-      </tr>`;
-    });
-  }
-
-  html += `</tbody></table></div></div></div>`;
+  html += `</div></div></div>`;
   main.innerHTML = html;
 }
 
@@ -8098,6 +8309,18 @@ function switchView(view) {
   document.querySelectorAll('.seg-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.view === view);
   });
+  render();
+}
+
+function setProblemFieldFilter(field) {
+  appState.problemFieldFilter = field || '';
+  appState.currentView = 'problems';
+  render();
+}
+
+function setAccuracyFieldFilter(field) {
+  appState.accuracyFieldFilter = field || '';
+  appState.currentView = 'accuracy';
   render();
 }
 
@@ -8338,12 +8561,23 @@ function openFileProblems(policyId) {
   if (!problems.length) {
     list.innerHTML = '<div style="padding:12px;color:var(--muted)">暂无问题记录</div>';
   } else {
-    list.innerHTML = problems.map((pr, i) => `
-      <div class="problems-panel-item">
-        <div class="pp-desc"><span class="prob-field-tag">${escapeHtml(pr.field_label || '文件整体')}</span>${escapeHtml(pr.desc || '')}</div>
-        <div class="pp-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
-          <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${i})">✓ 已解决</button>
-        </div>
+    const grouped = new Map();
+    problems.forEach((pr, i) => {
+      const info = getProblemFieldInfo(pr, p);
+      if (!grouped.has(info.field)) grouped.set(info.field, { label: info.label, items: [] });
+      grouped.get(info.field).items.push({ pr, i });
+    });
+    list.innerHTML = [...grouped.values()].map(group => `
+      <div class="file-problem-group">
+        <div class="file-problem-group-head"><span>${escapeHtml(group.label)}</span><span class="file-problem-group-count">${group.items.length} 条</span></div>
+        ${group.items.map(({ pr, i }) => `
+          <div class="problems-panel-item">
+            <div class="pp-desc">${escapeHtml(pr.desc || '')}</div>
+            <div class="pp-meta">${escapeHtml(pr.created_by || '')} · ${escapeHtml(pr.created_at || '')}
+              <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${i})">✓ 已解决</button>
+            </div>
+          </div>
+        `).join('')}
       </div>
     `).join('');
   }
