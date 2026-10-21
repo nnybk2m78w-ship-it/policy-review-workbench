@@ -3614,6 +3614,7 @@ app.get('/api/upload-queue', async (req, res) => {
     await ensureUploadQueueFields();
     const records = await listBaseRecords(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID);
     const items = records.map(normalizeUploadQueueRecord)
+      .filter(item => item.fileName || item.fileHash || item.uploadedAt || item.parseStatus || item.errorReason)
       .sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')));
     res.json({
       success: true,
