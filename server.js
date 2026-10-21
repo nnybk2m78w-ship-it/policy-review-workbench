@@ -57,8 +57,8 @@ const KEY_LABELS = {
   carrier_name: '航司名称',
   product_name: '产品名称',
   product_family: '产品类型',
-  product_type: '出票指令',
-  pata_code: 'PATA代码',
+  product_type: '产品类型',
+  pata_code: 'PAT指令',
   product_code: '产品代码',
   product_code_raw: '原始产品码',
   product_price: '产品价格',
@@ -193,6 +193,7 @@ const KEY_LABELS = {
   not_applicable_flight_routes: '不适用航班/航线明细',
   price_groups_summary: '价格组汇总',
   use_code: '兑换标识',
+  match_rule: 'match_rule',
 };
 const FIELD_LABEL_TO_KEY = Object.fromEntries(Object.entries(KEY_LABELS).map(([key, label]) => [label, key]));
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
@@ -206,38 +207,54 @@ const SERVER_PROMPT_FIELDS = {
   '次卡': new Set(['scenario','business_line','carrier','carrier_name','product_name','product_family','product_code','policy_code','flight_type','od','booking_cabin','cabin','sale_date','redeem_date','use_date','depart_date','usage_times','travel_class','product_show','json_count','use_limit','use_begin','wether_depart_today','refund_time','price_groups_summary','manual_confirm_fields']),
 };
 const LEGACY_SELF_OPERATED_FIELDS = [
-  'business_line','carrier','pata_code','product_price','office_id','sale_date','sale_constraint',
-  'depart_date','beside_date','depart_date_origin','flight_type','flight_number','not_applicable_flight_number',
-  'cabin','sub_cabin','associated_cabin','discount_type','discount_per','od','not_applicable_od',
-  'passenger_type','luggage_amount','age_limit','age_limit_supplementary','age_limit_gender','young_old',
-  'membership_limit','capacity_limit','capacity_limit_supplementary','family_limit','realname_limit',
-  'equity_related','passenger_benefit','remium_products','regional_limit','regional_limit_origin',
-  'sale_method','display_method','gender_restriction','document_restrictions','cabin_class',
-  'student_verification','student_verification_rules','card_limit','customer_limit','customer_limit_origin',
-  'product_label','display_limit','refund_change_together','refund_change_type','refund_rule','change_rule',
-  'close_time','change_free_times','refund_free_equity','same_cabin','domain','splicing_type',
-  'benfit_upgrade','take_pay','ticket_hotel'
+  'business_line','carrier','sale_date','sale_constraint','depart_date','flight_type','flight_number',
+  'not_applicable_flight_number','cabin','sub_cabin','associated_cabin','discount_type','discount_per',
+  'od','not_applicable_od','passenger_type','child_applicable','baby_applicable','passenger_benefit',
+  'agent_fee','luggage_amount','price_discount','price_voucher','restriction_code','pata_code',
+  'age_limit','age_limit_supplementary','age_limit_gender','young_old','membership_limit','capacity_limit',
+  'capacity_limit_supplementary','family_limit','realname_limit','equity_related','remium_products',
+  'payment_limit','regional_limit','regional_limit_origin','splice_limit','sale_method','display_method',
+  'product_label','display_limit','sign_and_transfer_rules','refund_rules','change_rules',
+  'gender_restriction','document_restrictions','usage_threshold','cabin_class','student_verification',
+  'student_verification_rules','customer_limit','card_limit','customer_limit_origin','refund_change_together',
+  'beside_time','product_type_origin','depart_date_origin'
 ];
 LEGACY_SELF_OPERATED_FIELDS.forEach(key => SERVER_PROMPT_FIELDS['自营'].add(key));
 const FLAGSHIP_CODE_FIELDS = [
   'product_type','business_line','carrier','sale_date','sale_constraint','depart_date','flight_type',
   'flight_number','not_applicable_flight_number','cabin','sub_cabin','associated_cabin','discount_type',
   'discount_per','od','not_applicable_od','passenger_type','child_applicable','baby_applicable',
-  'passenger_benefit','agent_fee','luggage_amount','price_discount','price_voucher','restriction_code',
+  'passenger_benefit','agent_fee','luggage_amount','price_discount','price_voucher',
   'age_limit','age_limit_supplementary','age_limit_gender','young_old','membership_limit','capacity_limit',
   'capacity_limit_supplementary','family_limit','realname_limit','equity_related','remium_products',
   'payment_limit','regional_limit','regional_limit_origin','splice_limit','sale_method','display_method',
   'product_label','display_limit','sign_and_transfer_rules','refund_rules','change_rules',
   'gender_restriction','document_restrictions','usage_threshold','cabin_class','student_verification',
-  'student_verification_rules','customer_limit','card_limit','card_limit_choice','customer_limit_origin',
-  'refund_change_together','order_times'
+  'student_verification_rules','customer_limit','card_limit','restriction_code','customer_limit_origin',
+  'refund_change_together'
 ];
 FLAGSHIP_CODE_FIELDS.forEach(key => SERVER_PROMPT_FIELDS['旗舰店code'].add(key));
+const FLAGSHIP_COUPON_OLD_FIELDS = [
+  '航班-适用','航班-不适用','机场-适用','机场-不适用','舱位','销售日期','旅行日期',
+  '活动形式','直减金额/直减比例','购票提前天数限制','实现形式','资源编号',
+  '最低销售价格','是否注册','优惠券码','优惠码'
+];
+const FLAGSHIP_COUPON_NEW_FIELDS = [
+  '业务线','销售限制','旅客类型','儿童','婴儿','年龄限制','年龄限制补充','性别年龄限制',
+  '青老年','会员限制','人数限制','人数限制补充','家庭限制','实名限制','区域限制',
+  '区域限制原文','产品标签','展示方式','展示限制','性别限制','证件限制','使用门槛',
+  '舱等','学生认证','学生认证方式','次卡权益卡限制','match_rule','关联营销活动',
+  '活动名称','航司','航班-适用','航班-不适用','机场-适用','机场-不适用','舱位',
+  '销售日期','旅行日期','旅行日期不适用','活动形式','直减金额/比例','购票提前天数限制',
+  '实现形式','优惠码','优惠券码','资源编号','最低销售价格','是否注册'
+];
 const FLAGSHIP_COUPON_FIELDS = [
   'product_name','product_label','carrier','flight_number','non_flight_number','od','beside_od',
   'cabin','sub_cabin','sale_date','beside_sale_date','depart_week','depart_time','beside_depart_time',
   'discount_type','discount_per','sale_constraint','sale_type','price_code','price_voucher',
-  'minimum_sales','whether_member'
+  'minimum_sales','whether_member',
+  ...FLAGSHIP_COUPON_OLD_FIELDS,
+  ...FLAGSHIP_COUPON_NEW_FIELDS,
 ];
 FLAGSHIP_COUPON_FIELDS.forEach(key => SERVER_PROMPT_FIELDS['旗舰店券类'].add(key));
 const TRIP_CARD_FIELDS = [
@@ -252,6 +269,8 @@ const SCHEMA_FIELDS_BY_TYPE = {
   '自营': LEGACY_SELF_OPERATED_FIELDS,
   '旗舰店code': FLAGSHIP_CODE_FIELDS,
   '旗舰店券类': FLAGSHIP_COUPON_FIELDS,
+  '旗舰店券类老券': FLAGSHIP_COUPON_OLD_FIELDS,
+  '旗舰店券类新券': FLAGSHIP_COUPON_NEW_FIELDS,
   '次卡': TRIP_CARD_FIELDS,
 };
 
@@ -2006,6 +2025,8 @@ function buildSelfOperatedConfigs({ text, carrier, saleRange, departRange, cabin
     obj.discount_per = inferSelfDiscountPer(text);
     obj.od = /国内自营航班|国内航线/.test(text) && !extractOdText(text) ? 'ALL-ALL' : (extractOdText(text) || null);
     obj.passenger_type = /儿童/.test(text) ? ['成人', '儿童'] : ['成人'];
+    obj.child_applicable = /儿童/.test(text) ? true : null;
+    obj.baby_applicable = /婴儿/.test(text) ? true : null;
     obj.luggage_amount = /行李/.test(text) ? '人工确认' : null;
     const cap = text.match(/(\d+)\s*(?:至|-|到)\s*(\d+)\s*人/);
     obj.capacity_limit = cap ? `${cap[1]}-${cap[2]}` : null;
@@ -2021,14 +2042,9 @@ function buildSelfOperatedConfigs({ text, carrier, saleRange, departRange, cabin
     obj.product_label = /多人|同行/.test(text) ? '多人同行' : null;
     obj.display_limit = obj.capacity_limit ? `${obj.capacity_limit.replace('-', '至')}人同行享折扣，限单程国内自营航班` : null;
     obj.refund_change_together = /同时办理变更|同时办理退票|不允许部分人员/.test(text);
-    obj.refund_change_type = '人工确认';
-    obj.refund_rule = rules && rules.refund_rules ? rules.refund_rules : '需人工确认';
-    obj.change_rule = rules && rules.change_rules ? rules.change_rules : '需人工确认';
-    obj.same_cabin = /同舱同价/.test(text);
-    obj.domain = 'xep';
-    obj.benfit_upgrade = false;
-    obj.take_pay = false;
-    obj.ticket_hotel = false;
+    obj.sign_and_transfer_rules = rules && rules.sign_and_transfer_rules ? rules.sign_and_transfer_rules : null;
+    obj.refund_rules = rules && rules.refund_rules ? rules.refund_rules : '需人工确认';
+    obj.change_rules = rules && rules.change_rules ? rules.change_rules : '需人工确认';
     return obj;
   });
   return configs;
@@ -2060,12 +2076,10 @@ function buildPolicyDataFromSource({ fileName, source, queueFields }) {
       product_family: inferMarketingProductType(text, fileType),
       policy_code: policyCode,
       corporate_code: inferCorporateCode({ '文件名称': fileName, '原始文本': source.text }, {}),
-      product_type: pat || null,
       product_code: configs.map(item => item.pata_code).filter(Boolean).join('/') || extractProductCode(text, carrier) || null,
       ...primary,
       configs,
     };
-    if (!data.product_type) delete data.product_type;
     if (!data.corporate_code) data.corporate_code = null;
     applyScenarioSchemaDefaults(fileType, data);
     return { data, fileType };
