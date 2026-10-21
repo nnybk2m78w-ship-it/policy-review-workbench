@@ -2425,6 +2425,21 @@ function formatChangeHistory(entries) {
     .join('\n');
 }
 
+function humanEditedFieldLabelsFromHistory(rawHistory) {
+  const labels = new Set();
+  parseChangeHistory(rawHistory)
+    .map(normalizeHistoryEntry)
+    .filter(Boolean)
+    .forEach(entry => {
+      if (normalizeChangeSource(entry) !== 'human') return;
+      const key = canonicalizeFieldName(entry.field || entry.fieldLabel || '');
+      const label = entry.fieldLabel || (key && KEY_LABELS[key]) || '';
+      if (label) labels.add(label);
+      if (key && KEY_LABELS[key]) labels.add(KEY_LABELS[key]);
+    });
+  return labels;
+}
+
 function normalizeChangeSource(entry = {}) {
   const raw = normalizeFeishuValue(entry.source || entry.changeSource || entry.origin || entry.type).toLowerCase();
   const user = normalizeFeishuValue(entry.user);
@@ -5446,16 +5461,14 @@ app.post('/api/admin/import-records', async (req, res) => {
         }
       });
 
-      // 对已经被人工改过的文件，字段列也优先保留飞书当前值；新解析只补空字段。
-      const reviewed = hasValue(existing.fields['修改历史']) ||
-        hasValue(existing.fields['问题标记']) ||
-        normalizeFeishuValue(existing.fields['已修改']) === '是' ||
-        normalizeFeishuValue(existing.fields['审核状态']) === '已确认';
-      if (reviewed) {
-        MERGEABLE_RESULT_FIELDS.forEach(name => {
-          if (hasValue(existing.fields[name])) merged[name] = existing.fields[name];
-        });
-      }
+      // Only human-edited result fields are locked. System corrections and old
+      // parser output must not freeze stale display columns during a re-import.
+      const humanLockedLabels = humanEditedFieldLabelsFromHistory(existing.fields['修改历史']);
+      MERGEABLE_RESULT_FIELDS.forEach(name => {
+        if (humanLockedLabels.has(name) && Object.prototype.hasOwnProperty.call(existing.fields, name)) {
+          merged[name] = existing.fields[name];
+        }
+      });
 
       return merged;
     };
