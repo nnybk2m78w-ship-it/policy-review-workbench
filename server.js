@@ -1894,7 +1894,7 @@ async function processUploadQueueRecord(item) {
     source_type: source.sourceType,
     source_text: source.text,
     source_files: [fileName],
-    category: fileType === '次卡' ? '01_次卡' : (fileType === '自营' ? '03_自营' : '02_旗舰店'),
+    category: fileType === '次卡' ? '01_次卡' : (fileType === '自营' ? '03_自营' : (fileType === '旗舰店券类' ? '02_旗舰店券类' : '02_旗舰店code')),
     subcategory: data.carrier_name || displayTypeForFileType(fileType) || fileType,
     parsed_at: new Date().toLocaleString('zh-CN', { hour12: false }),
     status: 'reviewing',
