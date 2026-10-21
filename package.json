@@ -8,7 +8,11 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -7,6 +7,10 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Redis = require('ioredis');
+const mammoth = require('mammoth');
+const XLSX = require('xlsx');
+const WordExtractor = require('word-extractor');
+const { PDFParse } = require('pdf-parse');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +36,10 @@ const REVIEW_GITHUB_BRANCH = process.env.REVIEW_GITHUB_BRANCH || 'main';
 const REVIEW_GITHUB_PATH = process.env.REVIEW_GITHUB_PATH || 'data/review-state.json';
 const UPLOAD_BASE_TOKEN = process.env.FEISHU_UPLOAD_BASE_TOKEN || 'C6ZcbDr5RaxqOYsT0UAcx7S7nnc';
 const UPLOAD_TABLE_ID = process.env.FEISHU_UPLOAD_TABLE_ID || 'tblnpDn9US3ZxcfI';
+const UPLOAD_QUEUE_SCAN_ENABLED = process.env.UPLOAD_QUEUE_SCAN_ENABLED !== 'false';
+const UPLOAD_QUEUE_SCAN_INTERVAL_MS = parseInt(process.env.UPLOAD_QUEUE_SCAN_INTERVAL_MS || '120000', 10);
+const UPLOAD_QUEUE_SCAN_BATCH_LIMIT = parseInt(process.env.UPLOAD_QUEUE_SCAN_BATCH_LIMIT || '3', 10);
+const UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES = parseInt(process.env.UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES || String(45 * 1024 * 1024), 10);
 const WORKBENCH_AUTH_ENABLED = process.env.WORKBENCH_AUTH_ENABLED !== 'false';
 const WORKBENCH_SESSION_COOKIE = 'policy_review_session';
 const WORKBENCH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -39,6 +47,7 @@ const WORKBENCH_AUTH_SECRET = process.env.WORKBENCH_AUTH_SECRET || APP_SECRET ||
 const WORKBENCH_DEFAULT_USER = process.env.WORKBENCH_USERNAME || 'admin';
 const WORKBENCH_DEFAULT_PASSWORD = process.env.WORKBENCH_PASSWORD || 'policy2026';
 let redisClient = null;
+const wordExtractor = new WordExtractor();
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -157,6 +166,12 @@ let state = {
   tableFields: null,   // 飞书表格字段名缓存
   uploadQueueFields: null, // 上传队列表字段缓存
   currentUser: null,   // 当前授权用户信息
+  uploadQueueScan: {
+    running: false,
+    scheduled: false,
+    lastRunAt: null,
+    lastResult: null,
+  },
 };
 
 // 从文件 / 环境变量加载 token
@@ -1237,6 +1252,723 @@ async function uploadBaseAttachment({ baseToken, tableId, recordId, fieldId, fil
   return data.data || data;
 }
 
+function collectAttachmentMetas(value, out = [], seen = new Set()) {
+  if (!value) return out;
+  if (Array.isArray(value)) {
+    value.forEach(item => collectAttachmentMetas(item, out, seen));
+    return out;
+  }
+  if (typeof value !== 'object') return out;
+  const token = value.file_token || value.fileToken || value.token || value.file_id || value.fileId;
+  if (token && !seen.has(token)) {
+    seen.add(token);
+    out.push({
+      fileToken: token,
+      fileName: value.name || value.file_name || value.fileName || value.title || '',
+      size: value.size || value.file_size || value.fileSize || 0,
+      extra: value.extra || value.extra_info || value.extraInfo || '',
+    });
+  }
+  Object.values(value).forEach(item => {
+    if (item && typeof item === 'object') collectAttachmentMetas(item, out, seen);
+  });
+  return out;
+}
+
+async function listBaseRecordAttachments(baseToken, tableId, recordId) {
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/base/v3/bases/${baseToken}/tables/${tableId}/get_attachments`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ record_id_list: [recordId] }),
+  });
+  const data = await resp.json();
+  if (data.code !== 0) {
+    throw new Error(`读取附件元数据失败: ${data.msg || data.message || 'unknown'} (code=${data.code})`);
+  }
+  return collectAttachmentMetas(data.data || data);
+}
+
+async function downloadBaseAttachmentFile(meta) {
+  if (!meta || !meta.fileToken) throw new Error('附件缺少 file_token');
+  const token = await getUserAccessToken();
+  const params = new URLSearchParams();
+  if (meta.extra) {
+    params.set('extra', typeof meta.extra === 'string' ? meta.extra : JSON.stringify(meta.extra));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const url = `https://open.feishu.cn/open-apis/drive/v1/medias/${encodeURIComponent(meta.fileToken)}/download${suffix}`;
+  const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!resp.ok) {
+    let message = `下载附件失败: HTTP ${resp.status}`;
+    try {
+      const data = await resp.json();
+      message = `下载附件失败: ${data.msg || data.message || message}`;
+    } catch (_) {
+      // ignore non-json body
+    }
+    throw new Error(message);
+  }
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (buffer.length > UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES) {
+    throw new Error(`附件超过自动解析下载上限 ${formatByteSize(UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES)}`);
+  }
+  return buffer;
+}
+
+function getFileExt(fileName) {
+  return path.extname(String(fileName || '')).toLowerCase();
+}
+
+function normalizeWhitespaceText(text) {
+  return String(text || '')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function sheetRowsToText(rows, sheetName) {
+  const lines = [];
+  if (sheetName) lines.push(`【Sheet】${sheetName}`);
+  rows.forEach(row => {
+    const cells = (row || []).map(cell => normalizeFeishuValue(cell).trim());
+    if (cells.some(Boolean)) lines.push(cells.join('\t'));
+  });
+  return lines.join('\n');
+}
+
+async function extractPolicySourceFromBuffer(fileName, buffer) {
+  const ext = getFileExt(fileName);
+  const source = {
+    fileName,
+    sourceType: getUploadFileType(fileName),
+    text: '',
+    hasEmbeddedTables: false,
+    tableSummaries: [],
+    warnings: [],
+  };
+
+  if (ext === '.docx') {
+    const result = await mammoth.extractRawText({ buffer });
+    source.text = normalizeWhitespaceText(result.value || '');
+    if (result.messages && result.messages.length) {
+      source.warnings.push(...result.messages.map(m => m.message || String(m)).filter(Boolean).slice(0, 5));
+    }
+    source.hasEmbeddedTables = /\t|表格|航线表|价格表|明细表/.test(source.text);
+    return source;
+  }
+
+  if (ext === '.doc') {
+    const doc = await wordExtractor.extract(buffer);
+    source.text = normalizeWhitespaceText([
+      doc.getBody && doc.getBody(),
+      doc.getHeaders && doc.getHeaders(),
+      doc.getFooters && doc.getFooters(),
+      doc.getFootnotes && doc.getFootnotes(),
+      doc.getEndnotes && doc.getEndnotes(),
+      doc.getAnnotations && doc.getAnnotations(),
+      doc.getTextboxes && doc.getTextboxes(),
+    ].filter(Boolean).join('\n'));
+    source.hasEmbeddedTables = /\t|表格|航线表|价格表|明细表/.test(source.text);
+    return source;
+  }
+
+  if (ext === '.xlsx' || ext === '.xls' || ext === '.csv') {
+    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false, dense: true });
+    const parts = [];
+    workbook.SheetNames.forEach(name => {
+      const sheet = workbook.Sheets[name];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+      const text = sheetRowsToText(rows, name);
+      if (text) {
+        parts.push(text);
+        source.tableSummaries.push(`${name}: ${rows.filter(row => (row || []).some(Boolean)).length} 行`);
+      }
+    });
+    source.text = normalizeWhitespaceText(parts.join('\n\n'));
+    source.hasEmbeddedTables = true;
+    return source;
+  }
+
+  if (ext === '.pdf') {
+    const parser = new PDFParse({ data: buffer });
+    try {
+      const result = await parser.getText();
+      source.text = normalizeWhitespaceText(result.text || '');
+      source.hasEmbeddedTables = /表格|航线表|价格表|明细表|\t/.test(source.text);
+      return source;
+    } finally {
+      await parser.destroy().catch(() => {});
+    }
+  }
+
+  if (ext === '.zip' || ext === '.7z' || ext === '.rar') {
+    throw new Error('压缩包暂不在 Render 端自动解压解析，请先解压后上传其中的 Word/PDF/Excel 文件');
+  }
+
+  throw new Error(`暂不支持该文件格式: ${ext || '未知'}`);
+}
+
+function todayInShanghai() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function parseDateToYmd(value) {
+  const text = normalizeFeishuValue(value);
+  const m = text.match(/(20\d{2})[年\-/\.](\d{1,2})[月\-/\.](\d{1,2})日?/);
+  if (!m) return '';
+  return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+}
+
+function addDaysYmd(ymd, days) {
+  if (!ymd) return '';
+  const date = new Date(`${ymd}T00:00:00+08:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setDate(date.getDate() + Number(days || 0));
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function normalizeDateRangeParts(match) {
+  if (!match) return '';
+  const sy = match[1];
+  const sm = match[2];
+  const sd = match[3];
+  const ey = match[4] || sy;
+  const em = match[5];
+  const ed = match[6];
+  if (!sy || !sm || !sd || !em || !ed) return '';
+  return `${sy}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}至${ey}-${em.padStart(2, '0')}-${ed.padStart(2, '0')}`;
+}
+
+function extractDateRangeNear(text, labelRegex) {
+  const source = normalizeFeishuValue(text);
+  const lines = source.split(/\n+/).filter(line => labelRegex.test(line));
+  const candidates = lines.length ? lines : [source.slice(0, 1600)];
+  const patterns = [
+    /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|-|—|~)\s*(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?/,
+    /(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\s*(?:至|到|-|—|~)\s*(?:(20\d{2})[-/.])?(\d{1,2})[-/.](\d{1,2})/,
+  ];
+  for (const chunk of candidates) {
+    for (const pattern of patterns) {
+      const m = chunk.match(pattern);
+      const value = normalizeDateRangeParts(m);
+      if (value) return value;
+    }
+  }
+  return '';
+}
+
+function getRangeStart(value) {
+  const m = normalizeFeishuValue(value).match(/^(20\d{2}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function getRangeEnd(value) {
+  const m = normalizeFeishuValue(value).match(/至(20\d{2}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function replaceRangeStart(value, start) {
+  const end = getRangeEnd(value);
+  if (!start || !end) return value;
+  return `${start}至${end}`;
+}
+
+function extractPatInstruction(text) {
+  const source = normalizeFeishuValue(text);
+  const matches = [...source.matchAll(/PAT\s*[:：]?\s*A[#*]?[A-Z0-9@#*_.-]*/ig)]
+    .map(m => m[0].replace(/\s+/g, '').replace(/^PAT[:：]?/i, 'PAT:'))
+    .filter(Boolean);
+  return [...new Set(matches)].join('；');
+}
+
+function inferMarketingProductType(text, fileType) {
+  const source = normalizeFeishuValue(text);
+  if (fileType === '次卡' || /次卡|权益卡|往返卡|共享卡|畅游卡|无限飞/.test(source)) return '权益卡/次卡';
+  const types = [];
+  const add = value => { if (value && !types.includes(value)) types.push(value); };
+  if (/会员|金鹏|明珠|凤凰知音|常旅客/.test(source)) add('会员产品');
+  if (/年龄|周岁|银发|长者|青年|少年/.test(source)) add('年龄限制产品');
+  if (/学生|开学季|校园/.test(source)) add('学生产品');
+  if (/多人|同行|家庭|亲子/.test(source)) add(/家庭|亲子/.test(source) ? '家庭产品' : '多人产品');
+  if (/身份证.{0,12}(开头|地区)|区域限制|户籍|属地/.test(source)) add('区域限制/身份证xx开头产品');
+  if (/客群|新客|首乘|拉新|定向|专享/.test(source)) add('客群限制产品');
+  if (/返现|现金券|现金补贴/.test(source)) add('返现产品');
+  if (/特殊退改|优享退票|退改权益/.test(source)) add('特殊退改产品');
+  if (/行李|里程|积分/.test(source)) add('赠送行李额/里程/积分');
+  if (/直减|立减|优惠金额/.test(source)) add('直减产品');
+  if (/男士|女士|性别/.test(source)) add('性别限制类产品');
+  if (!types.length && /权益|礼包|酒店|安检|选座|升舱|休息室|餐食|接送机/.test(source)) add('其他优享权益类产品');
+  return types.join('；') || '直减产品';
+}
+
+function classifyUploadedPolicy(fileName, text) {
+  const source = `${fileName || ''}\n${text || ''}`;
+  if (/次卡|权益卡|共享卡|畅游卡|往返卡|无限飞|兑换卡|卡包/.test(source)) return '次卡';
+  const selfSignals = /客运销售运价政策|内部运价政策|私有运价|投放单|运价政策|PAT\s*[:：]?\s*A/i.test(source);
+  const flagshipSignals = /旗舰店|官网旗舰店|指定官网旗舰店|直连合作方|授权销售渠道|授权销售代理|旗舰店客票|直连客票|BSP客票|TC项|产品代码|产品码|产品操作规定|官网或旗舰店/.test(source);
+  if (flagshipSignals) {
+    return /券类|优惠券|券码|消费券|资源券|coupon|用券|领券/i.test(source) ? '旗舰店券类' : '旗舰店code';
+  }
+  if (selfSignals) return '自营';
+  return '自营';
+}
+
+function extractCarrierNameFromText(fileName, text) {
+  const source = `${fileName || ''}\n${text || ''}`;
+  const aliases = [
+    ['深圳航空', /深圳航空|深航/],
+    ['长龙航空', /长龙航空|浙江长龙/],
+    ['华夏航空', /华夏航空/],
+    ['成都航空', /成都航空|成都航/],
+    ['西藏航空', /西藏航空/],
+    ['北部湾航空', /北部湾航空/],
+    ['天骄航空', /天骄航空/],
+    ['奥凯航空', /奥凯航空/],
+    ['瑞丽航空', /瑞丽航空|苏南瑞丽/],
+    ['首都航空', /首都航空/],
+    ['祥鹏航空', /祥鹏航空/],
+    ['海南航空', /海南航空|海航/],
+    ['中国联合航空', /中国联合航空|中联航/],
+    ['中国国际航空', /中国国际航空|国航/],
+    ['乌鲁木齐航空', /乌鲁木齐航空/],
+    ['南方航空', /南方航空|南航/],
+    ['东方航空', /东方航空|东航/],
+  ];
+  for (const [name, re] of aliases) {
+    if (re.test(source)) return name;
+  }
+  const m = source.match(/([\u4e00-\u9fa5]{2,10}航空)/);
+  return m ? m[1] : '';
+}
+
+function carrierCodeForName(name) {
+  const map = {
+    深圳航空: 'ZH',
+    长龙航空: 'GJ',
+    华夏航空: 'G5',
+    成都航空: 'EU',
+    西藏航空: 'TV',
+    北部湾航空: 'GX',
+    天骄航空: '9D',
+    奥凯航空: 'BK',
+    瑞丽航空: 'DR',
+    首都航空: 'JD',
+    祥鹏航空: '8L',
+    海南航空: 'HU',
+    中国联合航空: 'KN',
+    中国国际航空: 'CA',
+    乌鲁木齐航空: 'UQ',
+    南方航空: 'CZ',
+    东方航空: 'MU',
+  };
+  return map[name] || '';
+}
+
+function extractTitleFromSource(fileName, text) {
+  const lines = normalizeFeishuValue(text).split(/\n+/).map(line => line.trim()).filter(Boolean);
+  const title = lines.find(line => line.length >= 8 && line.length <= 80 && !/^[\d\s\t|:：.-]+$/.test(line));
+  return title || String(fileName || '').replace(/\.[^.]+$/, '');
+}
+
+function extractPolicyCode(text) {
+  const source = normalizeFeishuValue(text);
+  const patterns = [
+    /([A-Z]{2,6}[-_]?[A-Z0-9]{2,}[-_]?\d{2,}(?:[-_]\d+)?)/,
+    /([A-Z]{2,6}\d{6,}[-_]?\d*)/,
+    /([\u4e00-\u9fa5]{1,8}(?:市业|客运市场部业|营销部业)?〔20\d{2}〕\d+号)/,
+    /(20\d{2}\d{2,4}号)/,
+  ];
+  for (const pattern of patterns) {
+    const m = source.match(pattern);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+function extractProductCode(text, carrier) {
+  const source = normalizeFeishuValue(text);
+  const patterns = [
+    /(?:产品代码|产品码|活动代码|活动码|TC项)[:：\s]*([A-Z0-9_-]{2,})/i,
+    /\b(TC[A-Z0-9_-]{2,}|[A-Z]{2,5}\d{3,}[A-Z0-9_-]*)\b/,
+  ];
+  for (const pattern of patterns) {
+    const m = source.match(pattern);
+    if (m && m[1] && !/^PAT$/i.test(m[1])) {
+      const raw = m[1];
+      if (carrier === 'HU' && !/^TOURISMROVER_/i.test(raw)) return `TOURISMROVER_${raw}`;
+      return raw;
+    }
+  }
+  return '';
+}
+
+function inferDiscountPerFromText(text) {
+  const source = normalizeFeishuValue(text);
+  if (/示例|例：|仅供参考|以实际|以系统|以呈报|不固定|X\s*元/.test(source) && /(直减|优惠|折扣|金额|比例)/.test(source)) return '不固定';
+  const variableYuan = source.match(/(?:不超过|最高|上限|封顶|不高于)\s*(\d+(?:\.\d+)?)\s*元/);
+  if (variableYuan && /直减|优惠|减免/.test(source)) return `0-${variableYuan[1]}元`;
+  const variablePercent = source.match(/(?:不超过|最高|上限|封顶|不高于)\s*(\d+(?:\.\d+)?)\s*%/);
+  if (variablePercent) return `≤${variablePercent[1]}%`;
+  const yuan = [...source.matchAll(/(?:直减|立减|优惠|减免|下浮|上浮|直加|加价|加收|差价)[^\n]{0,16}?(\d+(?:\.\d+)?)\s*元/g)]
+    .map(m => `${m[1]}元`);
+  if (yuan.length) return [...new Set(yuan)].slice(0, 8).join('/');
+  const percent = [...source.matchAll(/(\d+(?:\.\d+)?)\s*%[^\n]{0,12}(?:直减|折扣|优惠|下浮)|(?:直减|折扣|优惠|下浮)[^\n]{0,12}?(\d+(?:\.\d+)?)\s*%/g)]
+    .map(m => `${m[1] || m[2]}%`);
+  if (percent.length) return [...new Set(percent)].slice(0, 8).join('/');
+  const fixed = source.match(/(?:票面价|票面金额|指定价格|一口价|票价为)[^\n]{0,12}?(\d+(?:\.\d+)?)\s*元/);
+  if (fixed) return `${fixed[1]}元`;
+  return '';
+}
+
+function extractCabin(text) {
+  const source = normalizeFeishuValue(text);
+  const line = source.split(/\n+/).find(item => /适用舱位|订座舱位|舱位代码|预订舱位|舱位/.test(item));
+  if (!line) return '';
+  const m = line.match(/(?:适用舱位|订座舱位|舱位代码|预订舱位|舱位)[：:\s]*([A-Z0-9/M、,，\s]+)(?:。|；|;|$)/i);
+  if (m && /[A-Z]/i.test(m[1])) return m[1].replace(/[，、\s]+/g, '/').replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+  return '';
+}
+
+function extractFlightType(text) {
+  const source = normalizeFeishuValue(text);
+  if (/往返拼接|单次往返|去回程拼接|往返次卡|往返/.test(source)) return '往返';
+  if (/单程|单段/.test(source)) return '单程';
+  return '单程';
+}
+
+function extractOdText(text) {
+  const source = normalizeFeishuValue(text);
+  const line = source.split(/\n+/).find(item => /航线|航段|OD|始发|到达|适用城市/.test(item) && /[A-Z]{3}[-_=][A-Z]{3}/i.test(item));
+  if (!line) return '';
+  const routes = [...line.matchAll(/\b([A-Z]{3})\s*[-_=]\s*([A-Z]{3})\b/g)].map(m => `${m[1]}_${m[2]}`);
+  if (routes.length) {
+    if (/单程/.test(source) && /=/.test(line)) {
+      const both = [];
+      routes.forEach(route => {
+        const [a, b] = route.split('_');
+        both.push(`${a}_${b}`, `${b}_${a}`);
+      });
+      return [...new Set(both)].join(', ');
+    }
+    return [...new Set(routes)].join(', ');
+  }
+  return '';
+}
+
+function extractRefundChangeSignRules(text) {
+  const source = normalizeFeishuValue(text);
+  const lines = source.split(/\n+/).map(line => line.trim()).filter(Boolean);
+  const out = { refund_rules: '', change_rules: '', sign_and_transfer_rules: '' };
+  const push = (key, line) => {
+    if (!line || out[key].includes(line)) return;
+    out[key] = out[key] ? `${out[key]}；${line}` : line;
+  };
+  lines.forEach(line => {
+    if (line.length > 260) return;
+    const hasRefund = /退票|退款|仅退税费|不予退还|退还|自愿退/.test(line);
+    const hasChange = /变更|改期|改签|升舱|降舱|改舱/.test(line);
+    const hasSign = /签转|外航|EI项|EI\s*[:：]|不得签/.test(line);
+    if (hasRefund) push('refund_rules', line);
+    if (hasChange) push('change_rules', line);
+    if (hasSign) push('sign_and_transfer_rules', line);
+    if (hasChange && /按.{0,8}退票/.test(line)) push('refund_rules', line);
+    if (hasSign && /按.{0,8}退票/.test(line)) push('refund_rules', line);
+  });
+  return out;
+}
+
+function hasExternalAttachmentReference(source) {
+  const text = normalizeFeishuValue(source.text);
+  if (!/见附件|详见附件|详见航线表|以附件为准|附件航线|附件表/.test(text)) return false;
+  if (source.hasEmbeddedTables || (source.tableSummaries && source.tableSummaries.length)) return false;
+  return /(航线|价格|金额|舱位|销售单位|出票单位|日期|航班|范围).{0,20}(见附件|详见附件|详见航线表|以附件为准)|(见附件|详见附件|详见航线表|以附件为准).{0,20}(航线|价格|金额|舱位|销售单位|出票单位|日期|航班|范围)/.test(text);
+}
+
+function buildPolicyDataFromSource({ fileName, source, queueFields }) {
+  const text = `${fileName || ''}\n${source.text || ''}`;
+  const fileType = classifyUploadedPolicy(fileName, source.text);
+  const displayType = displayTypeForFileType(fileType) || fileType;
+  const carrierName = extractCarrierNameFromText(fileName, source.text);
+  const carrier = carrierCodeForName(carrierName);
+  const policyCode = extractPolicyCode(text);
+  const uploadDate = parseDateToYmd(queueFields && queueFields['上传时间']) || todayInShanghai();
+  const docDate = extractDocumentDate(text);
+  const titleRange = inferDateRangeFromTitle(text, 'depart_date');
+  const saleRange = extractDateRangeNear(text, /销售|售卖|出票|购卡|购买|发售|上线/);
+  const departRange = extractDateRangeNear(text, /航班|旅行|出行|乘机|适用日期|适用时间|使用日期/) || titleRange;
+  const redeemRange = extractDateRangeNear(text, /兑换|使用|预约|核销/);
+  const pat = extractPatInstruction(text);
+  const cabin = extractCabin(text);
+  const rules = extractRefundChangeSignRules(text);
+  const data = {
+    scenario: displayType,
+    business_line: displayType,
+    carrier,
+    carrier_name: carrierName,
+    product_name: extractTitleFromSource(fileName, source.text),
+    product_family: inferMarketingProductType(text, fileType),
+    policy_code: policyCode,
+    corporate_code: inferCorporateCode({ '文件名称': fileName, '原始文本': source.text }, {}),
+    flight_type: extractFlightType(text),
+    od: extractOdText(text),
+    booking_cabin: cabin,
+    cabin,
+    sale_date: saleRange,
+    depart_date: departRange,
+    discount_type: inferDiscountType(null, { product_name: text }),
+    discount_per: inferDiscountPerFromText(text),
+    age_limit: normalizeAgeRangeText('', text),
+    child_applicable: inferChildApplicable(null, { product_name: text }),
+    document_restrictions: /年龄|周岁|青年|长者|银发|学生/.test(text) ? '居民身份证' : '',
+    ...rules,
+  };
+
+  const productCode = extractProductCode(text, carrier);
+  if (productCode) data.product_code = productCode;
+
+  if (fileType === '自营') {
+    if (pat) data.product_type = pat;
+  } else if (fileType === '次卡') {
+    data.product_type = pat || '';
+  } else {
+    delete data.product_type;
+  }
+
+  const manual = [];
+  const markManual = key => {
+    const label = KEY_LABELS[key] || key;
+    if (!manual.includes(label)) manual.push(label);
+    data[key] = '人工确认';
+  };
+
+  if (!data.booking_cabin && SERVER_PROMPT_FIELDS[fileType] && SERVER_PROMPT_FIELDS[fileType].has('booking_cabin')) {
+    markManual('booking_cabin');
+    data.cabin = '人工确认';
+  }
+
+  if (fileType === '次卡') {
+    if (data.sale_date) {
+      const start = getRangeStart(data.sale_date);
+      const end = getRangeEnd(data.sale_date);
+      if (start && uploadDate && start < uploadDate && (!end || uploadDate <= end)) {
+        data.sale_date = replaceRangeStart(data.sale_date, uploadDate);
+      }
+    } else {
+      markManual('sale_date');
+    }
+    if (!data.depart_date) markManual('depart_date');
+    if (!data.redeem_date && !data.use_date) {
+      const departEnd = getRangeEnd(data.depart_date);
+      const inferredEnd = departEnd ? addDaysYmd(departEnd, -3) : '';
+      if (inferredEnd) {
+        data.redeem_date = `人工确认（按旅行最晚日期-3天推算为${inferredEnd}，需确认含/不含当天）`;
+        data.use_date = data.redeem_date;
+        if (!manual.includes('兑换日期')) manual.push('兑换日期');
+      } else {
+        markManual('redeem_date');
+        data.use_date = '人工确认';
+      }
+    }
+    data.product_family = '权益卡/次卡';
+    data.json_count = '按航程类型、舱等、使用次数拆分；价格进入价格组';
+    if (!data.product_code) markManual('product_code');
+  }
+
+  if (!data.discount_type && /优惠|直减|折扣|票面价|一口价|溢价|上浮|下浮/.test(text)) markManual('discount_type');
+  if (!data.discount_per && /优惠|直减|折扣|金额|票面价|一口价|溢价|上浮|下浮/.test(text)) markManual('discount_per');
+
+  Object.keys(data).forEach(key => {
+    if (data[key] === '' || data[key] === undefined || data[key] === null) delete data[key];
+  });
+
+  if (manual.length) data.manual_confirm_fields = [...new Set(manual)].join('；');
+
+  const benefits = inferBenefitFields({
+    '文件名称': fileName,
+    '原始文本': source.text,
+  }, data);
+  if (benefits) {
+    if (benefits.benefit_name) data.benefit_name = benefits.benefit_name;
+    if (benefits.benefit_usage_rules) data.benefit_usage_rules = benefits.benefit_usage_rules;
+  }
+
+  removeUnsupportedScenarioFields(null, data);
+  return { data, fileType };
+}
+
+async function upsertPolicyReviewRecord(policy) {
+  const tableFields = await ensureTableFields();
+  const incoming = filterKnownFields(policyToFields(policy, null), tableFields);
+  const records = await listAllFeishuRecords();
+  const fileName = normalizeFeishuValue(incoming['文件名称']);
+  const existing = records.find(record => normalizeFeishuValue(record.fields && record.fields['文件名称']) === fileName);
+  if (!existing) {
+    const created = await createFeishuRecord(incoming);
+    return { recordId: created.record_id, mode: 'created' };
+  }
+
+  const reviewed = normalizeFeishuValue(existing.fields && existing.fields['审核状态']) === '已确认' ||
+    normalizeFeishuValue(existing.fields && existing.fields['已修改']) === '是' ||
+    !!normalizeFeishuValue(existing.fields && existing.fields['修改历史']) ||
+    !!normalizeFeishuValue(existing.fields && existing.fields['问题标记']);
+  if (reviewed) {
+    return { recordId: existing.recordId, mode: 'kept-reviewed' };
+  }
+
+  const preserve = ['审核状态', '确认人', '确认人ID', '确认时间', '已修改', '修改历史', '问题标记'];
+  const updates = { ...incoming };
+  preserve.forEach(name => {
+    if (normalizeFeishuValue(existing.fields && existing.fields[name])) delete updates[name];
+  });
+  await updateFeishuRecord(existing.recordId, filterKnownFields(updates, tableFields));
+  return { recordId: existing.recordId, mode: 'updated' };
+}
+
+function uploadQueueRecordNeedsParse(item) {
+  const f = item.fields || {};
+  const status = normalizeFeishuValue(f['解析状态']);
+  const fileName = normalizeFeishuValue(f['文件名称']);
+  const reviewRecordId = normalizeFeishuValue(f['审核页记录ID']);
+  if (!fileName || reviewRecordId) return false;
+  return !status || /待解析|待重试|上传完成|重新解析/.test(status);
+}
+
+async function processUploadQueueRecord(item) {
+  const recordId = item.recordId;
+  const fields = item.fields || {};
+  const fileName = normalizeFeishuValue(fields['文件名称']);
+  const now = new Date().toLocaleString('zh-CN', { hour12: false });
+  await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+    '解析状态': '解析中',
+    '解析开始时间': now,
+    '解析日志': '后台 worker 已领取任务，正在下载源文件',
+    '失败原因': '',
+  });
+
+  const attachments = await listBaseRecordAttachments(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId);
+  if (!attachments.length) {
+    const message = '队列记录没有可下载的原始文件附件';
+    await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+      '解析状态': '缺附件',
+      '附件缺失说明': message,
+      '失败原因': message,
+      '解析完成时间': new Date().toLocaleString('zh-CN', { hour12: false }),
+    });
+    return { success: false, recordId, fileName, status: '缺附件', error: message };
+  }
+
+  const meta = attachments.find(a => normalizeFeishuValue(a.fileName) === fileName) || attachments[0];
+  const buffer = await downloadBaseAttachmentFile(meta);
+  const source = await extractPolicySourceFromBuffer(fileName || meta.fileName, buffer);
+  if (!source.text) throw new Error('源文件未抽取到可解析文本');
+  if (hasExternalAttachmentReference(source)) {
+    const message = '正文核心字段指向附件/航线表，但当前上传文件未包含可读表格或附件内容，请补传附件后再解析';
+    await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+      '解析状态': '缺附件',
+      '附件缺失说明': message,
+      '失败原因': message,
+      '解析完成时间': new Date().toLocaleString('zh-CN', { hour12: false }),
+      '解析日志': `已抽取文本 ${source.text.length} 字，但缺少附件内容`,
+    });
+    return { success: false, recordId, fileName, status: '缺附件', error: message };
+  }
+
+  const { data, fileType } = buildPolicyDataFromSource({ fileName, source, queueFields: fields });
+  const policy = {
+    id: `upload_${recordId}`,
+    file_name: fileName,
+    source_type: source.sourceType,
+    source_text: source.text,
+    source_files: [fileName],
+    category: fileType === '次卡' ? '01_次卡' : (fileType === '自营' ? '03_自营' : '02_旗舰店'),
+    subcategory: data.carrier_name || displayTypeForFileType(fileType) || fileType,
+    parsed_at: new Date().toLocaleString('zh-CN', { hour12: false }),
+    status: 'reviewing',
+    data,
+    evidence: {
+      uploadQueueRecordId: recordId,
+      tableSummaries: source.tableSummaries,
+      warnings: source.warnings,
+      parser: 'upload_queue_worker_rule_based_v1',
+    },
+  };
+  const review = await upsertPolicyReviewRecord(policy);
+  await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
+    '解析状态': review.mode === 'kept-reviewed' ? '已存在已审核' : '待审核',
+    '审核页记录ID': review.recordId,
+    '解析结果记录ID': review.recordId,
+    '解析完成时间': new Date().toLocaleString('zh-CN', { hour12: false }),
+    '解析日志': `已解析并${review.mode === 'created' ? '创建' : (review.mode === 'kept-reviewed' ? '复用已审核' : '更新')}审核记录；文本 ${source.text.length} 字；类型=${displayTypeForFileType(fileType) || fileType}`,
+    '失败原因': '',
+  });
+  return { success: true, recordId, fileName, reviewRecordId: review.recordId, mode: review.mode, fileType };
+}
+
+async function scanUploadQueue(reason = 'manual') {
+  if (!UPLOAD_QUEUE_SCAN_ENABLED) {
+    return { success: false, skipped: true, reason: 'UPLOAD_QUEUE_SCAN_ENABLED=false' };
+  }
+  if (state.uploadQueueScan.running) {
+    return { success: true, skipped: true, reason: 'scan already running', lastResult: state.uploadQueueScan.lastResult };
+  }
+  state.uploadQueueScan.running = true;
+  state.uploadQueueScan.lastRunAt = new Date().toISOString();
+  const result = { success: true, reason, processed: 0, succeeded: 0, failed: 0, items: [] };
+  try {
+    await ensureUploadQueueFields();
+    const records = await listBaseRecords(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID);
+    const targets = records.filter(uploadQueueRecordNeedsParse).slice(0, Math.max(1, UPLOAD_QUEUE_SCAN_BATCH_LIMIT));
+    const outcomes = await runLimited(targets, 1, async item => {
+      try {
+        return await processUploadQueueRecord(item);
+      } catch (e) {
+        const fileName = normalizeFeishuValue(item.fields && item.fields['文件名称']);
+        await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, item.recordId, {
+          '解析状态': '解析失败',
+          '失败原因': e.message,
+          '解析完成时间': new Date().toLocaleString('zh-CN', { hour12: false }),
+          '解析日志': `后台解析失败：${e.message}`,
+        }).catch(updateErr => console.warn('[上传队列] 失败状态回写失败:', updateErr.message));
+        return { success: false, recordId: item.recordId, fileName, status: '解析失败', error: e.message };
+      }
+    });
+    result.processed = targets.length;
+    result.items = outcomes;
+    result.succeeded = outcomes.filter(x => x && x.success).length;
+    result.failed = outcomes.filter(x => x && !x.success).length;
+    state.uploadQueueScan.lastResult = result;
+    return result;
+  } finally {
+    state.uploadQueueScan.running = false;
+  }
+}
+
+function scheduleUploadQueueScan(reason = 'scheduled') {
+  if (!UPLOAD_QUEUE_SCAN_ENABLED || state.uploadQueueScan.scheduled) return;
+  state.uploadQueueScan.scheduled = true;
+  setImmediate(() => {
+    state.uploadQueueScan.scheduled = false;
+    scanUploadQueue(reason).catch(e => {
+      state.uploadQueueScan.lastResult = { success: false, reason, error: e.message };
+      console.warn('[上传队列] 后台扫描失败:', e.message);
+    });
+  });
+}
+
 async function ensureTableFields() {
   if (state.tableFields) return state.tableFields;
 
@@ -1986,9 +2718,13 @@ function inferCorporateCode(fields, parsed) {
 
 function inferDiscountType(fields, parsed) {
   const text = getPolicyText(fields, parsed);
-  if (/指定票面价|票面价|一口价|指定价格|票价为|票面金额/.test(text)) return '指定票面价';
-  if (/直加|加价|加收|加享|升舱差价|额外支付/.test(text)) return '直加金额';
-  if (/\d+(?:\.\d+)?\s*%|折扣|直减比例/.test(text)) return '直减比例';
+  if (/一口价/.test(text)) return '一口价';
+  if (/指定票面价|票面价|指定价格|票价为|票面金额/.test(text)) return '指定票面价';
+  if (/溢价产品|溢价/.test(text)) return '溢价产品';
+  if (/上浮/.test(text)) return '上浮金额';
+  if (/下浮.{0,12}(不固定|浮动|以.*为准)/.test(text)) return '下浮金额不固定';
+  if (/直加|加价|加收|加享|升舱差价|额外支付/.test(text)) return '溢价产品';
+  if (/\d+(?:\.\d+)?\s*%|折扣|直减比例|折扣促销/.test(text)) return /折扣促销/.test(text) ? '折扣促销' : '直减比例';
   if (/直减|立减|优惠金额|减免|减\d+元/.test(text)) return '直减金额';
   return '';
 }
@@ -2015,7 +2751,10 @@ function normalizeAgeRangeText(value, text = '') {
     const nearby = source.slice(Math.max(0, start - 18), start + match[0].length + 18);
     const after = source.slice(start + match[0].length, start + match[0].length + 4);
     if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) {
-      add(`${match[1]}-${match[2]}`);
+      const end = /不含/.test(after) && /儿童|少儿|儿童票/.test(nearby)
+        ? String(Math.max(Number(match[2]) - 1, Number(match[1])))
+        : match[2];
+      add(`${match[1]}-${end}`);
     }
   }
   const aboveRe = /(\d{1,3})\s*(?:周岁|岁)?\s*(?:以上|及以上|含以上|（含）以上|\(含\)以上)/g;
@@ -2025,7 +2764,7 @@ function normalizeAgeRangeText(value, text = '') {
     const after = source.slice(start + match[0].length, start + match[0].length + 4);
     if (hasAgeContext(nearby) && !looksLikePolicyCode(nearby) && !/人|名|位/.test(after)) {
       const from = Number(match[1]);
-      const end = /老年|长者|银发|老人|适老|青老年/.test(nearby) ? 110 : 200;
+      const end = from >= 50 || /老年|长者|银发|老人|适老|青老年/.test(nearby) ? 110 : 200;
       add(`${from}-${end}`);
     }
   }
@@ -3725,8 +4464,25 @@ app.post('/api/upload-policy-files', async (req, res) => {
       queued: created.filter(item => item.success).length,
       items: created,
     });
+    if (created.some(item => item.success && item.attachmentUploaded)) {
+      scheduleUploadQueueScan('upload');
+    }
   } catch (err) {
     console.error(`[上传队列] 上传失败: ${err.message}`);
+    if (isAuthOrPermissionError(err)) return sendFeishuAuthRequired(res, err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/upload-queue/scan', async (req, res) => {
+  try {
+    const result = await scanUploadQueue('manual');
+    res.json({
+      ...result,
+      lastRunAt: state.uploadQueueScan.lastRunAt,
+    });
+  } catch (err) {
+    console.error(`[上传队列] 手动扫描失败: ${err.message}`);
     if (isAuthOrPermissionError(err)) return sendFeishuAuthRequired(res, err);
     res.status(500).json({ success: false, error: err.message });
   }
@@ -4407,4 +5163,9 @@ app.listen(PORT, () => {
   console.log(`\n🚀 政策审核工作台 (Render) 已启动`);
   console.log(`   端口: ${PORT}`);
   console.log(`   已授权: ${!!state.userRefreshToken}\n`);
+  if (UPLOAD_QUEUE_SCAN_ENABLED && UPLOAD_QUEUE_SCAN_INTERVAL_MS > 0) {
+    setInterval(() => scheduleUploadQueueScan('interval'), UPLOAD_QUEUE_SCAN_INTERVAL_MS).unref();
+    scheduleUploadQueueScan('startup');
+    console.log(`   上传队列扫描: 启用，每 ${UPLOAD_QUEUE_SCAN_INTERVAL_MS}ms，单批 ${UPLOAD_QUEUE_SCAN_BATCH_LIMIT} 个\n`);
+  }
 });

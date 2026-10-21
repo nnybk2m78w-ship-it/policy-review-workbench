@@ -7430,7 +7430,10 @@ function renderUpload(main) {
       <div class="upload-panel">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <h3 style="margin:0">上传队列</h3>
-          <button class="btn-sm btn-sm-nav" onclick="loadUploadQueue(true)">刷新</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn-sm btn-sm-nav" onclick="scanUploadQueueNow()">立即扫描</button>
+            <button class="btn-sm btn-sm-nav" onclick="loadUploadQueue(true)">刷新</button>
+          </div>
         </div>
         ${renderUploadQueueTable(rows)}
       </div>
@@ -7451,7 +7454,7 @@ function renderUploadQueueTable(rows) {
       <tbody>
         ${rows.map(item => {
           const status = item.parseStatus || '待解析';
-          const cls = /失败/.test(status) ? 'failed' : (/完成|待审核|已解析/.test(status) ? 'done' : 'pending');
+          const cls = /失败|缺附件|上传失败/.test(status) ? 'failed' : (/完成|待审核|已解析|已存在|已审核/.test(status) ? 'done' : 'pending');
           const note = item.errorReason || item.parseLog || item.remark || '';
           return `<tr>
             <td class="file-name">${escapeHtml(item.fileName || '')}<div class="muted">${escapeHtml(item.fileType || '')} · ${escapeHtml(item.batchId || '')}</div></td>
@@ -8618,6 +8621,32 @@ function refreshEditedFields(p) {
   });
   if (p.audit.edited_fields.length === 0) {
     delete p.audit.edited_fields;
+  }
+}
+
+async function scanUploadQueueNow() {
+  if (appState.uploadLoading) return;
+  appState.uploadLoading = true;
+  render();
+  try {
+    const result = await requestJson('/api/upload-queue/scan', { method: 'POST' });
+    if (result.success) {
+      showToast(`扫描完成：处理 ${result.processed || 0} 个，成功 ${result.succeeded || 0} 个`, 'success', 3200);
+      await loadUploadQueue(false);
+      await syncStatusesFromServer(false);
+      return;
+    }
+    if (result.needAuth) {
+      showInlineSyncBar('飞书授权失效，上传队列无法扫描',
+        `<button class="btn-sm btn-sm-confirm" onclick="startFeishuAuth()">前往飞书授权</button>`, 'error');
+      return;
+    }
+    showToast(result.error || result.reason || '扫描未完成', 'error', 3600);
+  } catch (e) {
+    showToast('扫描失败：' + e.message, 'error', 3600);
+  } finally {
+    appState.uploadLoading = false;
+    render();
   }
 }
 
