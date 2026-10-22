@@ -234,12 +234,14 @@ const FLAGSHIP_CODE_FIELDS = [
   'refund_change_together'
 ];
 FLAGSHIP_CODE_FIELDS.forEach(key => SERVER_PROMPT_FIELDS['旗舰店code'].add(key));
-const FLAGSHIP_COUPON_OLD_FIELDS = [
+// 旗舰店券类不再由系统自动区分「老券 / 新券」；这里只保留两组
+// prompt 来源字段并合并为统一的「旗舰店券类」字段集。
+const FLAGSHIP_COUPON_CORE_FIELDS = [
   '航班-适用','航班-不适用','机场-适用','机场-不适用','舱位','销售日期','旅行日期',
   '活动形式','直减金额/直减比例','购票提前天数限制','实现形式','资源编号',
   '最低销售价格','是否注册','优惠券码','优惠码'
 ];
-const FLAGSHIP_COUPON_NEW_FIELDS = [
+const FLAGSHIP_COUPON_EXTENDED_FIELDS = [
   '业务线','销售限制','旅客类型','儿童','婴儿','年龄限制','年龄限制补充','性别年龄限制',
   '青老年','会员限制','人数限制','人数限制补充','家庭限制','实名限制','区域限制',
   '区域限制原文','产品标签','展示方式','展示限制','性别限制','证件限制','使用门槛',
@@ -253,8 +255,8 @@ const FLAGSHIP_COUPON_FIELDS = [
   'cabin','sub_cabin','sale_date','beside_sale_date','depart_week','depart_time','beside_depart_time',
   'discount_type','discount_per','sale_constraint','sale_type','price_code','price_voucher',
   'minimum_sales','whether_member',
-  ...FLAGSHIP_COUPON_OLD_FIELDS,
-  ...FLAGSHIP_COUPON_NEW_FIELDS,
+  ...FLAGSHIP_COUPON_CORE_FIELDS,
+  ...FLAGSHIP_COUPON_EXTENDED_FIELDS,
 ];
 FLAGSHIP_COUPON_FIELDS.forEach(key => SERVER_PROMPT_FIELDS['旗舰店券类'].add(key));
 const TRIP_CARD_FIELDS = [
@@ -269,8 +271,6 @@ const SCHEMA_FIELDS_BY_TYPE = {
   '自营': LEGACY_SELF_OPERATED_FIELDS,
   '旗舰店code': FLAGSHIP_CODE_FIELDS,
   '旗舰店券类': FLAGSHIP_COUPON_FIELDS,
-  '旗舰店券类老券': FLAGSHIP_COUPON_OLD_FIELDS,
-  '旗舰店券类新券': FLAGSHIP_COUPON_NEW_FIELDS,
   '次卡': TRIP_CARD_FIELDS,
 };
 
