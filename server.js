@@ -3797,6 +3797,27 @@ function filterManualProblemMarks(raw) {
   return splitProblemMarkEntries(raw).filter(entry => !isSystemProblemEntry(entry)).join('\n');
 }
 
+function buildRuleChangeSuggestion({ fieldKey, fieldLabel, oldValue, newValue, reason, isFieldAddition, isFieldDeletion, fileName }) {
+  if (normalizeFeishuValue(oldValue) === normalizeFeishuValue(newValue)) return null;
+  const baseType = isFieldAddition
+    ? '新增逻辑待确认'
+    : (isFieldDeletion ? '字段适用性待确认' : '原逻辑优化待确认');
+  const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+  return {
+    status: 'pending_confirmation',
+    type: baseType,
+    fieldKey,
+    fieldLabel: fieldLabel || fieldKey || '',
+    fileName: fileName || '',
+    oldValue: normalizeFeishuValue(oldValue) || '(空)',
+    newValue: normalizeFeishuValue(newValue) || '(空)',
+    reason: normalizeFeishuValue(reason),
+    ruleType: rule.type,
+    proposedRule: rule.rule,
+    message: '字段值已保存。解析规则不会自动扩散；需要先确认这是在原有 prompt 逻辑上新增逻辑，还是优化原逻辑，再固化到解析能力。',
+  };
+}
+
 function deriveAutoValue({ ruleType, fieldKey, newValue, targetFields, targetParsed }) {
   const targetText = getPolicyText(targetFields, targetParsed);
   if (ruleType === '场景字段不适用删除规则') {
@@ -4391,13 +4412,32 @@ app.post('/api/save-field', async (req, res) => {
       deleteField,
       fieldDefinition,
     });
+    const localEntry = normalizeChangeEntry(changeEntry, {
+      oldValue: '',
+      newValue: newValue !== undefined ? String(newValue) : '',
+      reason: reason || '',
+      fieldLabel: fieldLabel || fieldKey || '',
+    });
+    const localRuleSuggestion = !systemGenerated
+      ? buildRuleChangeSuggestion({
+          fieldKey,
+          fieldLabel: fieldLabel || fieldKey || '',
+          oldValue: localEntry.oldValue || '',
+          newValue: deleteField ? '' : (newValue !== undefined ? String(newValue) : ''),
+          reason: reason || '',
+          isFieldAddition: /^新增字段[:：]/.test(reason || '') || isBlankish(localEntry.oldValue),
+          isFieldDeletion: !!deleteField || /^删除字段[:：]/.test(reason || ''),
+          fileName: '',
+        })
+      : null;
     console.log(`[保存字段] ✓ 已写入${activeReviewStorageName()}审核记录 ${fieldLabel || fieldKey || ''}`);
     return res.json({
       success: true,
       historyCount: saved.historyCount,
       savedToFeishu: false,
       storage: activeReviewStorageName(),
-      background: { autoCorrection: false, knowledge: false },
+      background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!localRuleSuggestion },
+      ruleSuggestion: localRuleSuggestion,
     });
   }
 
@@ -4449,6 +4489,18 @@ app.post('/api/save-field', async (req, res) => {
     const autoProblemLine = isEffectiveChange
       ? `[${entry.time}] ${entry.user || (user ? user.name : '')} | ${entry.fieldLabel || fieldLabel || fieldKey}: ${isFieldDeletion ? '删除字段' : (isFieldAddition ? '新增字段' : '字段修改')}：${entry.oldValue || '(空)'} → ${entry.newValue || '(空)'}；原因：${entry.reason || '未填写'}`
       : '';
+    const ruleSuggestion = (!systemGenerated && isEffectiveChange)
+      ? buildRuleChangeSuggestion({
+          fieldKey,
+          fieldLabel: entry.fieldLabel || fieldLabel || fieldKey,
+          oldValue: entry.oldValue || '',
+          newValue: newValue !== undefined ? String(newValue) : '',
+          reason: reason || '',
+          isFieldAddition,
+          isFieldDeletion,
+          fileName: getFileName(sourceFields, sourceParsed),
+        })
+      : null;
 
     // 更新飞书字段（仅更新表格中实际存在的字段）
     const fields = {
@@ -4485,73 +4537,17 @@ app.post('/api/save-field', async (req, res) => {
 
     await updateFeishuRecord(recordId, fields);
 
-    console.log(`[保存字段] ✓ 主记录已保存 ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条，后台继续自动矫正/知识沉淀`);
+    console.log(`[保存字段] ✓ 主记录已保存 ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条，规则变更待确认=${ruleSuggestion ? '是' : '否'}`);
     res.json({
       success: true,
       historyCount: existingHistory.length,
       savedToFeishu: true,
       background: {
-        autoCorrection: !!sourceParsed,
-        knowledge: true,
+        autoCorrection: false,
+        knowledge: false,
+        ruleConfirmationRequired: !!ruleSuggestion,
       },
-    });
-
-    setImmediate(() => {
-      (async () => {
-        let autoCorrection = { applied: 0, files: [] };
-        const knowledge = {
-          ok: false,
-          skipped: true,
-        };
-        try {
-          if (sourceParsed && !systemGenerated) {
-            autoCorrection = await autoCorrectPendingRecords({
-              sourceRecordId: recordId,
-              sourceFields,
-              sourceParsed,
-              fieldKey,
-              fieldLabel,
-              oldValue: entry.oldValue || '',
-              newValue: newValue !== undefined ? String(newValue) : '',
-              reason: reason || '',
-              userName: user ? user.name : '',
-            });
-          }
-        } catch (e) {
-          autoCorrection = { applied: 0, files: [], error: e.message };
-          console.warn('[自动矫正] 失败:', e.message);
-        }
-
-        try {
-          if (!systemGenerated) {
-            const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
-            Object.assign(knowledge, await appendVersionUpdateRecord({
-              time: new Date().toLocaleString('zh-CN', { hour12: false }),
-              fileName: getFileName(sourceFields, sourceParsed),
-              userName: user ? user.name : '',
-              fieldLabel,
-              oldValue: entry.oldValue || '',
-              newValue: newValue !== undefined ? String(newValue) : '',
-              reason: reason || '',
-              ruleType: autoCorrection.ruleType || rule.type,
-              rule: autoCorrection.rule || rule.rule,
-              autoApplied: autoCorrection.applied || 0,
-              autoFiles: autoCorrection.files || [],
-            }));
-          } else {
-            knowledge.skipped = true;
-            knowledge.reason = '系统自动矫正不沉淀为人工学习记录';
-          }
-        } catch (e) {
-          knowledge.ok = false;
-          knowledge.error = e.message;
-          console.warn('[版本记录] 记录生成失败:', e.message);
-        }
-
-        console.log(`[保存字段后台] ✓ ${fieldLabel || ''} 自动矫正${autoCorrection.applied || 0}条 版本记录${knowledge.ok ? '已写入' : '未写入'}`);
-      })().catch(e => {
-        console.warn('[保存字段后台] 异常:', e.message);
-      });
+      ruleSuggestion,
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
@@ -4567,13 +4563,32 @@ app.post('/api/save-field', async (req, res) => {
         deleteField,
         fieldDefinition,
       });
+      const fallbackEntry = normalizeChangeEntry(changeEntry, {
+        oldValue: '',
+        newValue: newValue !== undefined ? String(newValue) : '',
+        reason: reason || '',
+        fieldLabel: fieldLabel || fieldKey || '',
+      });
+      const fallbackRuleSuggestion = !systemGenerated
+        ? buildRuleChangeSuggestion({
+            fieldKey,
+            fieldLabel: fieldLabel || fieldKey || '',
+            oldValue: fallbackEntry.oldValue || '',
+            newValue: deleteField ? '' : (newValue !== undefined ? String(newValue) : ''),
+            reason: reason || '',
+            isFieldAddition: /^新增字段[:：]/.test(reason || '') || isBlankish(fallbackEntry.oldValue),
+            isFieldDeletion: !!deleteField || /^删除字段[:：]/.test(reason || ''),
+            fileName: '',
+          })
+        : null;
       console.log(`[保存字段] ✓ 已写入本地审核记录 ${fieldLabel || fieldKey || ''}`);
       return res.json({
         success: true,
         historyCount: saved.historyCount,
         savedToFeishu: false,
         storage: activeReviewStorageName(),
-        background: { autoCorrection: false, knowledge: false },
+        background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!fallbackRuleSuggestion },
+        ruleSuggestion: fallbackRuleSuggestion,
       });
     } else if (isAuthOrPermissionError(err)) {
       return sendFeishuAuthRequired(res, err);

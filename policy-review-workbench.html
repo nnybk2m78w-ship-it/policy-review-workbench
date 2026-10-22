@@ -592,7 +592,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
   <div class="reason-modal">
     <h4>⚠️ 标记其他解析问题</h4>
     <div class="reason-meta" id="problemMeta"></div>
-    <textarea id="problemInput" placeholder="字段修改和新增字段会自动标记为问题。这里用于记录无法直接通过改字段解决的其他问题。"></textarea>
+    <textarea id="problemInput" placeholder="字段修改会自动标记为问题。这里用于记录无法直接通过改字段解决的其他问题。"></textarea>
     <div class="reason-actions">
       <button class="btn-sm btn-sm-nav" onclick="cancelProblem()">取消</button>
       <button class="btn-sm btn-sm-danger" onclick="submitProblem()">标记问题</button>
@@ -6238,6 +6238,7 @@ FLAGSHIP_COUPON_FIELDS.forEach(key => BASE_PROMPT_FIELDS['旗舰店券类'].add(
 const TRIP_CARD_FIELDS = ['carrier','airline_code','od','flight_type','usage_times','product_name','product_show','product_type','product_price','price_deduction','cabin','travel_class','sale_date','depart_date','beside_time','use_limit','use_begin','use_date','refund_time','use_code','passenger_type','age_limit','sign_and_transfer_rules','refund_rules','change_rules','luggage_amount','realname_limit','purchase_limit','wether_depart_today','price_groups','price_group'];
 TRIP_CARD_FIELDS.forEach(key => BASE_PROMPT_FIELDS['次卡'].add(key));
 const FIELD_FILE_TYPES = Object.freeze(['次卡', '旗舰店code', '旗舰店券类', '自营']);
+const ENABLE_MANUAL_FIELD_ADDITION = false;
 
 function normalizeFeishuValue(value) {
   if (value === null || value === undefined) return '';
@@ -6396,16 +6397,12 @@ function definitionAppliesToPolicy(def, policy) {
 function isPromptAllowedFieldForType(fileType, field, def) {
   if (!field || field === FIELD_DEFINITIONS_KEY) return false;
   if ((BASE_PROMPT_FIELDS[fileType] || new Set()).has(field)) return true;
-  if (def && (def.file_type || def.fileType) === fileType) return true;
-  if (SOURCE_BOUND_FIELDS.has(field)) return false;
-  return field.startsWith(CUSTOM_FIELD_KEY_PREFIX);
+  return false;
 }
 
 function isPromptAllowedField(policy, field) {
   const type = getPolicyFileType(policy);
-  const def = getFieldDefinition(policy, field);
-  if (SOURCE_BOUND_FIELDS.has(field)) return isPromptAllowedFieldForType(type, field, def);
-  return isPromptAllowedFieldForType(type, field, def) || (!!LABELS[field] && hasConcreteFieldValue(policy && policy.data && policy.data[field]));
+  return isPromptAllowedFieldForType(type, field);
 }
 
 function hasEntitlementEvidence(policy) {
@@ -6660,7 +6657,8 @@ function shouldShowManualConfirmField(policy, field) {
 function isCoreManualField(policy, field) {
   if (!policy || !field || field === FIELD_DEFINITIONS_KEY) return false;
   if (field === 'manual_confirm_fields') return hasActionableManualConfirmText(policy);
-  return manualConfirmFieldNames(policy).has(field) || isPromptAllowedField(policy, field);
+  if (!isPromptAllowedField(policy, field)) return false;
+  return manualConfirmFieldNames(policy).has(field) || isManualConfirmValue(policy.data && policy.data[field]);
 }
 
 function clearManualConfirmForField(policy, field) {
@@ -7869,11 +7867,13 @@ function getManualConfirmBlockMessage(policy) {
   const pending = [];
   const manual = manualConfirmFieldNames(policy);
   manual.forEach(field => {
+    if (!isPromptAllowedField(policy, field)) return;
     const value = policy && policy.data && policy.data[field];
     if (!hasConcreteFieldValue(value)) pending.push(renderPlainFieldLabel(field, policy));
   });
   Object.entries((policy && policy.data) || {}).forEach(([field, value]) => {
     if (field === FIELD_DEFINITIONS_KEY || field === 'manual_confirm_fields') return;
+    if (!isPromptAllowedField(policy, field)) return;
     if (isManualConfirmValue(value) && !pending.includes(renderPlainFieldLabel(field, policy))) {
       pending.push(renderPlainFieldLabel(field, policy));
     }
@@ -7934,11 +7934,6 @@ function getFilteredPolicyData(p) {
     if (!shouldRenderSourceBoundField(p, key)) return;
     out[key] = value;
   });
-  const defs = {};
-  Object.entries(((p && p.data) || {})[FIELD_DEFINITIONS_KEY] || {}).forEach(([key, def]) => {
-    if (definitionAppliesToPolicy(def, p)) defs[key] = def;
-  });
-  if (Object.keys(defs).length) out[FIELD_DEFINITIONS_KEY] = defs;
   return out;
 }
 
@@ -8161,7 +8156,7 @@ function renderReview(main) {
 
   // File-level problem button
   const problemBtn = `<button class="btn-sm btn-sm-problem" onclick="openProblem('${p.id}','')">⚠ 其他问题</button>`;
-  const addFieldBtn = !isConfirmed
+  const addFieldBtn = ENABLE_MANUAL_FIELD_ADDITION && !isConfirmed
     ? `<button class="btn-sm btn-sm-add-field" onclick="openAddField('${p.id}')">＋ 增加字段</button>`
     : '';
 
@@ -9127,6 +9122,10 @@ function resolveAddFieldKey(label, policy) {
 }
 
 function openAddField(policyId) {
+  if (!ENABLE_MANUAL_FIELD_ADDITION) {
+    showToast('新增字段功能已隐藏；字段集调整需要先沟通确认后再维护规则', 'error', 3600);
+    return;
+  }
   const p = appState.policies.find(x => x.id === policyId);
   if (!p || p.status === 'confirmed') return;
   pendingAddField = { policyId };
@@ -9149,6 +9148,10 @@ function cancelAddField() {
 }
 
 async function submitAddField() {
+  if (!ENABLE_MANUAL_FIELD_ADDITION) {
+    showToast('新增字段功能已隐藏；字段集调整需要先沟通确认后再维护规则', 'error', 3600);
+    return;
+  }
   if (!pendingAddField) return;
   const { policyId } = pendingAddField;
   const p = appState.policies.find(x => x.id === policyId);
@@ -9275,9 +9278,9 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
 
   saveState();
   render();
-  showToast('字段已保存，后台同步中', 'success');
+  showToast('字段已保存，正在同步审核记录', 'success');
 
-  // 后台同步到服务端审核记录。页面先完成修改，慢任务（自动矫正/知识图谱）由后端继续处理。
+  // 后台同步到服务端审核记录；规则沉淀只生成待确认建议，不在字段保存时自动扩散。
   enqueueFieldSave(() => requestJson('/api/save-field', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -9302,7 +9305,15 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
     }))
     .then(result => {
       if (result.success) {
-        showToast(`字段已同步到${syncTargetLabel(result)}，后台继续沉淀规则`, 'success', 2600);
+        if (result.ruleSuggestion) {
+          showInlineSyncBar(
+            `字段已同步到${syncTargetLabel(result)}。已生成规则调整建议，需确认是新增逻辑还是优化原逻辑后再固化。`,
+            `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`,
+            ''
+          );
+        } else {
+          showToast(`字段已同步到${syncTargetLabel(result)}`, 'success', 2600);
+        }
         syncStatusesFromServer(false);
       } else if (result.needAuth) {
         showInlineSyncBar('飞书授权已失效，页面已保留修改，请授权后刷新核对',
