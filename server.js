@@ -43,6 +43,7 @@ const UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES = parseInt(process.env.UPLOAD_QUEUE_DOWN
 const RULE_CONFIRM_NOTIFY_OPEN_IDS = parseEnvList(process.env.RULE_CONFIRM_NOTIFY_OPEN_IDS || process.env.FEISHU_NOTIFY_OPEN_IDS || '');
 const RULE_CONFIRM_NOTIFY_CURRENT_USER = process.env.RULE_CONFIRM_NOTIFY_CURRENT_USER !== 'false';
 const GOLDEN_REGRESSION_SAMPLE_LIMIT = parseInt(process.env.GOLDEN_REGRESSION_SAMPLE_LIMIT || '120', 10);
+const GOLDEN_UPLOAD_MISMATCH_DISPLAY_LIMIT = parseInt(process.env.GOLDEN_UPLOAD_MISMATCH_DISPLAY_LIMIT || '12', 10);
 const GOLDEN_SAMPLE_SOURCES = parseGoldenSampleSources(process.env.POLICY_GOLDEN_SAMPLE_SOURCES || '', defaultGoldenSampleSources());
 const WORKBENCH_AUTH_ENABLED = process.env.WORKBENCH_AUTH_ENABLED !== 'false';
 const WORKBENCH_SESSION_COOKIE = 'policy_review_session';
@@ -365,6 +366,11 @@ let state = {
     scheduled: false,
     lastRunAt: null,
     lastResult: null,
+  },
+  goldenUploadSamples: {
+    loadedAt: 0,
+    samples: [],
+    errors: [],
   },
 };
 
@@ -844,6 +850,10 @@ function policyToFields(policy, localRecord) {
   sanitizePolicyFields(policy);
   const visibleHistoryText = humanChangeHistoryText((localRecord && localRecord.changeHistory) || []);
   const ruleSuggestionsText = formatRuleSuggestions((localRecord && localRecord.ruleSuggestions) || []);
+  const policyProblemLines = Array.isArray(policy.problem_lines)
+    ? policy.problem_lines
+    : (policy.problem_marks ? splitProblemMarkEntries(policy.problem_marks) : []);
+  const problemLines = policyProblemLines.length ? policyProblemLines : ((localRecord && localRecord.problemLines) || []);
   const fields = {
     '文件名称': policy.file_name || '',
     '文件类型': policy.source_type || '',
@@ -858,7 +868,7 @@ function policyToFields(policy, localRecord) {
     '确认人ID': policy.confirmed_by && policy.confirmed_by.openId ? policy.confirmed_by.openId : '',
     '已修改': visibleHistoryText ? '是' : '',
     '修改历史': visibleHistoryText,
-    '问题标记': ((localRecord && localRecord.problemLines) || []).join('\n'),
+    '问题标记': problemLines.join('\n'),
     '规则待确认': ruleSuggestionsText,
   };
   Object.entries(KEY_LABELS).forEach(([key, label]) => {
@@ -1849,6 +1859,245 @@ async function runRuleFieldRegression({ suggestion, sourceRecordId, sourceFields
   };
 }
 
+const GOLDEN_COMPARE_SKIP_KEYS = new Set([
+  'data',
+  'configs',
+  'evidence',
+  'audit',
+  'problems',
+  'rule_suggestions',
+  FIELD_DEFINITIONS_KEY,
+  'source_text',
+  'original_text',
+  'raw_text',
+  'policy_text',
+  'text',
+  'source_type',
+  'source_files',
+  'file_name',
+  'fileName',
+  'parsed_at',
+  'status',
+  'category',
+  'subcategory',
+  'confirmed_at',
+  'confirmed_by',
+  '_change_history',
+  'tableSummaries',
+  'warnings',
+]);
+
+function normalizePolicyFileNameForMatch(name) {
+  return path.basename(normalizeFeishuValue(name))
+    .replace(/^原始文件\s*[—\-:：]\s*/g, '')
+    .replace(/\.(docx?|pdf|xlsx?|xlsm|csv|7z|zip|rar)$/i, '')
+    .replace(/\s*[-－—]\s*副本\s*$/g, '')
+    .replace(/(?:\(|（)\s*(?:副本|copy|最终|最新版|\d+)\s*(?:\)|）)$/ig, '')
+    .replace(/\s+/g, '')
+    .replace(/[【】\[\]（）()《》<>“”"'\-－—_·.,，。:：;；]/g, '')
+    .toLowerCase();
+}
+
+function policyFileNameMatchScore(uploadName, sampleName) {
+  const uploadRaw = normalizeFeishuValue(uploadName);
+  const sampleRaw = normalizeFeishuValue(sampleName);
+  if (!uploadRaw || !sampleRaw) return 0;
+  if (uploadRaw === sampleRaw) return 4;
+  const upload = normalizePolicyFileNameForMatch(uploadRaw);
+  const sample = normalizePolicyFileNameForMatch(sampleRaw);
+  if (!upload || !sample) return 0;
+  if (upload === sample) return 3;
+  if (Math.min(upload.length, sample.length) >= 14 && (upload.includes(sample) || sample.includes(upload))) return 1;
+  return 0;
+}
+
+function unwrapComparableUnit(obj) {
+  if (!obj || typeof obj !== 'object') return {};
+  if (obj.data && typeof obj.data === 'object' && !Array.isArray(obj.data)) return obj.data;
+  return obj;
+}
+
+function comparableUnitsFromParsed(parsed, preferConfigs = false) {
+  if (!parsed) return [];
+  if (Array.isArray(parsed)) return parsed.map(unwrapComparableUnit).filter(obj => obj && typeof obj === 'object');
+  const obj = unwrapComparableUnit(parsed);
+  const configs = Array.isArray(obj.configs) ? obj.configs : (obj.data && Array.isArray(obj.data.configs) ? obj.data.configs : null);
+  if (preferConfigs && configs && configs.length) return configs.map(unwrapComparableUnit).filter(x => x && typeof x === 'object');
+  return [obj].filter(x => x && typeof x === 'object');
+}
+
+function comparableValueFromUnit(unit, root, key) {
+  if (unit && Object.prototype.hasOwnProperty.call(unit, key)) return unit[key];
+  if (unit && unit.data && Object.prototype.hasOwnProperty.call(unit.data, key)) return unit.data[key];
+  if (root && Object.prototype.hasOwnProperty.call(root, key)) return root[key];
+  if (root && root.data && Object.prototype.hasOwnProperty.call(root.data, key)) return root.data[key];
+  return '';
+}
+
+function comparableKeysFromExpectedUnit(unit) {
+  return Object.keys(unit || {})
+    .map(canonicalizeFieldName)
+    .filter(key => key && !GOLDEN_COMPARE_SKIP_KEYS.has(key));
+}
+
+function shortComparableValue(value, limit = 90) {
+  const text = normalizeFeishuValue(value);
+  if (!text) return '(空)';
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+async function loadGoldenSamplesForUpload(force = false) {
+  const cacheTtlMs = 10 * 60 * 1000;
+  if (!force && state.goldenUploadSamples.loadedAt && Date.now() - state.goldenUploadSamples.loadedAt < cacheTtlMs) {
+    return state.goldenUploadSamples;
+  }
+  const samples = [];
+  const errors = [];
+  for (const rawSource of GOLDEN_SAMPLE_SOURCES) {
+    const source = parseFeishuBaseSource(rawSource);
+    if (!source) {
+      errors.push({ source: rawSource.name || rawSource.url || '', error: '样本源配置不可解析' });
+      continue;
+    }
+    try {
+      const baseToken = await resolveBitableAppToken(source);
+      const records = await listBaseRecords(baseToken, source.tableId);
+      records.forEach(item => {
+        const sample = buildGoldenSampleFromRecord(item, source);
+        if (sample) samples.push(sample);
+      });
+    } catch (e) {
+      errors.push({ source: source.name || source.url || source.tableId, error: e.message });
+    }
+  }
+  state.goldenUploadSamples = { loadedAt: Date.now(), samples, errors };
+  return state.goldenUploadSamples;
+}
+
+async function findGoldenSampleForUpload(fileName, fileType) {
+  const { samples, errors } = await loadGoldenSamplesForUpload();
+  const matches = samples
+    .map(sample => ({
+      sample,
+      score: policyFileNameMatchScore(fileName, sample.fileName),
+      typeMatched: fileTypeMatchesGoldenSource(fileType, sample.sourceName, sample.fileType),
+    }))
+    .filter(item => item.score >= 3 && item.typeMatched)
+    .sort((a, b) => b.score - a.score);
+  return {
+    sample: matches[0] ? matches[0].sample : null,
+    errors,
+    candidates: matches.slice(0, 3).map(item => ({
+      fileName: item.sample.fileName,
+      sourceName: item.sample.sourceName,
+      fileType: item.sample.fileType,
+      score: item.score,
+    })),
+  };
+}
+
+function compareParsedPolicyWithGoldenSample(policy, sample) {
+  const expectedUnits = comparableUnitsFromParsed(sample.expectedJson, true);
+  const expectedHasMultipleUnits = Array.isArray(sample.expectedJson) ||
+    (sample.expectedJson && typeof sample.expectedJson === 'object' && Array.isArray(unwrapComparableUnit(sample.expectedJson).configs));
+  const actualRoot = (policy && policy.data) || {};
+  const actualUnits = comparableUnitsFromParsed(actualRoot, expectedHasMultipleUnits);
+  const mismatches = [];
+  let checked = 0;
+
+  if (expectedHasMultipleUnits && expectedUnits.length !== actualUnits.length) {
+    mismatches.push({
+      fieldKey: '_config_count',
+      fieldLabel: '拆分配置数量',
+      expected: expectedUnits.length,
+      actual: actualUnits.length,
+      unitIndex: 0,
+    });
+  }
+
+  expectedUnits.forEach((expectedUnit, index) => {
+    const actualUnit = actualUnits[index] || actualUnits[0] || {};
+    comparableKeysFromExpectedUnit(expectedUnit).forEach(fieldKey => {
+      const expected = comparableValueFromUnit(expectedUnit, sample.expectedJson, fieldKey);
+      const actual = comparableValueFromUnit(actualUnit, actualRoot, fieldKey);
+      checked++;
+      if (!valuesEquivalent(actual, expected)) {
+        mismatches.push({
+          fieldKey,
+          fieldLabel: KEY_LABELS[fieldKey] || fieldKey,
+          expected,
+          actual,
+          unitIndex: index + 1,
+        });
+      }
+    });
+  });
+
+  return {
+    matched: true,
+    passed: mismatches.length === 0,
+    checked,
+    mismatches,
+    sampleFileName: sample.fileName,
+    sampleSourceName: sample.sourceName,
+    sampleFileType: sample.fileType,
+    expectedUnitCount: expectedUnits.length,
+    actualUnitCount: actualUnits.length,
+    checkedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+  };
+}
+
+function formatGoldenValidationProblem(report) {
+  if (!report || !report.mismatches || !report.mismatches.length) return '';
+  const shown = report.mismatches.slice(0, GOLDEN_UPLOAD_MISMATCH_DISPLAY_LIMIT).map(item => {
+    const prefix = item.unitIndex > 1 ? `第${item.unitIndex}组 ` : '';
+    return `${prefix}${item.fieldLabel}(${item.fieldKey}) 标准=${shortComparableValue(item.expected)}，本次=${shortComparableValue(item.actual)}`;
+  });
+  const more = report.mismatches.length > shown.length ? `；另有 ${report.mismatches.length - shown.length} 个差异` : '';
+  return `[${report.checkedAt}] 黄金样本校验 | 文件整体: 命中黄金样本「${report.sampleFileName}」但本次解析未通过；共校验 ${report.checked} 个字段，发现 ${report.mismatches.length} 个差异：${shown.join('；')}${more}。请进入抽检验证复核，必要时优化解析规则。`;
+}
+
+async function applyGoldenSampleUploadValidation(policy, fileType) {
+  const match = await findGoldenSampleForUpload(policy.file_name, fileType);
+  if (!match.sample) {
+    if (match.errors && match.errors.length) {
+      policy.evidence = {
+        ...(policy.evidence || {}),
+        goldenSampleCheck: {
+          matched: false,
+          sourceErrors: match.errors.slice(0, 5),
+          checkedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+        },
+      };
+    }
+    return { matched: false, errors: match.errors || [] };
+  }
+
+  const report = compareParsedPolicyWithGoldenSample(policy, match.sample);
+  policy.evidence = {
+    ...(policy.evidence || {}),
+    goldenSampleCheck: {
+      ...report,
+      mismatches: report.mismatches.slice(0, GOLDEN_UPLOAD_MISMATCH_DISPLAY_LIMIT),
+      mismatchCount: report.mismatches.length,
+      sourceErrors: match.errors.slice(0, 5),
+    },
+  };
+
+  if (report.passed) {
+    policy.status = 'confirmed';
+    policy.confirmed_at = report.checkedAt;
+    policy.confirmed_by = {
+      name: '黄金样本自动校验',
+      openId: 'golden_sample_auto_check',
+    };
+  } else {
+    const line = formatGoldenValidationProblem(report);
+    if (line) policy.problem_lines = [...new Set([...(policy.problem_lines || []), line])];
+  }
+  return report;
+}
+
 async function uploadBitableMedia({ baseToken, fileName, buffer }) {
   if (buffer.length > 20 * 1024 * 1024) {
     throw new Error('当前飞书素材直传接口单文件上限为20MB，请先上传小于20MB的文件，或后续补充分片上传能力');
@@ -2664,7 +2913,9 @@ async function upsertPolicyReviewRecord(policy) {
 
   const preserve = ['审核状态', '确认人', '确认人ID', '确认时间', '已修改', '修改历史', '问题标记'];
   const updates = { ...incoming };
+  const incomingConfirmed = normalizeFeishuValue(incoming['审核状态']) === '已确认';
   preserve.forEach(name => {
+    if (incomingConfirmed && ['审核状态', '确认人', '确认人ID', '确认时间'].includes(name)) return;
     if (normalizeFeishuValue(existing.fields && existing.fields[name])) delete updates[name];
   });
   await updateFeishuRecord(existing.recordId, filterKnownFields(updates, tableFields));
@@ -2739,16 +2990,30 @@ async function processUploadQueueRecord(item) {
       parser: 'upload_queue_worker_rule_based_v1',
     },
   };
+  const goldenReport = await applyGoldenSampleUploadValidation(policy, fileType);
   const review = await upsertPolicyReviewRecord(policy);
+  let parseStatus = review.mode === 'kept-reviewed' ? '已存在已审核' : '待审核';
+  let parseLogSuffix = '';
+  if (goldenReport && goldenReport.matched) {
+    if (review.mode === 'kept-reviewed') {
+      parseLogSuffix = `；命中黄金样本「${goldenReport.sampleFileName}」，但审核记录已有人工/确认状态，保持原记录不覆盖`;
+    } else if (goldenReport.passed) {
+      parseStatus = '已确认';
+      parseLogSuffix = `；命中黄金样本「${goldenReport.sampleFileName}」，${goldenReport.checked} 个字段校验通过，已自动确认`;
+    } else {
+      parseStatus = '待抽检';
+      parseLogSuffix = `；命中黄金样本「${goldenReport.sampleFileName}」，发现 ${goldenReport.mismatches.length} 个差异，已进入抽检验证`;
+    }
+  }
   await updateBaseRecord(UPLOAD_BASE_TOKEN, UPLOAD_TABLE_ID, recordId, {
-    '解析状态': review.mode === 'kept-reviewed' ? '已存在已审核' : '待审核',
+    '解析状态': parseStatus,
     '审核页记录ID': review.recordId,
     '解析结果记录ID': review.recordId,
     '解析完成时间': new Date().toLocaleString('zh-CN', { hour12: false }),
-    '解析日志': `已解析并${review.mode === 'created' ? '创建' : (review.mode === 'kept-reviewed' ? '复用已审核' : '更新')}审核记录；文本 ${source.text.length} 字；类型=${displayTypeForFileType(fileType) || fileType}`,
+    '解析日志': `已解析并${review.mode === 'created' ? '创建' : (review.mode === 'kept-reviewed' ? '复用已审核' : '更新')}审核记录；文本 ${source.text.length} 字；类型=${displayTypeForFileType(fileType) || fileType}${parseLogSuffix}`,
     '失败原因': '',
   });
-  return { success: true, recordId, fileName, reviewRecordId: review.recordId, mode: review.mode, fileType };
+  return { success: true, recordId, fileName, reviewRecordId: review.recordId, mode: review.mode, fileType, goldenSample: goldenReport };
 }
 
 async function scanUploadQueue(reason = 'manual') {
