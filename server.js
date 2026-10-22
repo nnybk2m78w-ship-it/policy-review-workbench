@@ -40,6 +40,8 @@ const UPLOAD_QUEUE_SCAN_ENABLED = process.env.UPLOAD_QUEUE_SCAN_ENABLED !== 'fal
 const UPLOAD_QUEUE_SCAN_INTERVAL_MS = parseInt(process.env.UPLOAD_QUEUE_SCAN_INTERVAL_MS || '120000', 10);
 const UPLOAD_QUEUE_SCAN_BATCH_LIMIT = parseInt(process.env.UPLOAD_QUEUE_SCAN_BATCH_LIMIT || '3', 10);
 const UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES = parseInt(process.env.UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES || String(45 * 1024 * 1024), 10);
+const RULE_CONFIRM_NOTIFY_OPEN_IDS = parseEnvList(process.env.RULE_CONFIRM_NOTIFY_OPEN_IDS || process.env.FEISHU_NOTIFY_OPEN_IDS || '');
+const RULE_CONFIRM_NOTIFY_CURRENT_USER = process.env.RULE_CONFIRM_NOTIFY_CURRENT_USER !== 'false';
 const WORKBENCH_AUTH_ENABLED = process.env.WORKBENCH_AUTH_ENABLED !== 'false';
 const WORKBENCH_SESSION_COOKIE = 'policy_review_session';
 const WORKBENCH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -48,6 +50,13 @@ const WORKBENCH_DEFAULT_USER = process.env.WORKBENCH_USERNAME || 'admin';
 const WORKBENCH_DEFAULT_PASSWORD = process.env.WORKBENCH_PASSWORD || 'policy2026';
 let redisClient = null;
 const wordExtractor = new WordExtractor();
+
+function parseEnvList(value) {
+  return String(value || '')
+    .split(/[,\s;；，]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
 
 const KEY_LABELS = {
   scenario: '解析场景',
@@ -680,6 +689,7 @@ function getReviewStoreRecord(store, recordId) {
       fieldDefinitions: {},
       changeHistory: [],
       problemLines: [],
+      ruleSuggestions: [],
       fields: {},
       updated_at: null,
     };
@@ -786,6 +796,7 @@ function sanitizePolicyFields(policy) {
 function policyToFields(policy, localRecord) {
   sanitizePolicyFields(policy);
   const visibleHistoryText = humanChangeHistoryText((localRecord && localRecord.changeHistory) || []);
+  const ruleSuggestionsText = formatRuleSuggestions((localRecord && localRecord.ruleSuggestions) || []);
   const fields = {
     '文件名称': policy.file_name || '',
     '文件类型': policy.source_type || '',
@@ -801,6 +812,7 @@ function policyToFields(policy, localRecord) {
     '已修改': visibleHistoryText ? '是' : '',
     '修改历史': visibleHistoryText,
     '问题标记': ((localRecord && localRecord.problemLines) || []).join('\n'),
+    '规则待确认': ruleSuggestionsText,
   };
   Object.entries(KEY_LABELS).forEach(([key, label]) => {
     if (policy.data && sourceBoundFieldAllowedForPolicy(policy, key) && Object.prototype.hasOwnProperty.call(policy.data, key)) {
@@ -832,6 +844,8 @@ async function listLocalRecordStatuses() {
       edited: fields['已修改'] || null,
       change_history: fields['修改历史'] || null,
       problem_marks: fields['问题标记'] || null,
+      rule_suggestions: fields['规则待确认'] || null,
+      pending_rule_count: parseRuleSuggestions(fields['规则待确认']).filter(item => item.status === 'pending_confirmation').length,
       fields,
       storage: activeReviewStorageName(),
       updated_at: localRecord && localRecord.updated_at ? localRecord.updated_at : null,
@@ -840,6 +854,7 @@ async function listLocalRecordStatuses() {
   Object.entries(store.records).forEach(([recordId, localRecord]) => {
     if (statuses[recordId]) return;
     const visibleHistoryText = humanChangeHistoryText(localRecord.changeHistory || []);
+    const ruleSuggestionsText = formatRuleSuggestions(localRecord.ruleSuggestions || []);
     const fields = {
       ...(localRecord.fields || {}),
       '审核状态': localRecord.status === 'confirmed' ? '已确认' : '待审核',
@@ -849,6 +864,7 @@ async function listLocalRecordStatuses() {
       '已修改': visibleHistoryText ? '是' : '',
       '修改历史': visibleHistoryText,
       '问题标记': (localRecord.problemLines || []).join('\n'),
+      '规则待确认': ruleSuggestionsText,
     };
     statuses[recordId] = {
       status: localRecord.status === 'confirmed' ? 'confirmed' : 'reviewing',
@@ -857,6 +873,8 @@ async function listLocalRecordStatuses() {
       edited: fields['已修改'] || null,
       change_history: fields['修改历史'] || null,
       problem_marks: fields['问题标记'] || null,
+      rule_suggestions: fields['规则待确认'] || null,
+      pending_rule_count: parseRuleSuggestions(fields['规则待确认']).filter(item => item.status === 'pending_confirmation').length,
       fields,
       storage: activeReviewStorageName(),
       updated_at: localRecord.updated_at || null,
@@ -918,6 +936,7 @@ async function saveLocalImportedRecords(records) {
     record.confirmed_by = normalizeConfirmedBy(record.fields) || previous.confirmed_by || null;
     record.changeHistory = parseChangeHistory(record.fields['修改历史'] || previous.changeHistory || '');
     record.problemLines = splitProblemMarkEntries(record.fields['问题标记'] || previous.problemLines || '');
+    record.ruleSuggestions = parseRuleSuggestions(record.fields['规则待确认'] || previous.ruleSuggestions || '');
     record.updated_at = new Date().toISOString();
     imported.push({ recordId, fields: record.fields, fileName, mode: previous.fields ? 'updated' : 'created' });
   });
@@ -998,6 +1017,31 @@ async function saveLocalFieldChange({ recordId, fieldLabel, fieldKey, newValue, 
   appendReviewEvent(store, 'save-field', recordId, { fieldKey: key, fieldLabel, newValue, reason, deleteField: !!deleteField });
   return { historyCount: record.changeHistory.length };
   }, `Update policy field: ${fieldLabel || fieldKey || recordId}`);
+}
+
+async function saveLocalRuleSuggestion(recordId, suggestion) {
+  return withReviewStore(store => {
+    const record = getReviewStoreRecord(store, recordId);
+    const result = appendRuleSuggestion(record.ruleSuggestions || [], suggestion);
+    record.ruleSuggestions = result.suggestions;
+    record.fields['规则待确认'] = formatRuleSuggestions(record.ruleSuggestions);
+    record.updated_at = new Date().toISOString();
+    if (result.changed) appendReviewEvent(store, 'rule-suggestion', recordId, { suggestion: result.suggestion });
+    return { count: record.ruleSuggestions.length, suggestion: result.suggestion, changed: result.changed };
+  }, `Add parser rule suggestion: ${recordId}`);
+}
+
+async function resolveLocalRuleSuggestion(recordId, suggestionId, decision, note, user) {
+  return withReviewStore(store => {
+    const record = getReviewStoreRecord(store, recordId);
+    const result = resolveRuleSuggestions(record.ruleSuggestions || [], suggestionId, decision, note, user || fallbackUser());
+    if (!result.found) throw new Error('未找到规则建议');
+    record.ruleSuggestions = result.suggestions;
+    record.fields['规则待确认'] = formatRuleSuggestions(record.ruleSuggestions);
+    record.updated_at = new Date().toISOString();
+    appendReviewEvent(store, 'resolve-rule-suggestion', recordId, { suggestionId, decision, note });
+    return result.found;
+  }, `Resolve parser rule suggestion: ${recordId}`);
 }
 
 async function saveLocalProblem(recordId, entry) {
@@ -1229,6 +1273,7 @@ const EXTRA_FIELDS = [
   { field_name: '已修改', type: 1 },
   { field_name: '修改历史', type: 1 },
   { field_name: '问题标记', type: 1 },
+  { field_name: '规则待确认', type: 1 },
 ];
 
 const UPLOAD_QUEUE_FIELDS = [
@@ -3803,7 +3848,18 @@ function buildRuleChangeSuggestion({ fieldKey, fieldLabel, oldValue, newValue, r
     ? '新增逻辑待确认'
     : (isFieldDeletion ? '字段适用性待确认' : '原逻辑优化待确认');
   const rule = classifyCorrection(fieldKey, fieldLabel, reason, newValue);
+  const seed = [
+    fieldKey,
+    fieldLabel,
+    oldValue,
+    newValue,
+    reason,
+    fileName,
+    Date.now(),
+    crypto.randomBytes(4).toString('hex'),
+  ].join('|');
   return {
+    id: `rule_${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 16)}`,
     status: 'pending_confirmation',
     type: baseType,
     fieldKey,
@@ -3815,6 +3871,168 @@ function buildRuleChangeSuggestion({ fieldKey, fieldLabel, oldValue, newValue, r
     ruleType: rule.type,
     proposedRule: rule.rule,
     message: '字段值已保存。解析规则不会自动扩散；需要先确认这是在原有 prompt 逻辑上新增逻辑，还是优化原逻辑，再固化到解析能力。',
+  };
+}
+
+function normalizeRuleSuggestion(item, fallback = {}) {
+  if (!item || typeof item !== 'object') return null;
+  const status = normalizeFeishuValue(item.status || fallback.status || 'pending_confirmation') || 'pending_confirmation';
+  const id = normalizeFeishuValue(item.id) ||
+    `rule_${crypto.createHash('sha1').update(JSON.stringify({ ...item, fallback })).digest('hex').slice(0, 16)}`;
+  return {
+    id,
+    status,
+    type: normalizeFeishuValue(item.type || fallback.type || '原逻辑优化待确认'),
+    recordId: normalizeFeishuValue(item.recordId || fallback.recordId),
+    fileName: normalizeFeishuValue(item.fileName || fallback.fileName),
+    fieldKey: normalizeFeishuValue(item.fieldKey || fallback.fieldKey),
+    fieldLabel: normalizeFeishuValue(item.fieldLabel || fallback.fieldLabel),
+    oldValue: normalizeFeishuValue(item.oldValue),
+    newValue: normalizeFeishuValue(item.newValue),
+    reason: normalizeFeishuValue(item.reason),
+    ruleType: normalizeFeishuValue(item.ruleType),
+    proposedRule: normalizeFeishuValue(item.proposedRule),
+    message: normalizeFeishuValue(item.message),
+    createdAt: normalizeFeishuValue(item.createdAt || fallback.createdAt),
+    createdBy: item.createdBy || fallback.createdBy || null,
+    decision: normalizeFeishuValue(item.decision),
+    decisionNote: normalizeFeishuValue(item.decisionNote),
+    confirmedAt: normalizeFeishuValue(item.confirmedAt),
+    confirmedBy: item.confirmedBy || null,
+  };
+}
+
+function parseRuleSuggestions(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(item => normalizeRuleSuggestion(item)).filter(Boolean);
+  if (typeof raw === 'object') {
+    const one = normalizeRuleSuggestion(raw);
+    return one ? [one] : [];
+  }
+  const text = String(raw || '').trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return parseRuleSuggestions(parsed);
+  } catch (e) {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => normalizeRuleSuggestion({
+        status: 'pending_confirmation',
+        type: '原逻辑优化待确认',
+        message: line,
+        proposedRule: line,
+      }))
+      .filter(Boolean);
+  }
+}
+
+function formatRuleSuggestions(suggestions) {
+  const normalized = (suggestions || []).map(item => normalizeRuleSuggestion(item)).filter(Boolean);
+  return normalized.length ? JSON.stringify(normalized, null, 2) : '';
+}
+
+function enrichRuleSuggestion(suggestion, { recordId, sourceFields, sourceParsed, user }) {
+  const enriched = normalizeRuleSuggestion({
+    ...suggestion,
+    recordId,
+    fileName: suggestion.fileName || getFileName(sourceFields, sourceParsed),
+    createdAt: suggestion.createdAt || new Date().toLocaleString('zh-CN', { hour12: false }),
+    createdBy: suggestion.createdBy || (user ? { name: user.name || '', openId: user.openId || '' } : null),
+  });
+  return enriched;
+}
+
+function appendRuleSuggestion(existingRaw, suggestion) {
+  const existing = parseRuleSuggestions(existingRaw);
+  const next = normalizeRuleSuggestion(suggestion);
+  if (!next) return { suggestions: existing, changed: false, suggestion: null };
+  const samePending = existing.find(item =>
+    item.status === 'pending_confirmation' &&
+    item.fieldKey === next.fieldKey &&
+    normalizeFeishuValue(item.oldValue) === normalizeFeishuValue(next.oldValue) &&
+    normalizeFeishuValue(item.newValue) === normalizeFeishuValue(next.newValue) &&
+    normalizeFeishuValue(item.reason) === normalizeFeishuValue(next.reason));
+  if (samePending) return { suggestions: existing, changed: false, suggestion: samePending };
+  return { suggestions: [...existing, next], changed: true, suggestion: next };
+}
+
+function decisionLabel(decision) {
+  if (decision === 'add_logic') return '新增逻辑';
+  if (decision === 'optimize_logic') return '优化原逻辑';
+  if (decision === 'skip') return '暂不处理';
+  return normalizeFeishuValue(decision) || '已处理';
+}
+
+function resolveRuleSuggestions(raw, suggestionId, decision, note, user) {
+  const suggestions = parseRuleSuggestions(raw);
+  let found = null;
+  const now = new Date().toLocaleString('zh-CN', { hour12: false });
+  const next = suggestions.map(item => {
+    if (item.id !== suggestionId) return item;
+    found = {
+      ...item,
+      status: decision === 'skip' ? 'skipped' : 'confirmed',
+      decision: decisionLabel(decision),
+      decisionNote: normalizeFeishuValue(note),
+      confirmedAt: now,
+      confirmedBy: user ? { name: user.name || '', openId: user.openId || '' } : null,
+    };
+    return found;
+  });
+  return { suggestions: next, found };
+}
+
+async function notifyRuleSuggestion(suggestion, user) {
+  const recipients = [...RULE_CONFIRM_NOTIFY_OPEN_IDS];
+  if (!recipients.length && RULE_CONFIRM_NOTIFY_CURRENT_USER && user && user.openId) {
+    recipients.push(user.openId);
+  }
+  const uniqueRecipients = [...new Set(recipients.filter(Boolean))];
+  if (!uniqueRecipients.length) {
+    return { sent: 0, skipped: true, reason: '未配置 RULE_CONFIRM_NOTIFY_OPEN_IDS，且当前用户 open_id 不可用' };
+  }
+
+  const token = await getTenantAccessToken();
+  const text = [
+    '【政策解析规则待确认】',
+    `文件：${suggestion.fileName || ''}`,
+    `字段：${suggestion.fieldLabel || suggestion.fieldKey || ''}`,
+    `变化：${suggestion.oldValue || '(空)'} -> ${suggestion.newValue || '(空)'}`,
+    `原因：${suggestion.reason || '未填写'}`,
+    `建议：${suggestion.type || ''} / ${suggestion.ruleType || ''}`,
+    '请到政策审核工作台「规则待确认」页面确认是新增逻辑、优化原逻辑，还是暂不处理。',
+  ].join('\n');
+
+  const results = [];
+  for (const openId of uniqueRecipients) {
+    try {
+      const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          receive_id: openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+        }),
+      });
+      const data = await resp.json();
+      if (data.code !== 0) throw new Error(`${data.msg || 'unknown'} (code=${data.code})`);
+      results.push({ openId, ok: true });
+    } catch (e) {
+      results.push({ openId, ok: false, error: e.message });
+      console.warn('[规则待确认通知] 发送失败:', openId, e.message);
+    }
+  }
+  return {
+    sent: results.filter(x => x.ok).length,
+    failed: results.filter(x => !x.ok).length,
+    results,
   };
 }
 
@@ -4430,14 +4648,25 @@ app.post('/api/save-field', async (req, res) => {
           fileName: '',
         })
       : null;
+    let savedLocalRuleSuggestion = null;
+    if (localRuleSuggestion) {
+      const enriched = enrichRuleSuggestion(localRuleSuggestion, {
+        recordId,
+        sourceFields: {},
+        sourceParsed: null,
+        user: fallbackUser(),
+      });
+      const ruleSaved = await saveLocalRuleSuggestion(recordId, enriched);
+      savedLocalRuleSuggestion = ruleSaved.suggestion || enriched;
+    }
     console.log(`[保存字段] ✓ 已写入${activeReviewStorageName()}审核记录 ${fieldLabel || fieldKey || ''}`);
     return res.json({
       success: true,
       historyCount: saved.historyCount,
       savedToFeishu: false,
       storage: activeReviewStorageName(),
-      background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!localRuleSuggestion },
-      ruleSuggestion: localRuleSuggestion,
+      background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!savedLocalRuleSuggestion },
+      ruleSuggestion: savedLocalRuleSuggestion,
     });
   }
 
@@ -4534,10 +4763,33 @@ app.post('/api/save-field', async (req, res) => {
     if (changedJson && jsonFieldName && state.tableFields && state.tableFields.includes(jsonFieldName)) {
       fields[jsonFieldName] = stringifyJsonField(sourceParsed);
     }
+    let savedRuleSuggestion = null;
+    let notification = null;
+    if (ruleSuggestion && state.tableFields && state.tableFields.includes('规则待确认')) {
+      const enriched = enrichRuleSuggestion(ruleSuggestion, {
+        recordId,
+        sourceFields,
+        sourceParsed,
+        user,
+      });
+      const appended = appendRuleSuggestion(sourceFields['规则待确认'], enriched);
+      savedRuleSuggestion = appended.suggestion || enriched;
+      if (appended.changed) {
+        fields['规则待确认'] = formatRuleSuggestions(appended.suggestions);
+      }
+    }
 
     await updateFeishuRecord(recordId, fields);
+    if (savedRuleSuggestion && fields['规则待确认']) {
+      try {
+        notification = await notifyRuleSuggestion(savedRuleSuggestion, user);
+      } catch (e) {
+        notification = { sent: 0, failed: 1, error: e.message };
+        console.warn('[规则待确认通知] 异常:', e.message);
+      }
+    }
 
-    console.log(`[保存字段] ✓ 主记录已保存 ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条，规则变更待确认=${ruleSuggestion ? '是' : '否'}`);
+    console.log(`[保存字段] ✓ 主记录已保存 ${fieldLabel || ''} 原因: ${reason || '(无)'} 历史${existingHistory.length}条，规则变更待确认=${savedRuleSuggestion ? '是' : '否'}`);
     res.json({
       success: true,
       historyCount: existingHistory.length,
@@ -4545,9 +4797,10 @@ app.post('/api/save-field', async (req, res) => {
       background: {
         autoCorrection: false,
         knowledge: false,
-        ruleConfirmationRequired: !!ruleSuggestion,
+        ruleConfirmationRequired: !!savedRuleSuggestion,
       },
-      ruleSuggestion,
+      ruleSuggestion: savedRuleSuggestion,
+      notification,
     });
   } catch (err) {
     console.error(`[保存字段] ✗ ${err.message}`);
@@ -4581,15 +4834,92 @@ app.post('/api/save-field', async (req, res) => {
             fileName: '',
           })
         : null;
+      let savedFallbackRuleSuggestion = null;
+      if (fallbackRuleSuggestion) {
+        const enriched = enrichRuleSuggestion(fallbackRuleSuggestion, {
+          recordId,
+          sourceFields: {},
+          sourceParsed: null,
+          user: fallbackUser(),
+        });
+        const ruleSaved = await saveLocalRuleSuggestion(recordId, enriched);
+        savedFallbackRuleSuggestion = ruleSaved.suggestion || enriched;
+      }
       console.log(`[保存字段] ✓ 已写入本地审核记录 ${fieldLabel || fieldKey || ''}`);
       return res.json({
         success: true,
         historyCount: saved.historyCount,
         savedToFeishu: false,
         storage: activeReviewStorageName(),
-        background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!fallbackRuleSuggestion },
-        ruleSuggestion: fallbackRuleSuggestion,
+        background: { autoCorrection: false, knowledge: false, ruleConfirmationRequired: !!savedFallbackRuleSuggestion },
+        ruleSuggestion: savedFallbackRuleSuggestion,
       });
+    } else if (isAuthOrPermissionError(err)) {
+      return sendFeishuAuthRequired(res, err);
+    } else {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+});
+
+// ---- 处理规则待确认建议 ----
+app.post('/api/rule-suggestions/resolve', async (req, res) => {
+  const { recordId, suggestionId, decision, note } = req.body || {};
+  if (!recordId || !suggestionId) {
+    return res.status(400).json({ success: false, error: '缺少 recordId 或 suggestionId' });
+  }
+  if (!['add_logic', 'optimize_logic', 'skip'].includes(decision)) {
+    return res.status(400).json({ success: false, error: 'decision 必须是 add_logic / optimize_logic / skip' });
+  }
+
+  if (!useFeishuStorage()) {
+    try {
+      const resolved = await resolveLocalRuleSuggestion(recordId, suggestionId, decision, note, fallbackUser());
+      console.log(`[规则待确认] ✓ 已处理 ${suggestionId} ${resolved.decision}`);
+      return res.json({
+        success: true,
+        savedToFeishu: false,
+        storage: activeReviewStorageName(),
+        suggestion: resolved,
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  try {
+    try { await ensureTableFields(); } catch (e) { console.warn('[规则待确认] 检查字段失败:', e.message); }
+    let user = null;
+    try { user = await getCurrentUser(); } catch (e) { /* 忽略 */ }
+    const record = await getFeishuRecord(recordId);
+    const fields = record.fields || {};
+    const result = resolveRuleSuggestions(fields['规则待确认'], suggestionId, decision, note, user || fallbackUser());
+    if (!result.found) {
+      return res.status(404).json({ success: false, error: '未找到规则建议' });
+    }
+    await updateFeishuRecord(recordId, {
+      '规则待确认': formatRuleSuggestions(result.suggestions),
+    });
+    console.log(`[规则待确认] ✓ 已处理 ${suggestionId} ${result.found.decision}`);
+    res.json({
+      success: true,
+      savedToFeishu: true,
+      suggestion: result.found,
+    });
+  } catch (err) {
+    console.error(`[规则待确认] ✗ ${err.message}`);
+    if (allowFeishuLocalFallback() && isAuthOrPermissionError(err)) {
+      try {
+        const resolved = await resolveLocalRuleSuggestion(recordId, suggestionId, decision, note, fallbackUser());
+        return res.json({
+          success: true,
+          savedToFeishu: false,
+          storage: activeReviewStorageName(),
+          suggestion: resolved,
+        });
+      } catch (localErr) {
+        return res.status(500).json({ success: false, error: localErr.message });
+      }
     } else if (isAuthOrPermissionError(err)) {
       return sendFeishuAuthRequired(res, err);
     } else {
@@ -4917,6 +5247,8 @@ app.get('/api/health', (req, res) => {
     storage: activeReviewStorageName(),
     redisStorageConfigured: useRedisStorage(),
     githubStorageConfigured: useGithubStorage(),
+    ruleNotifyConfigured: RULE_CONFIRM_NOTIFY_OPEN_IDS.length > 0,
+    ruleNotifyCurrentUser: RULE_CONFIRM_NOTIFY_CURRENT_USER,
   });
 });
 
@@ -4935,6 +5267,8 @@ async function listAllRecordStatuses() {
     if (st && typeof st === 'object') st = st.text || st.name || '';
     const manualProblemMarks = filterManualProblemMarks(f['问题标记']);
     const visibleHistoryText = humanChangeHistoryText(f['修改历史']);
+    const ruleSuggestionsText = formatRuleSuggestions(parseRuleSuggestions(f['规则待确认']));
+    const pendingRuleCount = parseRuleSuggestions(ruleSuggestionsText).filter(item => item.status === 'pending_confirmation').length;
     statuses[recordId] = {
       status: st === '已确认' ? 'confirmed' : 'reviewing',
       confirmed_by: f['确认人'] || null,
@@ -4942,11 +5276,14 @@ async function listAllRecordStatuses() {
       edited: visibleHistoryText ? '是' : null,
       change_history: visibleHistoryText || null,
       problem_marks: manualProblemMarks || null,
+      rule_suggestions: ruleSuggestionsText || null,
+      pending_rule_count: pendingRuleCount,
       fields: {
         ...f,
         '已修改': visibleHistoryText ? '是' : '',
         '修改历史': visibleHistoryText,
         '问题标记': manualProblemMarks,
+        '规则待确认': ruleSuggestionsText,
       },
     };
   });
@@ -5000,7 +5337,7 @@ app.get('/api/local-review-store', async (req, res) => {
 
 // ---- 恢复同名旧缓存里的审核痕迹（recordId 变化后的兜底迁移）----
 app.post('/api/restore-review-state', async (req, res) => {
-  const { recordId, data, changeHistory, problems, editedFields } = req.body || {};
+  const { recordId, data, changeHistory, problems, ruleSuggestions, editedFields } = req.body || {};
   if (!recordId) {
     return res.status(400).json({ success: false, error: '缺少 recordId' });
   }
@@ -5013,14 +5350,17 @@ app.post('/api/restore-review-state', async (req, res) => {
         ? changeHistory.map(e => normalizeChangeEntry(e, {})).filter(e => e.field || e.fieldLabel || e.reason)
         : [];
       const problemLines = splitProblemMarkEntries(formatProblemMarks(problems || []));
+      const ruleList = parseRuleSuggestions(ruleSuggestions || []);
       const payloadData = data && typeof data === 'object' ? data : {};
       const changedKeys = new Set((editedFields || []).map(canonicalizeFieldName).filter(Boolean));
       history.forEach(h => changedKeys.add(canonicalizeFieldName(h.field || h.fieldLabel)));
 
       history.forEach(entry => record.changeHistory.push(entry));
       problemLines.forEach(line => record.problemLines.push(line));
+      ruleList.forEach(item => record.ruleSuggestions.push(item));
       if (history.length) fields.push('修改历史');
       if (problemLines.length) fields.push('问题标记');
+      if (ruleList.length) fields.push('规则待确认');
       if (history.length || problemLines.length) {
         record.fields['已修改'] = '是';
         fields.push('已修改');
@@ -5058,9 +5398,11 @@ app.post('/api/restore-review-state', async (req, res) => {
       : [];
     const historyText = formatChangeHistory(history);
     const problemText = formatProblemMarks(problems || []);
+    const ruleSuggestionsText = formatRuleSuggestions(ruleSuggestions || []);
 
     if (historyText && !hasValue(currentFields['修改历史'])) updates['修改历史'] = historyText;
     if (problemText && !hasValue(currentFields['问题标记'])) updates['问题标记'] = problemText;
+    if (ruleSuggestionsText && !hasValue(currentFields['规则待确认'])) updates['规则待确认'] = ruleSuggestionsText;
     if ((historyText || problemText) && !hasValue(currentFields['已修改'])) updates['已修改'] = '是';
 
     const changedKeys = new Set((editedFields || []).map(canonicalizeFieldName).filter(Boolean));

@@ -308,6 +308,40 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .queue-status.pending { background:#fff5d6; color:#9a6b00; }
 .queue-status.failed { background:#fff1f1; color:#c92a2a; }
 .queue-status.done { background:#e8fff7; color:#008f72; }
+
+/* Rule confirmation */
+.rule-view { max-width:1180px; margin:0 auto; }
+.rule-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.rule-toolbar h3 { margin:0; font-size:18px; color:var(--text); }
+.rule-toolbar .hint { color:var(--muted); font-size:12px; line-height:1.5; }
+.rule-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+.rule-metric { background:#fff; border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+.rule-metric .label { color:var(--muted); font-size:12px; }
+.rule-metric .value { margin-top:4px; font-size:24px; font-weight:750; color:var(--text); }
+.rule-list { display:flex; flex-direction:column; gap:12px; }
+.rule-card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px; box-shadow:0 1px 3px rgba(16,24,40,0.04); }
+.rule-card.pending { border-color:#f4c76c; background:#fffdf5; }
+.rule-card.resolved { opacity:0.82; }
+.rule-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.rule-card-title { font-weight:750; color:var(--text); line-height:1.5; }
+.rule-card-meta { color:var(--muted); font-size:12px; margin-top:3px; }
+.rule-status { display:inline-flex; align-items:center; border-radius:12px; padding:2px 9px; font-size:11px; font-weight:700; white-space:nowrap; }
+.rule-status.pending { background:#fff1c7; color:#8a6500; }
+.rule-status.confirmed { background:#e8fff7; color:#008f72; }
+.rule-status.skipped { background:#f1f2f6; color:#636e72; }
+.rule-grid { display:grid; grid-template-columns:120px 1fr; gap:8px 12px; font-size:13px; line-height:1.6; }
+.rule-grid .k { color:var(--muted); font-weight:600; }
+.rule-grid .v { color:var(--text); word-break:break-word; }
+.rule-change { display:inline-flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.rule-old { color:#d63031; text-decoration:line-through; }
+.rule-new { color:#00a065; font-weight:650; }
+.rule-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid #edf0f3; }
+.btn-rule-add { background:#0984e3; color:#fff; border:1px solid #0984e3; }
+.btn-rule-add:hover { background:#0875ca; }
+.btn-rule-opt { background:#00b894; color:#fff; border:1px solid #00b894; }
+.btn-rule-opt:hover { background:#00a783; }
+.btn-rule-skip { background:#fff; color:#636e72; border:1px solid var(--border); }
+.btn-rule-skip:hover { border-color:#636e72; color:#2d3436; }
 .upload-note { margin-top:12px; padding:10px 12px; border-radius:8px; background:#fff8e1; color:#7a5a00; font-size:12px; line-height:1.6; }
 .btn-sm-reopen { background:#fff; color:#b58900; border:1px solid #f1c75b; }
 .btn-sm-reopen:hover { background:#fff8dc; }
@@ -556,6 +590,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <button class="seg-btn" data-view="review" onclick="switchView('review')">审核</button>
     <button class="seg-btn" data-view="upload" onclick="switchView('upload')">上传解析</button>
     <button class="seg-btn" data-view="problems" onclick="switchView('problems')">问题清单<span class="seg-count" id="segProblemCount"></span></button>
+    <button class="seg-btn" data-view="rules" onclick="switchView('rules')">规则待确认<span class="seg-count" id="segRuleCount"></span></button>
     <button class="seg-btn" data-view="confirm" onclick="switchView('confirm')">逐文件确认</button>
     <button class="seg-btn" data-view="accuracy" onclick="switchView('accuracy')">准确率看板</button>
     <button class="seg-btn" data-view="result" onclick="switchView('result')">最终结果</button>
@@ -6530,6 +6565,82 @@ function parseProblemMarks(raw) {
     });
 }
 
+function normalizeRuleSuggestion(item) {
+  if (!item || typeof item !== 'object') return null;
+  return {
+    id: normalizeFeishuValue(item.id),
+    status: normalizeFeishuValue(item.status || 'pending_confirmation') || 'pending_confirmation',
+    type: normalizeFeishuValue(item.type),
+    recordId: normalizeFeishuValue(item.recordId),
+    fileName: normalizeFeishuValue(item.fileName),
+    fieldKey: normalizeFeishuValue(item.fieldKey),
+    fieldLabel: normalizeFeishuValue(item.fieldLabel),
+    oldValue: normalizeFeishuValue(item.oldValue),
+    newValue: normalizeFeishuValue(item.newValue),
+    reason: normalizeFeishuValue(item.reason),
+    ruleType: normalizeFeishuValue(item.ruleType),
+    proposedRule: normalizeFeishuValue(item.proposedRule),
+    message: normalizeFeishuValue(item.message),
+    createdAt: normalizeFeishuValue(item.createdAt),
+    createdBy: item.createdBy || null,
+    decision: normalizeFeishuValue(item.decision),
+    decisionNote: normalizeFeishuValue(item.decisionNote),
+    confirmedAt: normalizeFeishuValue(item.confirmedAt),
+    confirmedBy: item.confirmedBy || null,
+  };
+}
+
+function parseRuleSuggestions(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(normalizeRuleSuggestion).filter(Boolean);
+  if (typeof raw === 'object') {
+    const one = normalizeRuleSuggestion(raw);
+    return one ? [one] : [];
+  }
+  const text = normalizeFeishuValue(raw);
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return parseRuleSuggestions(parsed);
+  } catch(e) {
+    return text.split(/\n+/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map((line, idx) => normalizeRuleSuggestion({
+        id: 'legacy_rule_' + idx,
+        status: 'pending_confirmation',
+        type: '原逻辑优化待确认',
+        proposedRule: line,
+        message: line,
+      }))
+      .filter(Boolean);
+  }
+}
+
+function getPolicyRuleSuggestions(policy, status) {
+  const list = (policy && policy.rule_suggestions) || [];
+  return status ? list.filter(item => item.status === status) : list;
+}
+
+function getPendingRuleSuggestions() {
+  const rows = [];
+  appState.policies.forEach(policy => {
+    getPolicyRuleSuggestions(policy, 'pending_confirmation').forEach(item => {
+      rows.push({ policy, suggestion: item });
+    });
+  });
+  return rows;
+}
+
+function upsertPolicyRuleSuggestion(policy, suggestion) {
+  if (!policy || !suggestion || !suggestion.id) return 0;
+  if (!Array.isArray(policy.rule_suggestions)) policy.rule_suggestions = [];
+  const idx = policy.rule_suggestions.findIndex(item => item.id === suggestion.id);
+  if (idx >= 0) policy.rule_suggestions[idx] = suggestion;
+  else policy.rule_suggestions.push(suggestion);
+  return 1;
+}
+
 function splitChangeHistoryEntries(raw) {
   const lines = normalizeFeishuValue(raw).split('\n');
   const entries = [];
@@ -7495,6 +7606,7 @@ function renderMain() {
   if (appState.currentView === 'review') renderReview(main);
   else if (appState.currentView === 'upload') renderUpload(main);
   else if (appState.currentView === 'problems') renderProblems(main);
+  else if (appState.currentView === 'rules') renderRuleConfirmations(main);
   else if (appState.currentView === 'confirm') renderConfirm(main);
   else if (appState.currentView === 'accuracy') renderAccuracy(main);
   else if (appState.currentView === 'result') renderResult(main);
@@ -7805,6 +7917,91 @@ function renderProblems(main) {
   }
 
   html += '</section></div></div>';
+  main.innerHTML = html;
+}
+
+function ruleStatusLabel(status) {
+  if (status === 'pending_confirmation') return '待确认';
+  if (status === 'confirmed') return '已处理';
+  if (status === 'skipped') return '暂不处理';
+  return status || '待确认';
+}
+
+function ruleStatusClass(status) {
+  if (status === 'pending_confirmation') return 'pending';
+  if (status === 'skipped') return 'skipped';
+  return 'confirmed';
+}
+
+function renderRuleCard(policy, suggestion) {
+  const pending = suggestion.status === 'pending_confirmation';
+  const by = suggestion.createdBy && suggestion.createdBy.name ? suggestion.createdBy.name : '';
+  const confirmedBy = suggestion.confirmedBy && suggestion.confirmedBy.name ? suggestion.confirmedBy.name : '';
+  const meta = [suggestion.createdAt, by].filter(Boolean).join(' · ');
+  const resolvedMeta = [suggestion.decision, suggestion.confirmedAt, confirmedBy].filter(Boolean).join(' · ');
+  return `<article class="rule-card ${pending ? 'pending' : 'resolved'}">
+    <div class="rule-card-head">
+      <div>
+        <div class="rule-card-title">${escapeHtml(suggestion.fieldLabel || suggestion.fieldKey || '未命名字段')} · ${escapeHtml(suggestion.type || '')}</div>
+        <div class="rule-card-meta">${escapeHtml(policy.file_name || suggestion.fileName || '')}${meta ? ` · ${escapeHtml(meta)}` : ''}</div>
+      </div>
+      <span class="rule-status ${ruleStatusClass(suggestion.status)}">${escapeHtml(ruleStatusLabel(suggestion.status))}</span>
+    </div>
+    <div class="rule-grid">
+      <div class="k">字段变化</div>
+      <div class="v rule-change"><span class="rule-old">${escapeHtml(suggestion.oldValue || '(空)')}</span><span>→</span><span class="rule-new">${escapeHtml(suggestion.newValue || '(空)')}</span></div>
+      <div class="k">修改原因</div>
+      <div class="v">${escapeHtml(suggestion.reason || '未填写')}</div>
+      <div class="k">建议类型</div>
+      <div class="v">${escapeHtml(suggestion.ruleType || suggestion.type || '')}</div>
+      <div class="k">建议规则</div>
+      <div class="v">${escapeHtml(suggestion.proposedRule || suggestion.message || '')}</div>
+      ${resolvedMeta ? `<div class="k">处理结果</div><div class="v">${escapeHtml(resolvedMeta)}${suggestion.decisionNote ? `；${escapeHtml(suggestion.decisionNote)}` : ''}</div>` : ''}
+    </div>
+    ${pending ? `<div class="rule-actions">
+      <button class="btn-sm btn-rule-add" onclick="resolveRuleSuggestion('${jsArg(policy.id)}','${jsArg(suggestion.id)}','add_logic')">确认新增逻辑</button>
+      <button class="btn-sm btn-rule-opt" onclick="resolveRuleSuggestion('${jsArg(policy.id)}','${jsArg(suggestion.id)}','optimize_logic')">确认优化原逻辑</button>
+      <button class="btn-sm btn-rule-skip" onclick="resolveRuleSuggestion('${jsArg(policy.id)}','${jsArg(suggestion.id)}','skip')">暂不处理</button>
+      <button class="btn-sm btn-sm-nav" onclick="selectFile('${jsArg(policy.id)}')">查看文件</button>
+    </div>` : `<div class="rule-actions"><button class="btn-sm btn-sm-nav" onclick="selectFile('${jsArg(policy.id)}')">查看文件</button></div>`}
+  </article>`;
+}
+
+function renderRuleConfirmations(main) {
+  const allRows = [];
+  appState.policies.forEach(policy => {
+    getPolicyRuleSuggestions(policy).forEach(suggestion => allRows.push({ policy, suggestion }));
+  });
+  const pendingRows = allRows.filter(row => row.suggestion.status === 'pending_confirmation');
+  const resolvedRows = allRows.filter(row => row.suggestion.status !== 'pending_confirmation');
+  let html = `<div class="rule-view">
+    <div class="rule-toolbar">
+      <div>
+        <h3>规则待确认</h3>
+        <div class="hint">人工修改字段后，这里确认“新增逻辑 / 优化原逻辑 / 暂不处理”。确认只记录决策，不会自动改解析器。</div>
+      </div>
+      <button class="btn-sm btn-sm-nav" onclick="syncStatusesFromServer(true)">刷新</button>
+    </div>
+    <div class="rule-summary">
+      <div class="rule-metric"><div class="label">待确认</div><div class="value">${pendingRows.length}</div></div>
+      <div class="rule-metric"><div class="label">已处理</div><div class="value">${resolvedRows.length}</div></div>
+      <div class="rule-metric"><div class="label">涉及文件</div><div class="value">${new Set(allRows.map(row => row.policy.id)).size}</div></div>
+    </div>`;
+  if (!allRows.length) {
+    html += '<div class="empty-state" style="min-height:320px"><p>暂无规则待确认事项</p></div>';
+  } else {
+    html += '<div class="rule-list">';
+    if (pendingRows.length) {
+      html += `<div class="problems-header"><h3>待确认 <span class="prob-total">${pendingRows.length} 条</span></h3></div>`;
+      pendingRows.forEach(row => { html += renderRuleCard(row.policy, row.suggestion); });
+    }
+    if (resolvedRows.length) {
+      html += `<div class="problems-header" style="margin-top:18px"><h3>已处理 <span class="prob-total">${resolvedRows.length} 条</span></h3></div>`;
+      resolvedRows.slice(0, 80).forEach(row => { html += renderRuleCard(row.policy, row.suggestion); });
+    }
+    html += '</div>';
+  }
+  html += '</div>';
   main.innerHTML = html;
 }
 
@@ -8597,6 +8794,7 @@ function getStatusInfo(p) {
 function updateProgress() {
   const confirmed = appState.policies.filter(p => p.status === 'confirmed').length;
   const problem = appState.policies.filter(hasProblems).length;
+  const pendingRules = getPendingRuleSuggestions().length;
   const total = appState.policies.length;
   const reviewing = total - confirmed;
   const pct = total > 0 ? Math.round(confirmed / total * 100) : 0;
@@ -8630,6 +8828,8 @@ function updateProgress() {
   document.getElementById('progressFill').style.width = pct + '%';
   const seg = document.getElementById('segProblemCount');
   if (seg) seg.textContent = problem > 0 ? problem : '';
+  const segRules = document.getElementById('segRuleCount');
+  if (segRules) segRules.textContent = pendingRules > 0 ? pendingRules : '';
   const metaEl = document.getElementById('headerMeta');
   if (metaEl) metaEl.textContent = `${total} 份文件 · 待审 ${reviewing} · 有问题 ${problem} · 已确认 ${confirmed}`;
 }
@@ -8674,6 +8874,52 @@ function setAccuracyFieldFilter(field) {
   appState.accuracyFieldFilter = field || '';
   appState.currentView = 'accuracy';
   render();
+}
+
+async function resolveRuleSuggestion(policyId, suggestionId, decision) {
+  const policy = appState.policies.find(p => p.id === policyId);
+  const suggestion = policy && getPolicyRuleSuggestions(policy).find(item => item.id === suggestionId);
+  if (!policy || !suggestion) {
+    showToast('未找到规则建议', 'error');
+    return;
+  }
+  const decisionName = decision === 'add_logic' ? '新增逻辑' : (decision === 'optimize_logic' ? '优化原逻辑' : '暂不处理');
+  const note = window.prompt(`确认将该规则建议标记为「${decisionName}」？可填写补充说明，留空也可以。`, '');
+  if (note === null) return;
+  const oldSuggestion = { ...suggestion };
+  suggestion.status = decision === 'skip' ? 'skipped' : 'confirmed';
+  suggestion.decision = decisionName;
+  suggestion.decisionNote = note || '';
+  suggestion.confirmedAt = formatTime(new Date());
+  suggestion.confirmedBy = (appState.user && appState.user.name) ? { name: appState.user.name, openId: appState.user.openId || '' } : null;
+  saveState();
+  render();
+  try {
+    const result = await requestJson('/api/rule-suggestions/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId: policyId, suggestionId, decision, note }),
+    });
+    if (result.success) {
+      if (result.suggestion) upsertPolicyRuleSuggestion(policy, normalizeRuleSuggestion(result.suggestion));
+      showToast(`规则建议已标记为${decisionName}，并同步到${syncTargetLabel(result)}`, 'success', 2800);
+      render();
+      syncStatusesFromServer(false);
+    } else if (result.needAuth) {
+      upsertPolicyRuleSuggestion(policy, oldSuggestion);
+      render();
+      showInlineSyncBar('飞书授权已失效，规则确认未同步',
+        `<button class="btn-sm btn-sm-confirm" onclick="startFeishuAuth()">前往飞书授权</button>`, 'error');
+    } else {
+      upsertPolicyRuleSuggestion(policy, oldSuggestion);
+      render();
+      showToast(result.error || '规则确认同步失败', 'error', 3600);
+    }
+  } catch (e) {
+    upsertPolicyRuleSuggestion(policy, oldSuggestion);
+    render();
+    showToast('规则确认同步失败：' + e.message, 'error', 3600);
+  }
 }
 
 function startEdit(policyId, field) {
@@ -9306,11 +9552,14 @@ async function doSaveField(policyId, field, oldVal, newVal, reason, options) {
     .then(result => {
       if (result.success) {
         if (result.ruleSuggestion) {
+          upsertPolicyRuleSuggestion(p, normalizeRuleSuggestion(result.ruleSuggestion));
+          saveState();
           showInlineSyncBar(
             `字段已同步到${syncTargetLabel(result)}。已生成规则调整建议，需确认是新增逻辑还是优化原逻辑后再固化。`,
             `<button class="btn-sm btn-sm-confirm" onclick="dismissSyncBar()">知道了</button>`,
             ''
           );
+          render();
         } else {
           showToast(`字段已同步到${syncTargetLabel(result)}`, 'success', 2600);
         }
@@ -9780,6 +10029,16 @@ function applyFeishuFieldsToPolicy(p, fields) {
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(fields, '规则待确认')) {
+    const nextRules = parseRuleSuggestions(fields['规则待确认']);
+    const oldRules = JSON.stringify(p.rule_suggestions || []);
+    const newRules = JSON.stringify(nextRules);
+    if (oldRules !== newRules) {
+      p.rule_suggestions = nextRules;
+      changed++;
+    }
+  }
+
 	  changed += normalizePolicySchema(p);
 	  changed += normalizePolicyCategory(p);
 	  return changed;
@@ -9836,6 +10095,7 @@ function policyFromFeishuStatus(recordId, statusEntry) {
     confirmed_at: statusEntry && statusEntry.confirmed_at ? formatSyncTs(statusEntry.confirmed_at) : null,
     confirmed_by: statusEntry && statusEntry.confirmed_by ? statusEntry.confirmed_by : null,
     _change_history: parseChangeHistoryText(fields['修改历史']),
+    rule_suggestions: parseRuleSuggestions(fields['规则待确认']),
   };
 
   const humanHistory = getHumanChangeEntries(policy);
@@ -9850,6 +10110,7 @@ function hasReviewArtifacts(policy) {
   return !!(policy && (
     getHumanChangeEntries(policy).length ||
     getHumanProblemCount(policy) ||
+    getPolicyRuleSuggestions(policy).length ||
     policy.status === 'confirmed' ||
     policy.confirmed_at ||
     policy.confirmed_by
@@ -9929,6 +10190,7 @@ function restoreReviewStateToServer(policy) {
       data: policy.data || {},
       changeHistory: humanHistory,
       problems: humanProblems,
+      ruleSuggestions: getPolicyRuleSuggestions(policy),
       editedFields: humanEditedFields,
     }),
   })
