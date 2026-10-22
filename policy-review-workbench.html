@@ -329,6 +329,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .rule-status.pending { background:#fff1c7; color:#8a6500; }
 .rule-status.confirmed { background:#e8fff7; color:#008f72; }
 .rule-status.skipped { background:#f1f2f6; color:#636e72; }
+.rule-status.failed { background:#ffe3e3; color:#d63031; }
 .rule-grid { display:grid; grid-template-columns:120px 1fr; gap:8px 12px; font-size:13px; line-height:1.6; }
 .rule-grid .k { color:var(--muted); font-weight:600; }
 .rule-grid .v { color:var(--text); word-break:break-word; }
@@ -342,6 +343,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 .btn-rule-opt:hover { background:#00a783; }
 .btn-rule-skip { background:#fff; color:#636e72; border:1px solid var(--border); }
 .btn-rule-skip:hover { border-color:#636e72; color:#2d3436; }
+.rule-regression { margin-top:12px; border:1px solid #edf0f3; background:#fbfcff; border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.6; }
+.rule-regression.failed { border-color:#ffb8b8; background:#fff5f5; }
+.rule-regression.passed { border-color:#b7ebd8; background:#f3fffb; }
+.rule-regression.insufficient { border-color:#ffe0a3; background:#fffaf0; }
+.rule-regression-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; font-weight:750; }
+.rule-regression-meta { color:var(--muted); display:flex; flex-wrap:wrap; gap:8px; }
+.rule-regression-row { margin-top:6px; padding-top:6px; border-top:1px dashed #dde3ea; color:#4f5b63; }
 .upload-note { margin-top:12px; padding:10px 12px; border-radius:8px; background:#fff8e1; color:#7a5a00; font-size:12px; line-height:1.6; }
 .btn-sm-reopen { background:#fff; color:#b58900; border:1px solid #f1c75b; }
 .btn-sm-reopen:hover { background:#fff8dc; }
@@ -6587,6 +6595,7 @@ function normalizeRuleSuggestion(item) {
     decisionNote: normalizeFeishuValue(item.decisionNote),
     confirmedAt: normalizeFeishuValue(item.confirmedAt),
     confirmedBy: item.confirmedBy || null,
+    lastRegression: item.lastRegression || item.regression || null,
   };
 }
 
@@ -7924,13 +7933,66 @@ function ruleStatusLabel(status) {
   if (status === 'pending_confirmation') return '待确认';
   if (status === 'confirmed') return '已处理';
   if (status === 'skipped') return '暂不处理';
+  if (status === 'regression_failed') return '回归失败';
   return status || '待确认';
 }
 
 function ruleStatusClass(status) {
   if (status === 'pending_confirmation') return 'pending';
   if (status === 'skipped') return 'skipped';
+  if (status === 'regression_failed') return 'failed';
   return 'confirmed';
+}
+
+function regressionStatusText(status) {
+  if (status === 'passed') return '回归通过';
+  if (status === 'failed') return '回归失败';
+  if (status === 'insufficient') return '样本不足';
+  return status || '未验证';
+}
+
+function formatRegressionRate(value, text) {
+  if (text) return text;
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+  return formatPercent(Number(value) * 100);
+}
+
+function renderRuleRegression(suggestion) {
+  const reg = suggestion && suggestion.lastRegression;
+  if (!reg) return '';
+  const rows = (reg.regressionRows || []).slice(0, 3);
+  const improvements = (reg.improvementRows || []).slice(0, 2);
+  let html = `<div class="rule-regression ${escapeHtml(reg.status || '')}">
+    <div class="rule-regression-head">
+      <span>${escapeHtml(regressionStatusText(reg.status))}</span>
+      <span>${escapeHtml(reg.checkedAt || '')}</span>
+    </div>
+    <div class="rule-regression-meta">
+      <span>样本 ${Number(reg.checked || 0)}/${Number(reg.totalSamples || 0)}</span>
+      <span>原准确率 ${escapeHtml(formatRegressionRate(reg.oldAccuracy, reg.oldAccuracyText))}</span>
+      <span>新准确率 ${escapeHtml(formatRegressionRate(reg.newAccuracy, reg.newAccuracyText))}</span>
+      <span>提升 ${Number(reg.improvements || 0)}</span>
+      <span>回退 ${Number(reg.regressions || 0)}</span>
+      ${reg.skippedCount ? `<span>跳过 ${Number(reg.skippedCount)}</span>` : ''}
+    </div>`;
+  if (rows.length) {
+    html += '<div class="rule-regression-row"><b>回退样本：</b>' + rows.map(row =>
+      `${escapeHtml(row.fileName || '')}｜标准 ${escapeHtml(row.expected || '')}｜新值 ${escapeHtml(row.after || '')}`).join('；') + '</div>';
+  }
+  if (improvements.length) {
+    html += '<div class="rule-regression-row"><b>提升样本：</b>' + improvements.map(row =>
+      `${escapeHtml(row.fileName || '')}｜标准 ${escapeHtml(row.expected || '')}｜新值 ${escapeHtml(row.after || '')}`).join('；') + '</div>';
+  }
+  if (reg.status === 'insufficient' && reg.skipped && reg.skipped.length) {
+    html += '<div class="rule-regression-row"><b>未执行原因：</b>' + reg.skipped.slice(0, 3).map(row =>
+      `${escapeHtml(row.fileName || '')}：${escapeHtml(row.reason || '')}`).join('；') + '</div>';
+  }
+  if (reg.sourceErrors && reg.sourceErrors.length) {
+    html += '<div class="rule-regression-row"><b>样本源异常：</b>' + reg.sourceErrors.slice(0, 3).map(row =>
+      `${escapeHtml(row.source || '')}：${escapeHtml(row.error || '')}`).join('；') + '</div>';
+  }
+  html += '</div>';
+  return html;
 }
 
 function renderRuleCard(policy, suggestion) {
@@ -7958,6 +8020,7 @@ function renderRuleCard(policy, suggestion) {
       <div class="v">${escapeHtml(suggestion.proposedRule || suggestion.message || '')}</div>
       ${resolvedMeta ? `<div class="k">处理结果</div><div class="v">${escapeHtml(resolvedMeta)}${suggestion.decisionNote ? `；${escapeHtml(suggestion.decisionNote)}` : ''}</div>` : ''}
     </div>
+    ${renderRuleRegression(suggestion)}
     ${pending ? `<div class="rule-actions">
       <button class="btn-sm btn-rule-add" onclick="resolveRuleSuggestion('${jsArg(policy.id)}','${jsArg(suggestion.id)}','add_logic')">确认新增逻辑</button>
       <button class="btn-sm btn-rule-opt" onclick="resolveRuleSuggestion('${jsArg(policy.id)}','${jsArg(suggestion.id)}','optimize_logic')">确认优化原逻辑</button>
@@ -7978,7 +8041,7 @@ function renderRuleConfirmations(main) {
     <div class="rule-toolbar">
       <div>
         <h3>规则待确认</h3>
-        <div class="hint">人工修改字段后，这里确认“新增逻辑 / 优化原逻辑 / 暂不处理”。确认只记录决策，不会自动改解析器。</div>
+        <div class="hint">人工修改字段后，这里确认“新增逻辑 / 优化原逻辑 / 暂不处理”。新增/优化会先跑字段级黄金样本回归，发现回退会阻止确认。</div>
       </div>
       <button class="btn-sm btn-sm-nav" onclick="syncStatusesFromServer(true)">刷新</button>
     </div>
@@ -8902,9 +8965,21 @@ async function resolveRuleSuggestion(policyId, suggestionId, decision) {
     });
     if (result.success) {
       if (result.suggestion) upsertPolicyRuleSuggestion(policy, normalizeRuleSuggestion(result.suggestion));
-      showToast(`规则建议已标记为${decisionName}，并同步到${syncTargetLabel(result)}`, 'success', 2800);
+      const regressionText = result.regression
+        ? `；字段回归${regressionStatusText(result.regression.status)}`
+        : '';
+      showToast(`规则建议已标记为${decisionName}，并同步到${syncTargetLabel(result)}${regressionText}`, 'success', 3200);
       render();
       syncStatusesFromServer(false);
+    } else if (result.regressionFailed) {
+      if (result.suggestion) upsertPolicyRuleSuggestion(policy, normalizeRuleSuggestion(result.suggestion));
+      else upsertPolicyRuleSuggestion(policy, oldSuggestion);
+      render();
+      showInlineSyncBar(
+        result.error || '字段回归失败，规则未确认。请查看「规则待确认」中的回归样本。',
+        `<button class="btn-sm btn-sm-confirm" onclick="switchView('rules')">查看规则待确认</button>`,
+        'error'
+      );
     } else if (result.needAuth) {
       upsertPolicyRuleSuggestion(policy, oldSuggestion);
       render();

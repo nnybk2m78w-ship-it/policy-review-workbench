@@ -42,6 +42,8 @@ const UPLOAD_QUEUE_SCAN_BATCH_LIMIT = parseInt(process.env.UPLOAD_QUEUE_SCAN_BAT
 const UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES = parseInt(process.env.UPLOAD_QUEUE_DOWNLOAD_LIMIT_BYTES || String(45 * 1024 * 1024), 10);
 const RULE_CONFIRM_NOTIFY_OPEN_IDS = parseEnvList(process.env.RULE_CONFIRM_NOTIFY_OPEN_IDS || process.env.FEISHU_NOTIFY_OPEN_IDS || '');
 const RULE_CONFIRM_NOTIFY_CURRENT_USER = process.env.RULE_CONFIRM_NOTIFY_CURRENT_USER !== 'false';
+const GOLDEN_REGRESSION_SAMPLE_LIMIT = parseInt(process.env.GOLDEN_REGRESSION_SAMPLE_LIMIT || '120', 10);
+const GOLDEN_SAMPLE_SOURCES = parseGoldenSampleSources(process.env.POLICY_GOLDEN_SAMPLE_SOURCES || '', defaultGoldenSampleSources());
 const WORKBENCH_AUTH_ENABLED = process.env.WORKBENCH_AUTH_ENABLED !== 'false';
 const WORKBENCH_SESSION_COOKIE = 'policy_review_session';
 const WORKBENCH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -56,6 +58,51 @@ function parseEnvList(value) {
     .split(/[,\s;；，]+/)
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function defaultGoldenSampleSources() {
+  return [
+    {
+      name: '历史黄金样本-自营',
+      fileType: '自营',
+      url: 'https://hf7l9aiqzx.feishu.cn/wiki/BcBjwXYAiiD0aMkQdPAccUcrnmc?table=tblPq2afhMMohXxY&view=vewVMMNKIO',
+    },
+    {
+      name: '历史黄金样本-旗舰店',
+      fileType: '旗舰店',
+      url: 'https://hf7l9aiqzx.feishu.cn/wiki/AZq1wRqNmi6NP8kIArjcdv4dnEe?table=tblQFIM4LlaBJhmM&view=vewVMMNKIO',
+    },
+    {
+      name: '历史黄金样本-次卡',
+      fileType: '次卡',
+      url: 'https://hf7l9aiqzx.feishu.cn/wiki/DNcYwpfI3iPKMQkz3N3c5rvFnwd?base_hp_from=larktab&table=tblHjR3KwC4zyG9E&view=vew4wNFNXG',
+    },
+    {
+      name: '标准测试集',
+      fileType: '',
+      url: 'https://hf7l9aiqzx.feishu.cn/wiki/MUaJwhgGkiggSHkPFsictDrcn0c?table=tblKOs1WWzUw71mq&view=vew3MZfo68',
+    },
+  ];
+}
+
+function parseGoldenSampleSources(raw, fallback = []) {
+  const text = String(raw || '').trim();
+  if (!text) return fallback;
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed.filter(item => item && (item.url || (item.baseToken && item.tableId)));
+  } catch (e) { /* 支持非 JSON 简写 */ }
+  const sources = text
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      const parts = line.split('|').map(part => part.trim());
+      if (parts.length >= 3) return { name: parts[0], fileType: parts[1], url: parts.slice(2).join('|') };
+      return { name: `黄金样本-${idx + 1}`, fileType: '', url: line };
+    })
+    .filter(item => item.url);
+  return sources.length ? sources : fallback;
 }
 
 const KEY_LABELS = {
@@ -1031,12 +1078,18 @@ async function saveLocalRuleSuggestion(recordId, suggestion) {
   }, `Add parser rule suggestion: ${recordId}`);
 }
 
-async function resolveLocalRuleSuggestion(recordId, suggestionId, decision, note, user) {
+async function resolveLocalRuleSuggestion(recordId, suggestionId, decision, note, user, regression = null) {
   return withReviewStore(store => {
     const record = getReviewStoreRecord(store, recordId);
     const result = resolveRuleSuggestions(record.ruleSuggestions || [], suggestionId, decision, note, user || fallbackUser());
     if (!result.found) throw new Error('未找到规则建议');
-    record.ruleSuggestions = result.suggestions;
+    if (regression) {
+      const attached = attachRuleRegression(result.suggestions, suggestionId, regression);
+      record.ruleSuggestions = attached.suggestions;
+      result.found = attached.found || result.found;
+    } else {
+      record.ruleSuggestions = result.suggestions;
+    }
     record.fields['规则待确认'] = formatRuleSuggestions(record.ruleSuggestions);
     record.updated_at = new Date().toISOString();
     appendReviewEvent(store, 'resolve-rule-suggestion', recordId, { suggestionId, decision, note });
@@ -1432,6 +1485,368 @@ async function listBaseRecords(baseToken, tableId) {
     guard++;
   } while (hasMore && guard < 50);
   return records;
+}
+
+function parseFeishuBaseSource(source) {
+  if (!source) return null;
+  if (source.baseToken && source.tableId) {
+    return { ...source, baseToken: source.baseToken, tableId: source.tableId };
+  }
+  const rawUrl = normalizeFeishuValue(source.url);
+  if (!rawUrl) return null;
+  try {
+    const normalized = rawUrl.replace(/\\&/g, '&').replace(/，$/g, '');
+    const url = new URL(normalized);
+    const tableId = url.searchParams.get('table') || source.tableId || '';
+    const wikiMatch = url.pathname.match(/\/wiki\/([^/?#]+)/);
+    const baseMatch = url.pathname.match(/\/base\/([^/?#]+)/);
+    if (baseMatch && tableId) return { ...source, baseToken: baseMatch[1], tableId };
+    if (wikiMatch && tableId) return { ...source, wikiToken: wikiMatch[1], tableId };
+  } catch (e) {
+    console.warn('[黄金样本] URL 解析失败:', rawUrl, e.message);
+  }
+  return null;
+}
+
+async function resolveBitableAppToken(source) {
+  if (source.baseToken) return source.baseToken;
+  if (!source.wikiToken) throw new Error('缺少 baseToken/wikiToken');
+  const token = await getUserAccessToken();
+  const url = `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${encodeURIComponent(source.wikiToken)}`;
+  const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  const data = await resp.json();
+  const node = data.data && data.data.node;
+  if (data.code !== 0 || !node || !node.obj_token) {
+    throw new Error(`解析 wiki 多维表 token 失败: ${data.msg || 'unknown'} (code=${data.code})`);
+  }
+  return node.obj_token;
+}
+
+function fileTypeMatchesGoldenSource(targetType, sourceType, sampleType) {
+  const target = normalizePolicyDisplayType(targetType) || normalizeFeishuValue(targetType);
+  const source = normalizePolicyDisplayType(sourceType) || normalizeFeishuValue(sourceType);
+  const sample = normalizePolicyDisplayType(sampleType) || normalizeFeishuValue(sampleType);
+  if (!target) return true;
+  const candidates = [source, sample].filter(Boolean);
+  if (!candidates.length) return true;
+  if (target === '旗舰店') return candidates.some(item => /旗舰店/.test(item));
+  if (/旗舰店/.test(target)) return candidates.some(item => /旗舰店/.test(item));
+  return candidates.some(item => item === target);
+}
+
+function hasParsedKey(parsed, key) {
+  if (!parsed || !key) return false;
+  return parsedObjects(parsed).some(obj =>
+    Object.prototype.hasOwnProperty.call(obj, key) ||
+    (obj.data && typeof obj.data === 'object' && Object.prototype.hasOwnProperty.call(obj.data, key)));
+}
+
+function parseGoldenExpectedJson(fields) {
+  const candidates = [
+    '原始政策文件信息',
+    '解析JSON',
+    '解析结果',
+    '结构化结果',
+    'JSON',
+    '标准答案',
+    '期望结果',
+    '最终结果',
+  ];
+  for (const name of candidates) {
+    if (!Object.prototype.hasOwnProperty.call(fields || {}, name)) continue;
+    const parsed = parseJsonField(fields[name]);
+    if (parsed) return parsed;
+  }
+  const compact = {};
+  Object.entries(fields || {}).forEach(([label, value]) => {
+    const key = canonicalizeFieldName(label);
+    if (key && key !== label && normalizeFeishuValue(value).trim()) compact[key] = value;
+  });
+  return Object.keys(compact).length ? compact : null;
+}
+
+function extractSourceTextFromParsed(parsed) {
+  for (const obj of parsedObjects(parsed)) {
+    const candidates = [
+      obj.source_text,
+      obj.original_text,
+      obj.raw_text,
+      obj.policy_text,
+      obj.text,
+      obj.data && obj.data.source_text,
+      obj.data && obj.data.original_text,
+    ];
+    const found = candidates.map(normalizeFeishuValue).find(text => text && text.length > 80);
+    if (found) return { text: found, kind: 'json_source_text' };
+  }
+  return { text: '', kind: '' };
+}
+
+function extractGoldenSourceText(fields, expectedJson) {
+  const fromJson = extractSourceTextFromParsed(expectedJson);
+  if (fromJson.text) return fromJson;
+  const directFields = ['原始文本', '源文本', '文件内容', '解析文本', '正文', '原文', 'source_text'];
+  for (const name of directFields) {
+    const text = normalizeFeishuValue(fields && fields[name]);
+    if (text && text.length > 80) return { text, kind: name };
+  }
+  const info = normalizeFeishuValue(fields && fields['原始政策文件信息']);
+  if (info && info.length > 200 && !/^\s*[\[{]/.test(info)) return { text: info, kind: '原始政策文件信息' };
+  const evidence = normalizeFeishuValue(fields && (fields['解析依据'] || fields['依据'] || fields['提取依据']));
+  if (evidence && evidence.length > 120) return { text: evidence, kind: '解析依据' };
+  return { text: '', kind: '' };
+}
+
+function canonicalComparableValue(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) {
+    return value.map(canonicalComparableValue).filter(Boolean).sort().join('、');
+  }
+  if (typeof value === 'object') {
+    const sorted = {};
+    Object.keys(value).sort().forEach(key => { sorted[key] = canonicalComparableValue(value[key]); });
+    return JSON.stringify(sorted);
+  }
+  const text = normalizeFeishuValue(value)
+    .replace(/\s+/g, '')
+    .replace(/需人工确认|待人工确认|未提取|未识别|无法确认/g, '人工确认')
+    .replace(/[；;]/g, '；')
+    .replace(/至/g, '-');
+  return text;
+}
+
+function valuesEquivalent(actual, expected) {
+  return canonicalComparableValue(actual) === canonicalComparableValue(expected);
+}
+
+function sourceTypeForRegression(fileType) {
+  if (fileType === '次卡') return 'Excel/Word/PDF';
+  if (fileType === '旗舰店券类') return '旗舰店券类';
+  if (fileType === '旗舰店code') return '旗舰店Code';
+  return fileType || '政策文件';
+}
+
+function predictFieldWithCurrentParser(sample, fieldKey) {
+  if (!sample.sourceText) return { value: '', parsed: null, fileType: sample.fileType || '', skipped: '缺少可重跑源文' };
+  try {
+    const result = buildPolicyDataFromSource({
+      fileName: sample.fileName,
+      source: {
+        text: sample.sourceText,
+        sourceType: sourceTypeForRegression(sample.fileType),
+        tableSummaries: [],
+        warnings: [],
+      },
+      queueFields: {},
+    });
+    return {
+      value: getParsedValue(result.data, fieldKey),
+      parsed: result.data,
+      fileType: result.fileType,
+      skipped: '',
+    };
+  } catch (e) {
+    return { value: '', parsed: null, fileType: sample.fileType || '', skipped: `重跑失败：${e.message}` };
+  }
+}
+
+function predictFieldWithCandidateRule(sample, fieldKey, baseline, suggestion) {
+  if (!baseline || !baseline.parsed) return baseline ? baseline.value : '';
+  const ruleType = suggestion.ruleType || (classifyCorrection(fieldKey, suggestion.fieldLabel, suggestion.reason, suggestion.newValue).type);
+  if (ruleType === '字段修改原因沉淀规则' || ruleType === '新增字段定义沉淀规则') {
+    return baseline.value;
+  }
+  const fields = {
+    '文件名称': sample.fileName,
+    '原始文本': sample.sourceText,
+    '解析场景': sample.fileType || baseline.fileType || '',
+    '业务线': sample.fileType || baseline.fileType || '',
+  };
+  const derived = deriveAutoValue({
+    ruleType,
+    fieldKey,
+    newValue: suggestion.newValue,
+    targetFields: fields,
+    targetParsed: baseline.parsed,
+  });
+  if (derived === null || derived === undefined) return baseline.value;
+  return derived;
+}
+
+function buildGoldenSampleFromRecord(item, source) {
+  const fields = item.fields || {};
+  const expectedJson = parseGoldenExpectedJson(fields);
+  if (!expectedJson) return null;
+  const inferredType = getPolicyFileType(fields, expectedJson);
+  const sourceText = extractGoldenSourceText(fields, expectedJson);
+  return {
+    recordId: item.recordId,
+    sourceName: source.name || '',
+    fileName: getFileName(fields, expectedJson) || normalizeFeishuValue(fields['文件名称'] || fields['文件名']) || item.recordId,
+    fileType: inferredType || source.fileType || '',
+    expectedJson,
+    sourceText: sourceText.text,
+    sourceKind: sourceText.kind,
+  };
+}
+
+async function loadGoldenSamplesForField(fieldKey, targetFileType) {
+  const samples = [];
+  const errors = [];
+  for (const rawSource of GOLDEN_SAMPLE_SOURCES) {
+    if (samples.length >= GOLDEN_REGRESSION_SAMPLE_LIMIT) break;
+    const source = parseFeishuBaseSource(rawSource);
+    if (!source) {
+      errors.push({ source: rawSource.name || rawSource.url || '', error: '样本源配置不可解析' });
+      continue;
+    }
+    if (!fileTypeMatchesGoldenSource(targetFileType, source.fileType, source.fileType)) continue;
+    try {
+      const baseToken = await resolveBitableAppToken(source);
+      const records = await listBaseRecords(baseToken, source.tableId);
+      for (const item of records) {
+        if (samples.length >= GOLDEN_REGRESSION_SAMPLE_LIMIT) break;
+        const sample = buildGoldenSampleFromRecord(item, source);
+        if (!sample) continue;
+        if (!fileTypeMatchesGoldenSource(targetFileType, source.fileType, sample.fileType)) continue;
+        if (!hasParsedKey(sample.expectedJson, fieldKey)) continue;
+        samples.push(sample);
+      }
+    } catch (e) {
+      errors.push({ source: source.name || source.url || source.tableId, error: e.message });
+    }
+  }
+  return { samples, errors };
+}
+
+async function loadCurrentConfirmedSamplesForField(fieldKey, targetFileType, excludeRecordId) {
+  const samples = [];
+  try {
+    const records = await listAllFeishuRecords();
+    for (const item of records) {
+      if (samples.length >= 40) break;
+      if (item.recordId === excludeRecordId) continue;
+      if (normalizeFeishuValue(item.fields && item.fields['审核状态']) !== '已确认') continue;
+      const jsonField = getJsonFieldName(item.fields);
+      const expectedJson = parseJsonField(jsonField ? item.fields[jsonField] : null);
+      if (!expectedJson || !hasParsedKey(expectedJson, fieldKey)) continue;
+      const type = getPolicyFileType(item.fields, expectedJson);
+      if (!fileTypeMatchesGoldenSource(targetFileType, '', type)) continue;
+      const sourceText = extractGoldenSourceText(item.fields, expectedJson);
+      samples.push({
+        recordId: item.recordId,
+        sourceName: '当前审核表已确认样本',
+        fileName: getFileName(item.fields, expectedJson) || item.recordId,
+        fileType: type,
+        expectedJson,
+        sourceText: sourceText.text,
+        sourceKind: sourceText.kind,
+      });
+    }
+  } catch (e) {
+    return { samples, errors: [{ source: '当前审核表已确认样本', error: e.message }] };
+  }
+  return { samples, errors: [] };
+}
+
+function summarizeRegressionRows(rows) {
+  return rows.slice(0, 8).map(row => ({
+    fileName: row.fileName,
+    sourceName: row.sourceName,
+    expected: normalizeFeishuValue(row.expected).slice(0, 160),
+    before: normalizeFeishuValue(row.before).slice(0, 160),
+    after: normalizeFeishuValue(row.after).slice(0, 160),
+    status: row.status,
+  }));
+}
+
+async function runRuleFieldRegression({ suggestion, sourceRecordId, sourceFields, sourceParsed }) {
+  const fieldKey = canonicalizeFieldName(suggestion.fieldKey || suggestion.fieldLabel || '');
+  const fieldLabel = suggestion.fieldLabel || KEY_LABELS[fieldKey] || fieldKey;
+  const sourceFileType = getPolicyFileType(sourceFields || {}, sourceParsed || null);
+  const golden = await loadGoldenSamplesForField(fieldKey, sourceFileType);
+  const current = await loadCurrentConfirmedSamplesForField(fieldKey, sourceFileType, sourceRecordId);
+  const allSamples = [...golden.samples, ...current.samples];
+  const seen = new Set();
+  const samples = allSamples.filter(sample => {
+    const key = `${sample.sourceName}|${sample.fileName}|${sample.recordId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, GOLDEN_REGRESSION_SAMPLE_LIMIT);
+
+  const rows = [];
+  const skipped = [];
+  for (const sample of samples) {
+    const expected = getParsedValue(sample.expectedJson, fieldKey);
+    if (!normalizeFeishuValue(expected).trim()) {
+      skipped.push({ fileName: sample.fileName, reason: '黄金样本该字段为空' });
+      continue;
+    }
+    if (!sample.sourceText) {
+      skipped.push({ fileName: sample.fileName, reason: '缺少可重跑源文' });
+      continue;
+    }
+    const baseline = predictFieldWithCurrentParser(sample, fieldKey);
+    if (baseline.skipped) {
+      skipped.push({ fileName: sample.fileName, reason: baseline.skipped });
+      continue;
+    }
+    const candidate = predictFieldWithCandidateRule(sample, fieldKey, baseline, suggestion);
+    const oldCorrect = valuesEquivalent(baseline.value, expected);
+    const newCorrect = valuesEquivalent(candidate, expected);
+    let status = 'unchanged';
+    if (oldCorrect && !newCorrect) status = 'regression';
+    else if (!oldCorrect && newCorrect) status = 'improved';
+    else if (!oldCorrect && !newCorrect) status = 'still_wrong';
+    else status = 'kept_correct';
+    rows.push({
+      fileName: sample.fileName,
+      sourceName: sample.sourceName,
+      expected,
+      before: baseline.value,
+      after: candidate,
+      oldCorrect,
+      newCorrect,
+      status,
+    });
+  }
+
+  const checked = rows.length;
+  const oldCorrectCount = rows.filter(row => row.oldCorrect).length;
+  const newCorrectCount = rows.filter(row => row.newCorrect).length;
+  const regressions = rows.filter(row => row.status === 'regression');
+  const improvements = rows.filter(row => row.status === 'improved');
+  const oldAccuracy = checked ? oldCorrectCount / checked : null;
+  const newAccuracy = checked ? newCorrectCount / checked : null;
+  const status = regressions.length || (checked && newAccuracy < oldAccuracy)
+    ? 'failed'
+    : (checked ? 'passed' : 'insufficient');
+  const sampleSources = [...new Set(samples.map(sample => sample.sourceName).filter(Boolean))];
+  return {
+    status,
+    fieldKey,
+    fieldLabel,
+    fileType: sourceFileType,
+    checked,
+    runnableSamples: checked,
+    totalSamples: samples.length,
+    skippedCount: skipped.length,
+    oldAccuracy,
+    newAccuracy,
+    oldAccuracyText: checked ? `${oldCorrectCount}/${checked}` : '0/0',
+    newAccuracyText: checked ? `${newCorrectCount}/${checked}` : '0/0',
+    regressions: regressions.length,
+    improvements: improvements.length,
+    stillWrong: rows.filter(row => row.status === 'still_wrong').length,
+    keptCorrect: rows.filter(row => row.status === 'kept_correct').length,
+    regressionRows: summarizeRegressionRows(regressions),
+    improvementRows: summarizeRegressionRows(improvements),
+    sampleSources,
+    skipped: skipped.slice(0, 8),
+    sourceErrors: [...golden.errors, ...current.errors].slice(0, 8),
+    checkedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+  };
 }
 
 async function uploadBitableMedia({ baseToken, fileName, buffer }) {
@@ -3899,6 +4314,7 @@ function normalizeRuleSuggestion(item, fallback = {}) {
     decisionNote: normalizeFeishuValue(item.decisionNote),
     confirmedAt: normalizeFeishuValue(item.confirmedAt),
     confirmedBy: item.confirmedBy || null,
+    lastRegression: item.lastRegression || item.regression || null,
   };
 }
 
@@ -3983,6 +4399,23 @@ function resolveRuleSuggestions(raw, suggestionId, decision, note, user) {
     return found;
   });
   return { suggestions: next, found };
+}
+
+function findRuleSuggestion(raw, suggestionId) {
+  return parseRuleSuggestions(raw).find(item => item.id === suggestionId) || null;
+}
+
+function attachRuleRegression(raw, suggestionId, regression) {
+  let found = null;
+  const suggestions = parseRuleSuggestions(raw).map(item => {
+    if (item.id !== suggestionId) return item;
+    found = {
+      ...item,
+      lastRegression: regression,
+    };
+    return found;
+  });
+  return { suggestions, found };
 }
 
 async function notifyRuleSuggestion(suggestion, user) {
@@ -4893,18 +5326,55 @@ app.post('/api/rule-suggestions/resolve', async (req, res) => {
     try { user = await getCurrentUser(); } catch (e) { /* 忽略 */ }
     const record = await getFeishuRecord(recordId);
     const fields = record.fields || {};
+    const jsonFieldName = getJsonFieldName(fields);
+    const sourceParsed = parseJsonField(jsonFieldName ? fields[jsonFieldName] : null);
+    const pendingSuggestion = findRuleSuggestion(fields['规则待确认'], suggestionId);
+    if (!pendingSuggestion) {
+      return res.status(404).json({ success: false, error: '未找到规则建议' });
+    }
+    let regression = null;
+    if (decision !== 'skip') {
+      regression = await runRuleFieldRegression({
+        suggestion: pendingSuggestion,
+        sourceRecordId: recordId,
+        sourceFields: fields,
+        sourceParsed,
+      });
+      if (regression.status === 'failed') {
+        const attached = attachRuleRegression(fields['规则待确认'], suggestionId, regression);
+        await updateFeishuRecord(recordId, {
+          '规则待确认': formatRuleSuggestions(attached.suggestions),
+        });
+        console.warn(`[规则待确认] 回归失败，已阻止规则确认 ${suggestionId}`);
+        return res.status(409).json({
+          success: false,
+          regressionFailed: true,
+          error: `字段回归失败：${regression.regressions} 个黄金样本出现回退，规则未确认。`,
+          regression,
+          suggestion: attached.found || pendingSuggestion,
+        });
+      }
+    }
     const result = resolveRuleSuggestions(fields['规则待确认'], suggestionId, decision, note, user || fallbackUser());
     if (!result.found) {
       return res.status(404).json({ success: false, error: '未找到规则建议' });
     }
+    let suggestionsToSave = result.suggestions;
+    let resolvedSuggestion = result.found;
+    if (regression) {
+      const attached = attachRuleRegression(suggestionsToSave, suggestionId, regression);
+      suggestionsToSave = attached.suggestions;
+      resolvedSuggestion = attached.found || resolvedSuggestion;
+    }
     await updateFeishuRecord(recordId, {
-      '规则待确认': formatRuleSuggestions(result.suggestions),
+      '规则待确认': formatRuleSuggestions(suggestionsToSave),
     });
-    console.log(`[规则待确认] ✓ 已处理 ${suggestionId} ${result.found.decision}`);
+    console.log(`[规则待确认] ✓ 已处理 ${suggestionId} ${resolvedSuggestion.decision}，回归=${regression ? regression.status : 'skip'}`);
     res.json({
       success: true,
       savedToFeishu: true,
-      suggestion: result.found,
+      suggestion: resolvedSuggestion,
+      regression,
     });
   } catch (err) {
     console.error(`[规则待确认] ✗ ${err.message}`);
