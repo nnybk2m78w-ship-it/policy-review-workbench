@@ -785,6 +785,7 @@ function sanitizePolicyFields(policy) {
 
 function policyToFields(policy, localRecord) {
   sanitizePolicyFields(policy);
+  const visibleHistoryText = humanChangeHistoryText((localRecord && localRecord.changeHistory) || []);
   const fields = {
     '文件名称': policy.file_name || '',
     '文件类型': policy.source_type || '',
@@ -797,8 +798,8 @@ function policyToFields(policy, localRecord) {
     '确认时间': policy.confirmed_at || null,
     '确认人': policy.confirmed_by && policy.confirmed_by.name ? policy.confirmed_by.name : '',
     '确认人ID': policy.confirmed_by && policy.confirmed_by.openId ? policy.confirmed_by.openId : '',
-    '已修改': localRecord && localRecord.changeHistory && localRecord.changeHistory.length ? '是' : '',
-    '修改历史': formatChangeHistory((localRecord && localRecord.changeHistory) || []),
+    '已修改': visibleHistoryText ? '是' : '',
+    '修改历史': visibleHistoryText,
     '问题标记': ((localRecord && localRecord.problemLines) || []).join('\n'),
   };
   Object.entries(KEY_LABELS).forEach(([key, label]) => {
@@ -838,14 +839,15 @@ async function listLocalRecordStatuses() {
   });
   Object.entries(store.records).forEach(([recordId, localRecord]) => {
     if (statuses[recordId]) return;
+    const visibleHistoryText = humanChangeHistoryText(localRecord.changeHistory || []);
     const fields = {
       ...(localRecord.fields || {}),
       '审核状态': localRecord.status === 'confirmed' ? '已确认' : '待审核',
       '确认时间': localRecord.confirmed_at || null,
       '确认人': localRecord.confirmed_by && localRecord.confirmed_by.name ? localRecord.confirmed_by.name : '',
       '确认人ID': localRecord.confirmed_by && localRecord.confirmed_by.openId ? localRecord.confirmed_by.openId : '',
-      '已修改': localRecord.changeHistory && localRecord.changeHistory.length ? '是' : '',
-      '修改历史': formatChangeHistory(localRecord.changeHistory || []),
+      '已修改': visibleHistoryText ? '是' : '',
+      '修改历史': visibleHistoryText,
       '问题标记': (localRecord.problemLines || []).join('\n'),
     };
     statuses[recordId] = {
@@ -2452,6 +2454,18 @@ function humanEditedFieldLabelsFromHistory(rawHistory) {
       if (key && KEY_LABELS[key]) labels.add(KEY_LABELS[key]);
     });
   return labels;
+}
+
+function humanChangeHistoryEntries(rawHistory) {
+  return parseChangeHistory(rawHistory)
+    .map(normalizeHistoryEntry)
+    .filter(Boolean)
+    .filter(entry => normalizeChangeSource(entry) === 'human')
+    .filter(entry => normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue));
+}
+
+function humanChangeHistoryText(rawHistory) {
+  return formatChangeHistory(humanChangeHistoryEntries(rawHistory));
 }
 
 function normalizeChangeSource(entry = {}) {
@@ -4905,15 +4919,18 @@ async function listAllRecordStatuses() {
     if (Array.isArray(st)) st = st[0];
     if (st && typeof st === 'object') st = st.text || st.name || '';
     const manualProblemMarks = filterManualProblemMarks(f['问题标记']);
+    const visibleHistoryText = humanChangeHistoryText(f['修改历史']);
     statuses[recordId] = {
       status: st === '已确认' ? 'confirmed' : 'reviewing',
       confirmed_by: f['确认人'] || null,
       confirmed_at: f['确认时间'] || null,
-      edited: f['已修改'] || null,
-      change_history: f['修改历史'] || null,
+      edited: visibleHistoryText ? '是' : null,
+      change_history: visibleHistoryText || null,
       problem_marks: manualProblemMarks || null,
       fields: {
         ...f,
+        '已修改': visibleHistoryText ? '是' : '',
+        '修改历史': visibleHistoryText,
         '问题标记': manualProblemMarks,
       },
     };

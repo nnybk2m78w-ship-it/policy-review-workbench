@@ -6426,7 +6426,7 @@ function shouldRenderSourceBoundField(policy, field) {
   if (!isPromptAllowedField(policy, field)) return false;
   const value = policy && policy.data && policy.data[field];
   if (!hasConcreteFieldValue(value)) return false;
-  const edited = policy && policy.audit && Array.isArray(policy.audit.edited_fields) && policy.audit.edited_fields.includes(field);
+  const edited = getHumanChangeEntries(policy).some(entry => entry.field === field);
   return edited || hasEntitlementEvidence(policy);
 }
 
@@ -6679,7 +6679,7 @@ function clearManualConfirmForField(policy, field) {
 function applyManualHistoryValues(policy) {
   if (!policy || !policy.data || !Array.isArray(policy._change_history)) return 0;
   let changed = 0;
-  policy._change_history.forEach(h => {
+  getHumanChangeEntries(policy).forEach(h => {
     const field = canonicalizeLegacyFieldName(h.field || h.fieldLabel || '');
     if (!field || /^删除字段[:：]/.test(h.reason || '')) return;
     if (!hasConcreteFieldValue(h.newValue)) return;
@@ -7270,7 +7270,7 @@ function renderSearchResults(q) {
   displayMatches.forEach(p => {
     const activeCls = p.id === appState.currentFileId ? ' active' : '';
     const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-    const probBadge = hasProblems(p) ? `<div class="badge badge-problem">⚠ ${p.problems.length}</div>` : '';
+    const probBadge = hasProblems(p) ? `<div class="badge badge-problem">⚠ ${getHumanProblemCount(p)}</div>` : '';
     const st = getStatusInfo(p);
     const statusBadge = `<div class="badge badge-${st.cls}">${st.text}</div>`;
     const displayCat = policySidebarCategory(p);
@@ -7344,7 +7344,7 @@ function renderGroups() {
     unconfirmed.forEach(p => {
       const activeCls = p.id === appState.currentFileId ? ' active' : '';
       const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-      const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="标记有解析问题">⚠ ${p.problems.length}</div>` : '';
+      const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="标记有解析问题">⚠ ${getHumanProblemCount(p)}</div>` : '';
       const st = getStatusInfo(p);
       const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
       html += `<div class="file-item${activeCls}" onclick="selectFile('${p.id}')">
@@ -7358,7 +7358,7 @@ function renderGroups() {
       confirmed.forEach(p => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
         const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${p.problems.length}</div>` : '';
+        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${getHumanProblemCount(p)}</div>` : '';
         const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
         const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
         html += `<div class="file-item confirmed-item${activeCls}" data-confirmed-group="${subKey}" onclick="selectFile('${p.id}')">
@@ -7376,7 +7376,7 @@ function renderGroups() {
       confirmed.forEach(p => {
         const activeCls = p.id === appState.currentFileId ? ' active' : '';
         const modBadge = hasFileChanges(p) ? `<div class="badge badge-modified">已修改</div>` : '';
-        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${p.problems.length}</div>` : '';
+        const probBadge = hasProblems(p) ? `<div class="badge badge-problem" title="有历史问题标记">⚠ ${getHumanProblemCount(p)}</div>` : '';
         const byTag = p.confirmed_by && p.confirmed_by.name ? `<div class="confirmed-by-tag">确认人：${escapeHtml(p.confirmed_by.name)}</div>` : '';
         const bizType = p.data.business_type ? p.data.business_type + ' · ' : '';
         const hiddenCls = (!isOpen || !curInConfirmed) ? ' collapsed-item' : '';
@@ -7692,7 +7692,7 @@ function buildProblemInsights() {
   const fieldMap = new Map();
   let entryCount = 0;
   problemPolicies.forEach(policy => {
-    (policy.problems || []).forEach((problem, idx) => {
+    getHumanProblemItems(policy).forEach(({ pr: problem, index: idx }) => {
       const info = getProblemFieldInfo(problem, policy);
       if (!fieldMap.has(info.field)) {
         fieldMap.set(info.field, {
@@ -7724,7 +7724,7 @@ function renderProblems(main) {
   if (appState.problemFieldFilter && !selectedField) appState.problemFieldFilter = '';
   const selectedGroup = selectedField ? insights.groups.find(g => g.field === selectedField) : null;
   const filteredPolicies = selectedField
-    ? problemPolicies.filter(p => (p.problems || []).some(pr => getProblemFieldInfo(pr, p).field === selectedField))
+    ? problemPolicies.filter(p => getHumanProblemEntries(p).some(pr => getProblemFieldInfo(pr, p).field === selectedField))
     : problemPolicies;
   const pendingProblemFiles = problemPolicies.filter(p => p.status !== 'confirmed').length;
   const confirmedProblemFiles = problemPolicies.length - pendingProblemFiles;
@@ -7776,8 +7776,8 @@ function renderProblems(main) {
   } else {
     filteredPolicies.forEach(p => {
       const displayProblems = selectedField
-        ? (p.problems || []).map((pr, idx) => ({ pr, idx })).filter(item => getProblemFieldInfo(item.pr, p).field === selectedField)
-        : (p.problems || []).map((pr, idx) => ({ pr, idx }));
+        ? getHumanProblemItems(p).map(({ pr, index }) => ({ pr, idx: index })).filter(item => getProblemFieldInfo(item.pr, p).field === selectedField)
+        : getHumanProblemItems(p).map(({ pr, index }) => ({ pr, idx: index }));
       const fieldLabels = [...new Set(displayProblems.map(item => getProblemFieldInfo(item.pr, p).label))].slice(0, 6);
       const preview = displayProblems.slice(0, 2).map(item => {
         const info = getProblemFieldInfo(item.pr, p);
@@ -7810,21 +7810,21 @@ function renderProblems(main) {
 }
 
 function renderInlineProblemDetails(p) {
-  const problems = p.problems || [];
-  if (!problems.length) return '';
-  const items = problems.map((pr, i) => {
+  const problemItems = getHumanProblemItems(p);
+  if (!problemItems.length) return '';
+  const items = problemItems.map(({ pr, index }) => {
     const label = pr.field_label || (pr.field ? renderPlainFieldLabel(pr.field, p) : '文件整体');
     const meta = [pr.created_by, pr.created_at].filter(Boolean).join(' · ');
     return `<div class="inline-problem-item">
       <div class="inline-problem-desc"><span class="prob-field-tag">${escapeHtml(label)}</span>${escapeHtml(pr.desc || '')}</div>
       <div class="inline-problem-meta">${escapeHtml(meta)}
-        <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${i})">✓ 已解决</button>
+        <button class="prob-resolve" onclick="removeProblem('${jsArg(p.id)}',${index})">✓ 已解决</button>
       </div>
     </div>`;
   }).join('');
   return `<div class="inline-problems-section">
     <div class="inline-problems-head">
-      <span>问题明细（${problems.length}）</span>
+      <span>问题明细（${problemItems.length}）</span>
       <button class="problems-panel-action" onclick="openFileProblems('${jsArg(p.id)}')">弹窗处理</button>
     </div>
     <div class="inline-problems-list">${items}</div>
@@ -7895,12 +7895,12 @@ function renderFieldRow(p, f, isExtra) {
   }
   const displayVal = getFieldDisplayValue(f, val, manualConfirm);
   const evidence = p.evidence && p.evidence[f] ? `<span class="evidence-tag" title="${escapeHtml(p.evidence[f])}">证据</span>` : '';
-  const isModified = p.audit && p.audit.edited_fields && p.audit.edited_fields.includes(f);
+  const isModified = getHumanChangeEntries(p).some(entry => entry.field === f);
   const modIndicator = isModified 
     ? `<span class="field-modified-indicator" onclick="toggleChangeHistory('${jsArg(p.id)}','${jsArg(f)}')" title="已人工修改，点击查看历史">✎</span>`
     : '';
   const modClass = isModified ? ' field-modified' : '';
-  const fieldProblems = (p.problems || []).filter(pr => pr.field === f);
+  const fieldProblems = getHumanProblemEntries(p).filter(pr => pr.field === f);
   const probIndicator = fieldProblems.length
     ? `<span class="field-problem-indicator" title="该字段存在 ${fieldProblems.length} 个问题：${escapeHtml(fieldProblems.map(x=>x.desc).join('；'))}">⚠${fieldProblems.length}</span>`
     : '';
@@ -8128,7 +8128,7 @@ function renderReview(main) {
   });
 
   // File-level problems panel
-  const fileProblems = p.problems || [];
+  const fileProblems = getHumanProblemEntries(p);
   let problemsHtml = '';
   if (fileProblems.length > 0) {
     problemsHtml = `<div class="problems-panel">
@@ -8235,7 +8235,8 @@ function renderConfirmCard(p) {
   const hasProb = hasProblems(p);
   const cardCls = isConfirmed ? ' confirmed' : (hasProb ? ' has-problem' : '');
   const statusCls = isConfirmed ? 'done' : (hasProb ? 'problem' : 'waiting');
-  const statusTxt = isConfirmed ? (hasProb ? `已确认 ${p.problems.length} 个问题` : '已确认') : (hasProb ? `有问题(${p.problems.length})` : '待审核');
+  const humanProblemCount = getHumanProblemCount(p);
+  const statusTxt = isConfirmed ? (hasProb ? `已确认 ${humanProblemCount} 个问题` : '已确认') : (hasProb ? `有问题(${humanProblemCount})` : '待审核');
 
   let kvHtml = '';
   const keyFields = ['scenario','carrier_name','product_name','flight_type','booking_cabin','sale_date','redeem_date','depart_date','product_code','discount_per','age_limit'];
@@ -8283,8 +8284,8 @@ function getHumanChangeEntries(policy) {
     .filter(entry => normalizeFeishuValue(entry.oldValue) !== normalizeFeishuValue(entry.newValue));
 }
 
-function getHumanProblemEntries(policy) {
-  return ((policy && policy.problems) || []).filter(pr => {
+function getHumanProblemItems(policy) {
+  return ((policy && policy.problems) || []).map((pr, index) => ({ pr, index })).filter(({ pr }) => {
     if (!pr) return false;
     if (pr.auto_from_change) return true;
     const normalized = normalizeChangeSource({
@@ -8294,6 +8295,14 @@ function getHumanProblemEntries(policy) {
     });
     return normalized !== 'auto';
   });
+}
+
+function getHumanProblemEntries(policy) {
+  return getHumanProblemItems(policy).map(item => item.pr);
+}
+
+function getHumanProblemCount(policy) {
+  return getHumanProblemItems(policy).length;
 }
 
 function getIssueFieldKey(raw) {
@@ -8326,7 +8335,7 @@ function getManualConfirmFieldCount(policy) {
 function auditSampleScore(policy) {
   const humanChanges = getHumanChangeEntries(policy).length;
   const humanProblems = getHumanProblemEntries(policy).length;
-  const edited = policy && policy.audit && Array.isArray(policy.audit.edited_fields) ? policy.audit.edited_fields.length : 0;
+  const edited = humanChanges;
   const manual = getManualConfirmFieldCount(policy);
   return humanChanges * 4 + humanProblems * 3 + edited * 2 + manual;
 }
@@ -8556,7 +8565,7 @@ function renderResult(main) {
       file_type: getPolicyFileType(p),
       data: getFilteredPolicyData(p),
       audit: p.audit || {},
-      change_history: p._change_history || [],
+      change_history: getHumanChangeEntries(p),
     }))
   };
 
@@ -8581,7 +8590,7 @@ function renderResult(main) {
 
 // ===== 状态派生工具 =====
 function hasProblems(p) {
-  return !!(p.problems && p.problems.length > 0);
+  return getHumanProblemCount(p) > 0;
 }
 function getStatusInfo(p) {
   if (p.status === 'confirmed') return { text: '已确认', cls: 'confirmed' };
@@ -8698,7 +8707,7 @@ function escapeHtml(s) {
 }
 
 function hasFileChanges(p) {
-  return !!(p.audit && p.audit.edited_fields && p.audit.edited_fields.length > 0);
+  return getHumanChangeEntries(p).length > 0;
 }
 
 function formatTime(now) {
@@ -8918,7 +8927,7 @@ function removeProblem(policyId, idx) {
   saveState();
   render();
   if (document.getElementById('fileProblemsOverlay').style.display !== 'none') {
-    if (p.problems.length) openFileProblems(policyId);
+    if (getHumanProblemCount(p)) openFileProblems(policyId);
     else closeFileProblems();
   }
   showToast('问题已标记为解决', 'success');
@@ -8927,18 +8936,18 @@ function removeProblem(policyId, idx) {
 function openFileProblems(policyId) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p) return;
-  const problems = p.problems || [];
+  const problemItems = getHumanProblemItems(p);
   document.getElementById('fileProblemsMeta').innerHTML =
-    `<b>${escapeHtml(p.file_name || '')}</b><br><span>共 ${problems.length} 条问题记录</span>`;
+    `<b>${escapeHtml(p.file_name || '')}</b><br><span>共 ${problemItems.length} 条问题记录</span>`;
   const list = document.getElementById('fileProblemsList');
-  if (!problems.length) {
+  if (!problemItems.length) {
     list.innerHTML = '<div style="padding:12px;color:var(--muted)">暂无问题记录</div>';
   } else {
     const grouped = new Map();
-    problems.forEach((pr, i) => {
+    problemItems.forEach(({ pr, index }) => {
       const info = getProblemFieldInfo(pr, p);
       if (!grouped.has(info.field)) grouped.set(info.field, { label: info.label, items: [] });
-      grouped.get(info.field).items.push({ pr, i });
+      grouped.get(info.field).items.push({ pr, i: index });
     });
     list.innerHTML = [...grouped.values()].map(group => `
       <div class="file-problem-group">
@@ -9443,7 +9452,7 @@ function dismissSyncBar() {
 function toggleChangeHistory(policyId, field) {
   const p = appState.policies.find(x => x.id === policyId);
   if (!p || !p._change_history) return;
-  const changes = p._change_history.filter(h => h.field === field);
+  const changes = getHumanChangeEntries(p).filter(h => h.field === field);
   const fieldLabel = renderPlainFieldLabel(field, p);
   document.getElementById('historyMeta').innerHTML =
     `<b>${escapeHtml(fieldLabel)}</b><br><span>文件：${escapeHtml(p.file_name || '')}</span>`;
@@ -9452,12 +9461,11 @@ function toggleChangeHistory(policyId, field) {
     list.innerHTML = '<div style="padding:12px;color:var(--muted)">无修改记录</div>';
   } else {
     list.innerHTML = changes.map(h => {
-      const source = normalizeChangeSource(h);
       return `<div class="change-history-item">
         <div class="ch-head">
           <span class="ch-time">${escapeHtml(h.time)}</span>
           <span class="ch-field">${escapeHtml(renderPlainFieldLabel(h.field, p))}</span>
-          <span class="ch-source ${source}">${source === 'auto' ? '系统修正' : '人工修改'}</span>
+          <span class="ch-source human">人工修改</span>
         </div>
         <div class="ch-change">
           <span class="ch-old">${escapeHtml(h.oldValue || '(空)')}</span>
@@ -9730,6 +9738,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
 
   if (Object.prototype.hasOwnProperty.call(fields, '修改历史')) {
     const nextHistory = parseChangeHistoryText(fields['修改历史']);
+    const humanHistory = nextHistory.filter(h => normalizeChangeSource(h) === 'human');
     const oldHistory = JSON.stringify(p._change_history || []);
     const newHistory = JSON.stringify(nextHistory);
     if (oldHistory !== newHistory) {
@@ -9747,7 +9756,7 @@ function applyFeishuFieldsToPolicy(p, fields) {
 	    changed++;
 	  });
     if (!p.audit) p.audit = {};
-    const editedFields = [...new Set(nextHistory.map(h => h.field).filter(Boolean))];
+    const editedFields = [...new Set(humanHistory.map(h => h.field).filter(Boolean))];
     if (editedFields.length) p.audit.edited_fields = editedFields;
     else if (normalizeFeishuValue(fields['已修改']) !== '是') delete p.audit.edited_fields;
       changed += applyManualHistoryValues(p);
@@ -9817,8 +9826,9 @@ function policyFromFeishuStatus(recordId, statusEntry) {
     _change_history: parseChangeHistoryText(fields['修改历史']),
   };
 
-  if (normalizeFeishuValue(fields['已修改']) === '是' && policy._change_history.length) {
-    policy.audit.edited_fields = [...new Set(policy._change_history.map(h => h.field).filter(Boolean))];
+  const humanHistory = getHumanChangeEntries(policy);
+  if (normalizeFeishuValue(fields['已修改']) === '是' && humanHistory.length) {
+    policy.audit.edited_fields = [...new Set(humanHistory.map(h => h.field).filter(Boolean))];
   }
   normalizePolicySchema(policy);
   return policy;
@@ -9826,9 +9836,8 @@ function policyFromFeishuStatus(recordId, statusEntry) {
 
 function hasReviewArtifacts(policy) {
   return !!(policy && (
-    (Array.isArray(policy._change_history) && policy._change_history.length) ||
-    (Array.isArray(policy.problems) && policy.problems.length) ||
-    (policy.audit && Array.isArray(policy.audit.edited_fields) && policy.audit.edited_fields.length) ||
+    getHumanChangeEntries(policy).length ||
+    getHumanProblemCount(policy) ||
     policy.status === 'confirmed' ||
     policy.confirmed_at ||
     policy.confirmed_by
@@ -9844,19 +9853,20 @@ function mergeLegacyReviewState(target, legacy) {
   let changed = 0;
   normalizePolicySchema(legacy);
   normalizePolicySchema(target);
+  const legacyHumanHistory = getHumanChangeEntries(legacy);
+  const legacyHumanProblems = getHumanProblemEntries(legacy);
 
-  if ((!target._change_history || !target._change_history.length) && Array.isArray(legacy._change_history) && legacy._change_history.length) {
-    target._change_history = legacy._change_history.map(normalizeHistoryEntry);
+  if ((!target._change_history || !getHumanChangeEntries(target).length) && legacyHumanHistory.length) {
+    target._change_history = legacyHumanHistory.map(normalizeHistoryEntry);
     changed++;
   }
-  if ((!target.problems || !target.problems.length) && Array.isArray(legacy.problems) && legacy.problems.length) {
-    target.problems = legacy.problems.map(x => ({ ...x }));
+  if ((!target.problems || !getHumanProblemCount(target)) && legacyHumanProblems.length) {
+    target.problems = legacyHumanProblems.map(x => ({ ...x }));
     changed++;
   }
 
   const changedFields = new Set([
-    ...(((legacy.audit || {}).edited_fields) || []),
-    ...((legacy._change_history || []).map(h => h.field || h.fieldLabel).filter(Boolean)),
+    ...legacyHumanHistory.map(h => h.field || h.fieldLabel).filter(Boolean),
   ].map(canonicalizeLegacyFieldName).filter(Boolean));
   changedFields.forEach(field => {
     if (!legacy.data || !Object.prototype.hasOwnProperty.call(legacy.data, field)) return;
@@ -9882,7 +9892,7 @@ function mergeLegacyReviewState(target, legacy) {
 
   if (!target.audit) target.audit = {};
   const edited = [...new Set([
-    ...(((target.audit || {}).edited_fields) || []),
+    ...getHumanChangeEntries(target).map(h => h.field).filter(Boolean),
     ...changedFields,
   ].filter(Boolean))];
   if (edited.length) target.audit.edited_fields = edited;
@@ -9895,6 +9905,9 @@ function mergeLegacyReviewState(target, legacy) {
 
 function restoreReviewStateToServer(policy) {
   if (!policy || !policy._needsReviewStateRestore || policy._restoreInFlight) return;
+  const humanHistory = getHumanChangeEntries(policy);
+  const humanProblems = getHumanProblemEntries(policy);
+  const humanEditedFields = [...new Set(humanHistory.map(h => h.field).filter(Boolean))];
   policy._restoreInFlight = true;
   requestJson('/api/restore-review-state', {
     method: 'POST',
@@ -9902,9 +9915,9 @@ function restoreReviewStateToServer(policy) {
     body: JSON.stringify({
       recordId: policy.id,
       data: policy.data || {},
-      changeHistory: policy._change_history || [],
-      problems: policy.problems || [],
-      editedFields: (policy.audit && policy.audit.edited_fields) || [],
+      changeHistory: humanHistory,
+      problems: humanProblems,
+      editedFields: humanEditedFields,
     }),
   })
     .then(result => {
