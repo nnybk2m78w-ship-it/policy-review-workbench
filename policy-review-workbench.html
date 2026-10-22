@@ -599,7 +599,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
     <button class="seg-btn" data-view="upload" onclick="switchView('upload')">上传解析</button>
     <button class="seg-btn" data-view="problems" onclick="switchView('problems')">问题清单<span class="seg-count" id="segProblemCount"></span></button>
     <button class="seg-btn" data-view="rules" onclick="switchView('rules')">规则待确认<span class="seg-count" id="segRuleCount"></span></button>
-    <button class="seg-btn" data-view="confirm" onclick="switchView('confirm')">逐文件确认</button>
     <button class="seg-btn" data-view="accuracy" onclick="switchView('accuracy')">准确率看板</button>
     <button class="seg-btn" data-view="result" onclick="switchView('result')">最终结果</button>
   </div>
@@ -6925,6 +6924,10 @@ let appState = {
   uploadLoading: false,
 };
 
+function normalizeViewName(view) {
+  return view === 'confirm' ? 'review' : (view || 'review');
+}
+
 // Load from localStorage — on hosted pages Feishu/server is authoritative, so only UI prefs are restored.
 const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
@@ -6933,7 +6936,7 @@ if (saved) {
     const savedPolicies = Array.isArray(parsed.policies) ? parsed.policies : null;
     if (SERVER_AUTHORITATIVE) {
       appState.currentFileId = parsed.currentFileId || null;
-      appState.currentView = parsed.currentView || 'review';
+      appState.currentView = normalizeViewName(parsed.currentView);
       appState.statusFilter = parsed.statusFilter || '';
       appState.reviewScope = parsed.reviewScope || 'pending';
       appState.problemFieldFilter = parsed.problemFieldFilter || '';
@@ -6950,7 +6953,7 @@ if (saved) {
       localStorage.removeItem(STORAGE_KEY);
     } else {
       appState.currentFileId = parsed.currentFileId || null;
-      appState.currentView = parsed.currentView || 'review';
+      appState.currentView = normalizeViewName(parsed.currentView);
       appState.statusFilter = parsed.statusFilter || '';
       appState.reviewScope = parsed.reviewScope || 'pending';
       appState.problemFieldFilter = parsed.problemFieldFilter || '';
@@ -7616,9 +7619,12 @@ function renderMain() {
   else if (appState.currentView === 'upload') renderUpload(main);
   else if (appState.currentView === 'problems') renderProblems(main);
   else if (appState.currentView === 'rules') renderRuleConfirmations(main);
-  else if (appState.currentView === 'confirm') renderConfirm(main);
   else if (appState.currentView === 'accuracy') renderAccuracy(main);
   else if (appState.currentView === 'result') renderResult(main);
+  else {
+    appState.currentView = 'review';
+    renderReview(main);
+  }
 }
 
 // ===== 上传解析视图 =====
@@ -8453,7 +8459,7 @@ function renderConfirm(main) {
   const confirmedList = appState.policies.filter(p => p.status === 'confirmed');
 
   let html = '<div class="confirm-view">';
-  html += `<h3>逐文件确认 (${confirmed}/${total})</h3>`;
+  html += `<h3>确认清单 (${confirmed}/${total})</h3>`;
   
   if (allDone) {
     html += `<div class="result-banner">
@@ -8800,7 +8806,7 @@ function renderResult(main) {
   const total = appState.policies.length;
   
   if (confirmed.length === 0) {
-    main.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>尚无已确认的文件，请先完成逐文件确认</p></div>';
+    main.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>尚无已确认的文件，请先在审核页完成文件确认</p></div>';
     return;
   }
 
@@ -8835,7 +8841,7 @@ function renderResult(main) {
     <div class="result-actions">
       <button class="btn btn-success" onclick="copyJson()">📋 复制 JSON</button>
       <button class="btn btn-primary" onclick="downloadJson()">⬇ 下载 JSON</button>
-      <button class="btn btn-outline" onclick="switchView('confirm')">← 返回确认</button>
+      <button class="btn btn-outline" onclick="setReviewScope('confirmed');switchView('review')">← 返回审核页</button>
     </div>
     <div class="json-output" id="jsonOutput">${jsonStr.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
   </div>`;
@@ -8915,6 +8921,7 @@ function selectFile(id) {
 }
 
 function switchView(view) {
+  view = normalizeViewName(view);
   if (view === 'review' && !appState.currentFileId && appState.policies.length > 0) {
     appState.currentFileId = appState.policies[0].id;
   }
