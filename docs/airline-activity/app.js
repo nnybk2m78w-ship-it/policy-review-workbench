@@ -23,6 +23,59 @@ const platformFlows = {
   },
 };
 
+const gapCandidates = [
+  {
+    topic: '华夏自由飞权益卡',
+    priority: 'P0',
+    platforms: ['携程', '飞猪'],
+    qunarStatus: '去哪儿本轮未见同名或近似权益卡',
+    reason: '携程和飞猪均出现华夏自由飞权益产品，价格均在 520 元附近，疑似同一底层产品或强相似产品。',
+    next: '进入携程、飞猪详情页，比对价格、航线范围、权益券和使用有效期；若详情一致，应列为去哪儿明确缺失。',
+    keywords: ['华夏航空自由飞权益卡', '华夏自由飞特惠权益卡'],
+    filterKeyword: '华夏|自由飞',
+  },
+  {
+    topic: '飞猪全国通用国内机票卡系列',
+    priority: 'P1',
+    platforms: ['飞猪'],
+    qunarStatus: '去哪儿本轮未见等价全国通用机票卡入口',
+    reason: '飞猪出现 299 / 388 / 499 / 888 / 999 元多档位全国通用国内机票卡，属于平台自营通用次卡系列。',
+    next: '确认去哪儿是否有等价通用机票卡入口；若没有，按价格档位拆为系列缺失。',
+    keywords: ['全国通用国内机票卡'],
+    filterKeyword: '全国通用国内机票卡',
+  },
+  {
+    topic: '同程出去玩1次卡 299 / 399 元版',
+    priority: 'P1',
+    platforms: ['同程'],
+    qunarStatus: '去哪儿本轮未见同名次卡',
+    reason: '同程出现出去玩1次卡 299 元和 399 元两个清晰价档，名称级缺失明显。',
+    next: '详情页确认航线、可用日期、退改和兑换规则；若不是测试卡，应列入去哪儿补充跟进。',
+    keywords: ['出去玩1次卡'],
+    filterKeyword: '出去玩1次卡',
+  },
+  {
+    topic: '东海 / 南航 / 长安航 / 桂林航空权益卡',
+    priority: 'P1',
+    platforms: ['同程'],
+    qunarStatus: '去哪儿本轮未见对应航司权益卡',
+    reason: '同程集中出现东海、南航、长安航、桂林航空权益卡；去哪儿本轮权益卡列表未见对应航司主题。',
+    next: '按航司逐项进入详情页核对权益内容和适用范围；若为真实航司权益而非平台通用券，应拆分为多条缺失。',
+    keywords: ['东海往返权益卡', '南航秋季旅游节特惠权益卡', '长安航航旅优享权益卡', '桂林航空1元权益'],
+    filterKeyword: '东海|南航|长安|桂林',
+  },
+  {
+    topic: '候鸟南飞 / 冰雪之约国内机票次卡',
+    priority: 'P2',
+    platforms: ['同程'],
+    qunarStatus: '去哪儿本轮未见季节主题同名次卡',
+    reason: '同程出现候鸟南飞、冰雪之约两个季节主题国内机票次卡，去哪儿列表无同名主题。',
+    next: '判断是否与去哪儿国航/藏航冬季产品重合；若航线、价格和使用期不重合，再保留为缺失。',
+    keywords: ['候鸟南飞', '冰雪之约'],
+    filterKeyword: '候鸟南飞|冰雪之约',
+  },
+];
+
 const reviewRows = [
   {
     topic: '藏航冬日暖阳单程 / 往返',
@@ -64,8 +117,12 @@ const reviewRows = [
 
 const els = {
   metrics: document.querySelector('#metrics'),
+  gapSummary: document.querySelector('#gapSummary'),
+  gapOverview: document.querySelector('#gapOverview'),
+  gapList: document.querySelector('#gapList'),
   flows: document.querySelector('#flows'),
   reviewRows: document.querySelector('#reviewRows'),
+  productPanel: document.querySelector('#productPanel'),
   productRows: document.querySelector('#productRows'),
   productCount: document.querySelector('#productCount'),
   platformFilter: document.querySelector('#platformFilter'),
@@ -106,21 +163,98 @@ function renderMetrics(items) {
   const benefitCards = items.filter((item) => item.product_type === '权益卡').length;
   const qunar = counts.find((item) => item.platform === '去哪儿') || { total: 0, tripCards: 0, benefitCards: 0 };
   const competitorUnique = new Set(items.filter((item) => item.platform !== '去哪儿').map((item) => item.product_name)).size;
+  const p0Gaps = gapCandidates.filter((item) => item.priority === 'P0').length;
+  const p1Gaps = gapCandidates.filter((item) => item.priority === 'P1').length;
 
   const metrics = [
     { label: '已入库产品', value: total, note: `次卡 ${tripCards} / 权益卡 ${benefitCards}` },
     { label: '去哪儿基准', value: qunar.total, note: `次卡 ${qunar.tripCards} / 权益卡 ${qunar.benefitCards}`, baseline: true },
     { label: '竞品唯一产品', value: competitorUnique, note: '按名称粗去重，详情页核验后再合并' },
-    { label: '待核验主题', value: reviewRows.length, note: '名称差异但可能同品' },
+    { label: '去哪儿缺失候选', value: gapCandidates.length, note: `P0 ${p0Gaps} / P1 ${p1Gaps} / P2 ${gapCandidates.length - p0Gaps - p1Gaps}`, alert: true },
   ];
 
   els.metrics.innerHTML = metrics.map((item) => `
-    <article class="metric${item.baseline ? ' baseline' : ''}">
+    <article class="metric${item.baseline ? ' baseline' : ''}${item.alert ? ' alert' : ''}">
       <span>${escapeHtml(item.label)}</span>
       <strong>${escapeHtml(item.value)}</strong>
       <em>${escapeHtml(item.note)}</em>
     </article>
   `).join('');
+}
+
+function findGapEvidence(candidate) {
+  const keywords = candidate.keywords.map((keyword) => keyword.toLowerCase());
+  return products.filter((product) => {
+    if (product.platform === '去哪儿') return false;
+    const haystack = [
+      product.product_name,
+      product.product_info,
+      product.source_page,
+    ].join(' ').toLowerCase();
+    return keywords.some((keyword) => haystack.includes(keyword));
+  });
+}
+
+function renderGapCandidates() {
+  const evidenceByTopic = new Map(gapCandidates.map((candidate) => [candidate.topic, findGapEvidence(candidate)]));
+  const evidenceCount = Array.from(evidenceByTopic.values()).reduce((sum, items) => sum + items.length, 0);
+  const priorityCounts = gapCandidates.reduce((acc, item) => {
+    acc[item.priority] = (acc[item.priority] || 0) + 1;
+    return acc;
+  }, {});
+
+  els.gapSummary.textContent = `${gapCandidates.length} 个候选 / ${evidenceCount} 条竞品证据`;
+  els.gapOverview.innerHTML = `
+    <div class="gap-stat">
+      <span>最高优先级</span>
+      <strong>P0 × ${escapeHtml(priorityCounts.P0 || 0)}</strong>
+    </div>
+    <div class="gap-stat">
+      <span>需要重点核验</span>
+      <strong>P1 × ${escapeHtml(priorityCounts.P1 || 0)}</strong>
+    </div>
+    <div class="gap-stat">
+      <span>候选证据产品</span>
+      <strong>${escapeHtml(evidenceCount)}</strong>
+    </div>
+    <p>判定口径：先看竞品是否出现，再看去哪儿是否有同名或近似产品；名称不同但价格、航线、使用规则一致时，进入详情页后再合并为同品。</p>
+  `;
+
+  els.gapList.innerHTML = gapCandidates.map((candidate) => {
+    const evidence = evidenceByTopic.get(candidate.topic) || [];
+    return `
+      <article class="gap-card priority-${escapeHtml(candidate.priority.toLowerCase())}">
+        <div class="gap-card-head">
+          <div>
+            <span class="priority-badge">${escapeHtml(candidate.priority)}</span>
+            <h3>${escapeHtml(candidate.topic)}</h3>
+          </div>
+          <button type="button" class="gap-filter-btn" data-gap-keyword="${escapeHtml(candidate.filterKeyword)}">查看证据</button>
+        </div>
+        <div class="gap-meta">
+          <span>竞品出现：${escapeHtml(candidate.platforms.join(' / '))}</span>
+          <span class="qunar-missing">去哪儿：${escapeHtml(candidate.qunarStatus)}</span>
+        </div>
+        <p>${escapeHtml(candidate.reason)}</p>
+        <div class="evidence-list">
+          ${evidence.length ? evidence.map((product) => `
+            <span>${escapeHtml(product.platform)}｜${escapeHtml(product.product_name)}｜${escapeHtml(product.price || '-')}</span>
+          `).join('') : '<span>明细表暂无可自动匹配的证据产品，需人工核验</span>'}
+        </div>
+        <div class="next-step">${escapeHtml(candidate.next)}</div>
+      </article>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.gap-filter-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      els.platformFilter.value = '';
+      els.typeFilter.value = '';
+      els.keywordFilter.value = button.dataset.gapKeyword || '';
+      renderProducts();
+      els.productPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
 }
 
 function renderFlows() {
@@ -164,7 +298,6 @@ function productMatches(product) {
   const keyword = els.keywordFilter.value.trim().toLowerCase();
   if (platform && product.platform !== platform) return false;
   if (type && product.product_type !== type) return false;
-  if (!keyword) return true;
   const haystack = [
     product.product_name,
     product.price,
@@ -173,7 +306,12 @@ function productMatches(product) {
     product.platform,
     product.product_type,
   ].join(' ').toLowerCase();
-  return haystack.includes(keyword);
+  if (!keyword) return true;
+  if (keyword.includes('|')) {
+    return keyword.split('|').map((item) => item.trim()).filter(Boolean).some((item) => haystack.includes(item));
+  }
+  const terms = keyword.split(/\s+/).filter(Boolean);
+  return terms.every((term) => haystack.includes(term));
 }
 
 function renderProducts() {
@@ -195,6 +333,7 @@ async function init() {
   const response = await fetch('./data/products.json');
   products = await response.json();
   renderMetrics(products);
+  renderGapCandidates();
   renderFlows();
   renderReviews();
   renderPlatformOptions();
