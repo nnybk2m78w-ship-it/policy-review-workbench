@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>航司活动竞品分析看板</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="page-head">
+        <div>
+          <p class="eyebrow">竞品航司活动分析</p>
+          <h1>航司次卡 / 权益卡覆盖看板</h1>
+          <p class="lead">2026-10-23 四平台复跑结果。去哪儿为基准平台，竞品来源为携程、同程、飞猪。</p>
+        </div>
+        <div class="stamp">
+          <span>本轮批次</span>
+          <strong>2026-10-23</strong>
+        </div>
+      </section>
+
+      <section class="metric-grid" id="metrics"></section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>本轮结论</h2>
+          <span>名称级缺失需结合详情页核验</span>
+        </div>
+        <div class="insight-grid">
+          <article>
+            <h3>数据口径</h3>
+            <p>本轮共记录 78 个国内航司次卡/权益卡产品。去哪儿口径已校正为 8 个次卡、14 个权益卡；携程、同程、飞猪均已剔除非航司活动、测试卡、国际/外航卡等干扰项。</p>
+          </article>
+          <article>
+            <h3>识别原则</h3>
+            <p>不同平台同一航司产品可能改名。判定同品时优先比对价格或价格档位、航线范围、适用客群、使用有效期、兑换与退改规则；基本一致时按同一产品处理。</p>
+          </article>
+          <article>
+            <h3>优先关注</h3>
+            <p>华夏自由飞权益卡、飞猪全国通用国内机票卡系列、同程出去玩1次卡、东海/南航/长安航/桂林航空权益卡，是当前优先核验的去哪儿缺失候选。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>平台采集路径</h2>
+          <span>用于每周复跑对齐入口</span>
+        </div>
+        <div class="flow-grid" id="flows"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>同品详情页核验清单</h2>
+          <span>名称差异产品需二次判定</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>产品主题</th>
+                <th>去哪儿口径</th>
+                <th>竞品口径</th>
+                <th>当前判断</th>
+              </tr>
+            </thead>
+            <tbody id="reviewRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>产品明细</h2>
+          <span id="productCount">加载中</span>
+        </div>
+        <div class="toolbar">
+          <label>
+            平台
+            <select id="platformFilter">
+              <option value="">全部平台</option>
+            </select>
+          </label>
+          <label>
+            类型
+            <select id="typeFilter">
+              <option value="">全部类型</option>
+              <option value="次卡">次卡</option>
+              <option value="权益卡">权益卡</option>
+            </select>
+          </label>
+          <label class="keyword">
+            关键词
+            <input id="keywordFilter" type="search" placeholder="产品名 / 价格 / 来源 / 规则" />
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>平台</th>
+                <th>名称</th>
+                <th>类型</th>
+                <th>价格</th>
+                <th>产品信息</th>
+                <th>页面来源</th>
+              </tr>
+            </thead>
+            <tbody id="productRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
