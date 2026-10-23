@@ -6042,13 +6042,58 @@ try {
 const FIELD_DEFINITIONS_KEY = '_field_definitions';
 const JSON_FIELD_CANDIDATES = ['解析JSON', '解析结果', '结构化结果', 'JSON'];
 const CUSTOM_FIELD_KEY_PREFIX = 'custom_';
+const WORKBENCH_RENDER_API_BASE = 'https://policy-review-workbench.onrender.com';
+const SESSION_TOKEN_KEY = 'policy_review_session_token_v1';
+
+function getDefaultApiBase() {
+  if (typeof window === 'undefined') return '';
+  const host = window.location.host || '';
+  if (host === 'nnybk2m78w-ship-it.github.io') return WORKBENCH_RENDER_API_BASE;
+  return '';
+}
+
+const API_BASE_URL = String(
+  (typeof window !== 'undefined' && window.POLICY_WORKBENCH_API_BASE) || getDefaultApiBase() || ''
+).replace(/\/+$/, '');
+
+function buildApiUrl(url) {
+  const value = String(url || '');
+  if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+  if (API_BASE_URL && value.startsWith('/api/')) return `${API_BASE_URL}${value}`;
+  return value;
+}
+
+function getSessionToken() {
+  try {
+    return sessionStorage.getItem(SESSION_TOKEN_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setSessionToken(token) {
+  try {
+    if (token) sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+    else sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  } catch (e) {}
+}
 
 function requestJson(url, options = {}) {
   const method = options.method || 'GET';
-  const headers = options.headers || {};
+  const targetUrl = buildApiUrl(url);
+  const headers = { ...(options.headers || {}) };
   const body = options.body;
+  const token = getSessionToken();
+  if (targetUrl.includes('/api/') && token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
   if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
-    return window.fetch(url, { ...options, cache: options.cache || 'no-store' })
+    return window.fetch(targetUrl, {
+      ...options,
+      headers,
+      credentials: options.credentials || 'include',
+      cache: options.cache || 'no-store',
+    })
       .then(async resp => {
         const text = await resp.text();
         let data = {};
@@ -6068,7 +6113,8 @@ function requestJson(url, options = {}) {
   return new Promise((resolve, reject) => {
     try {
       const xhr = new XMLHttpRequest();
-      xhr.open(method, url, true);
+      xhr.open(method, targetUrl, true);
+      xhr.withCredentials = true;
       Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
       xhr.onreadystatechange = () => {
         if (xhr.readyState !== 4) return;
@@ -9926,6 +9972,7 @@ async function checkWorkbenchSession() {
     return true;
   }
   appState.session = null;
+  setSessionToken('');
   updateHeaderUser();
   showLoginGate('');
   return false;
@@ -9953,6 +10000,7 @@ async function submitWorkbenchLogin(event) {
       if (err) err.textContent = result.error || '登录失败';
       return;
     }
+    setSessionToken(result.sessionToken || '');
     appState.session = result;
     hideLoginGate();
     updateHeaderUser();
@@ -9967,6 +10015,7 @@ async function submitWorkbenchLogin(event) {
 
 async function logoutWorkbench() {
   await requestJson('/api/logout', { method: 'POST' });
+  setSessionToken('');
   appState.session = null;
   appState.policies = [];
   appState.uploadQueue = [];

@@ -51,6 +51,16 @@ const WORKBENCH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const WORKBENCH_AUTH_SECRET = process.env.WORKBENCH_AUTH_SECRET || APP_SECRET || 'policy-review-workbench-dev-secret';
 const WORKBENCH_DEFAULT_USER = process.env.WORKBENCH_USERNAME || 'admin';
 const WORKBENCH_DEFAULT_PASSWORD = process.env.WORKBENCH_PASSWORD || 'policy2026';
+const WORKBENCH_ALLOWED_ORIGINS = parseEnvList(process.env.WORKBENCH_ALLOWED_ORIGINS || [
+  'https://nnybk2m78w-ship-it.github.io',
+  'https://policy-review-workbench.onrender.com',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+  'http://localhost:8091',
+  'http://127.0.0.1:8091',
+].join(','));
 let redisClient = null;
 const wordExtractor = new WordExtractor();
 
@@ -519,7 +529,9 @@ function readWorkbenchSession(req) {
   if (!WORKBENCH_AUTH_ENABLED) {
     return { authenticated: true, user: { username: 'auth-disabled', name: '免登录模式' } };
   }
-  const token = parseCookies(req.headers.cookie)[WORKBENCH_SESSION_COOKIE];
+  const authHeader = String(req.get('authorization') || '');
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+  const token = parseCookies(req.headers.cookie)[WORKBENCH_SESSION_COOKIE] || bearerToken;
   if (!token || !token.includes('.')) return null;
   const [payload, sig] = token.split('.');
   if (!payload || !sig) return null;
@@ -534,6 +546,26 @@ function readWorkbenchSession(req) {
   } catch (e) {
     return null;
   }
+}
+
+function isAllowedWorkbenchOrigin(origin) {
+  if (!origin) return false;
+  if (WORKBENCH_ALLOWED_ORIGINS.includes('*')) return true;
+  return WORKBENCH_ALLOWED_ORIGINS.includes(origin);
+}
+
+function getWorkbenchSessionCookie(req, token, maxAgeSeconds) {
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+  const origin = req.get('origin') || '';
+  const sameSite = secure && origin && isAllowedWorkbenchOrigin(origin) ? 'None' : 'Lax';
+  return [
+    `${WORKBENCH_SESSION_COOKIE}=${encodeURIComponent(token || '')}`,
+    'Path=/',
+    'HttpOnly',
+    `SameSite=${sameSite}`,
+    `Max-Age=${maxAgeSeconds}`,
+    secure ? 'Secure' : '',
+  ].filter(Boolean).join('; ');
 }
 
 function getWorkbenchUsers() {
@@ -5018,11 +5050,16 @@ async function autoCorrectPendingRecords({ sourceRecordId, sourceFields, sourceP
 // ---- 中间件 ----
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '80mb' }));
 
-// CORS: 允许来自任何源的请求 (团队共享需要)
+// CORS: GitHub Pages 前端会跨域调用 Render API，需要允许凭证请求。
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.get('origin');
+  if (isAllowedWorkbenchOrigin(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -5064,13 +5101,12 @@ app.post('/api/login', (req, res) => {
   }
   const safeUser = { username: user.username, name: user.name || user.username };
   const token = createWorkbenchSession(safeUser);
-  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
-  res.setHeader('Set-Cookie', `${WORKBENCH_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(WORKBENCH_SESSION_TTL_MS / 1000)}${secure ? '; Secure' : ''}`);
-  res.json({ success: true, authenticated: true, user: safeUser });
+  res.setHeader('Set-Cookie', getWorkbenchSessionCookie(req, token, Math.floor(WORKBENCH_SESSION_TTL_MS / 1000)));
+  res.json({ success: true, authenticated: true, user: safeUser, sessionToken: token });
 });
 
 app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', `${WORKBENCH_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.setHeader('Set-Cookie', getWorkbenchSessionCookie(req, '', 0));
   res.json({ success: true });
 });
 

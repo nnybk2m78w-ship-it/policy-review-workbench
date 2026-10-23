@@ -105,7 +105,7 @@
       <section class="hero">
         <p class="eyebrow">Policy Review Workbench</p>
         <h1>政策审核与航司活动分析发布页</h1>
-        <p class="lead">这里放置可直接分享的静态页面。政策审核工作台仍使用 Render 后端服务；航司活动竞品分析看板已发布为 GitHub Pages 静态页面。</p>
+        <p class="lead">这里放置可直接分享的前端页面。政策审核工作台由 GitHub Pages 承载界面，并继续调用 Render 后端接口；航司活动竞品分析看板为静态报告页。</p>
       </section>
 
       <section class="grid">
@@ -117,12 +117,12 @@
 
         <article class="item secondary">
           <h2>政策审核工作台</h2>
-          <p>该工作台依赖服务端接口和飞书授权，继续使用 Render 部署地址访问，避免在 GitHub Pages 静态环境中丢失后端能力。</p>
-          <a href="https://policy-review-workbench.onrender.com/?v=history-replay-2d73a8a">打开工作台</a>
+          <p>前端页面发布在 GitHub Pages，登录、飞书授权、上传解析、状态同步等动态能力会请求 Render 后端。</p>
+          <a href="./workbench/">打开工作台</a>
         </article>
       </section>
 
-      <p class="note">发布目录：GitHub Pages 使用仓库内的 <strong>docs/</strong> 目录。每次更新看板数据后，提交并推送 main 分支即可触发重新发布。</p>
+      <p class="note">发布目录：GitHub Pages 使用 <strong>gh-pages</strong> 分支根目录。每次更新工作台前端或看板数据后，需要同步发布目录并推送该分支。</p>
     </main>
   </body>
 </html>
