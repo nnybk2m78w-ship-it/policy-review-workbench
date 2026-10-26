@@ -2,57 +2,57 @@ const platformOrder = ['去哪儿', '携程', '同程', '飞猪'];
 
 const platformFlows = {
   '去哪儿': {
-    entry: '首页 -> 机票 -> 航司活动 -> 国内次卡放心囤 / 航司卡券联名专区',
-    signals: '航司活动 / 国内次卡放心囤 / 权益卡',
-    risk: '基准平台，按次卡和权益卡分别核对。',
+    entry: '首页 -> 机票 -> 航司活动 -> 金秋飞享季～航司权益安心囤 -> 国内次卡放心囤 / 航司卡券联名专区',
+    signals: '航司活动 / 金秋飞享季 / 国内次卡放心囤 / 航司卡券联名专区',
+    risk: '基准平台，按航司次卡和权益卡分别核对；银行联名但缺少明确航司规则的卡暂不纳入有效口径。',
   },
   '携程': {
-    entry: '首页 -> 机票 / 特价机票 -> 权益中心 -> 飞行次卡 / 权益卡',
+    entry: '首页 -> 机票 -> 权益中心 -> 飞行次卡 / 权益卡',
     signals: '权益中心 / 飞行次卡 / 权益卡',
     risk: '已剔除机场燃油卡、学生权益卡、银行信用卡等非航司活动。',
   },
   '同程': {
-    entry: '首页 -> 机票 -> 错峰捡漏209元机票次卡 -> 出行权益中心 -> 查看更多 -> 机票提前囤 -> 国内',
-    signals: '出行权益中心 / 机票提前囤 / 国内',
-    risk: '已剔除测试卡，合并同一产品的价格区间。',
+    entry: '首页 -> 机票 -> 错峰出行计划 / 机票提前囤 -> 国内',
+    signals: '错峰出行计划 / 机票提前囤 / 国内 / 出去玩1次卡',
+    risk: '10/26 新路径只稳定补到部分平台次卡，低于已验证全量 25 条时不覆盖历史全量快照。',
   },
   '飞猪': {
-    entry: '首页 -> 机票 -> 展开全部 -> 飞猪旅行卡 -> 机票专区',
-    signals: '机票次卡 / 飞猪旅行卡 / 机票专区',
-    risk: '已剔除国际/外航卡，尾部卡片已补采。',
+    entry: '首页 -> 机票 -> 双11机票次卡超值囤 / 飞猪双11爆款榜 -> 机票次卡',
+    signals: '双11机票次卡超值囤 / 飞猪双11爆款榜 / 机票次卡',
+    risk: '不要进入单个商品详情；停留在榜单列表补采首屏和尾部卡片。',
   },
 };
 
 const gapCandidates = [
   {
-    topic: '华夏自由飞权益卡',
+    topic: '飞猪全国 / 区域平台次卡系列',
     priority: 'P0',
-    platforms: ['携程', '飞猪'],
-    qunarStatus: '去哪儿本轮未见同名或近似权益卡',
-    reason: '携程和飞猪均出现华夏自由飞权益产品，价格均在 520 元附近，疑似同一底层产品或强相似产品。',
-    next: '进入携程、飞猪详情页，比对价格、航线范围、权益券和使用有效期；若详情一致，应列为去哪儿明确缺失。',
-    keywords: ['华夏航空自由飞权益卡', '华夏自由飞特惠权益卡'],
-    filterKeyword: '华夏|自由飞',
-  },
-  {
-    topic: '飞猪全国通用国内机票卡系列',
-    priority: 'P1',
     platforms: ['飞猪'],
-    qunarStatus: '去哪儿本轮未见等价全国通用机票卡入口',
-    reason: '飞猪出现 299 / 388 / 499 / 888 / 999 元多档位全国通用国内机票卡，属于平台自营通用次卡系列。',
-    next: '确认去哪儿是否有等价通用机票卡入口；若没有，按价格档位拆为系列缺失。',
-    keywords: ['全国通用国内机票卡'],
-    filterKeyword: '全国通用国内机票卡',
+    qunarStatus: '去哪儿本轮未见不限定航司的全国 / 区域平台次卡',
+    reason: '飞猪出现多档全国通用、热门城市、区域和进出港平台次卡，属于平台包装而非单一航司次卡，应独立于航司次卡展示。',
+    next: '按价格档位和适用范围进入详情页核验；若去哪儿无等价平台卡入口，按平台次卡系列列入缺失。',
+    keywords: ['全国通用国内机票闪兑卡', '全国通用国内机票卡', '热门城市通兑', '郑州进出港', '江浙沪', '广东福建', '全国随心'],
+    filterKeyword: '全国通用|热门城市|郑州|江浙沪|广东福建|全国随心',
   },
   {
-    topic: '同程出去玩1次卡 299 / 399 元版',
-    priority: 'P1',
+    topic: '同程出去玩 / 错峰主题平台次卡',
+    priority: 'P0',
     platforms: ['同程'],
-    qunarStatus: '去哪儿本轮未见同名次卡',
-    reason: '同程出现出去玩1次卡 299 元和 399 元两个清晰价档，名称级缺失明显。',
-    next: '详情页确认航线、可用日期、退改和兑换规则；若不是测试卡，应列入去哪儿补充跟进。',
-    keywords: ['出去玩1次卡'],
-    filterKeyword: '出去玩1次卡',
+    qunarStatus: '去哪儿本轮未见同名平台次卡',
+    reason: '同程出现出去玩1次卡、候鸟南飞、冰雪之约、秋冬错峰等不限定航司主题卡，需从航司次卡中单独摘出。',
+    next: '详情页确认适用航线、兑换日期、不可用日期和退款规则；剔除测试卡后作为平台次卡缺失候选。',
+    keywords: ['出去玩1次卡', '候鸟南飞', '冰雪之约', '秋冬错峰'],
+    filterKeyword: '出去玩1次卡|候鸟南飞|冰雪之约|秋冬错峰',
+  },
+  {
+    topic: '华夏 / 长龙等航司次卡',
+    priority: 'P1',
+    platforms: ['携程', '飞猪'],
+    qunarStatus: '去哪儿本轮未见华夏无限飞、畅飞华夏或长龙全年不限次畅飞卡',
+    reason: '携程出现华夏航空国内无限飞，飞猪出现畅飞华夏、长龙全年不限次畅飞等航司包装次卡，区别于平台通用卡。',
+    next: '进入详情页确认是否限制航司、航线、次数和有效期；同航司不同规格不直接合并。',
+    keywords: ['华夏航空国内无限飞', '畅飞华夏', '长龙全年不限次', '长龙航空畅飞'],
+    filterKeyword: '华夏|长龙|无限飞|畅飞',
   },
   {
     topic: '东海 / 南航 / 长安航 / 桂林航空权益卡',
@@ -65,14 +65,14 @@ const gapCandidates = [
     filterKeyword: '东海|南航|长安|桂林',
   },
   {
-    topic: '候鸟南飞 / 冰雪之约国内机票次卡',
+    topic: '国航 / 川航 / 藏航同品核验',
     priority: 'P2',
-    platforms: ['同程'],
-    qunarStatus: '去哪儿本轮未见季节主题同名次卡',
-    reason: '同程出现候鸟南飞、冰雪之约两个季节主题国内机票次卡，去哪儿列表无同名主题。',
-    next: '判断是否与去哪儿国航/藏航冬季产品重合；若航线、价格和使用期不重合，再保留为缺失。',
-    keywords: ['候鸟南飞', '冰雪之约'],
-    filterKeyword: '候鸟南飞|冰雪之约',
+    platforms: ['携程', '同程', '飞猪'],
+    qunarStatus: '去哪儿已有部分同航司产品，但竞品命名和规格存在差异',
+    reason: '国航系权益、川航多人卡、藏航冬日暖阳等主题在多平台都有变体，需要靠详情页比对判断同品或规格差异。',
+    next: '按航司、价格、单程/往返、航线范围和使用规则归并；价格档位或次数不同的单独记录。',
+    keywords: ['国航', '川航', '四川航空', '西藏航空', '藏航'],
+    filterKeyword: '国航|川航|四川航空|西藏航空|藏航',
   },
 ];
 
@@ -144,12 +144,13 @@ function escapeHtml(value) {
 function countByPlatform(items) {
   const counts = new Map();
   for (const platform of platformOrder) {
-    counts.set(platform, { platform, total: 0, tripCards: 0, benefitCards: 0 });
+    counts.set(platform, { platform, total: 0, tripCards: 0, platformTripCards: 0, benefitCards: 0 });
   }
   for (const product of items) {
-    const item = counts.get(product.platform) || { platform: product.platform, total: 0, tripCards: 0, benefitCards: 0 };
+    const item = counts.get(product.platform) || { platform: product.platform, total: 0, tripCards: 0, platformTripCards: 0, benefitCards: 0 };
     item.total += 1;
     if (product.product_type === '次卡') item.tripCards += 1;
+    if (product.product_type === '平台次卡') item.platformTripCards += 1;
     if (product.product_type === '权益卡') item.benefitCards += 1;
     counts.set(product.platform, item);
   }
@@ -160,15 +161,16 @@ function renderMetrics(items) {
   const counts = countByPlatform(items);
   const total = items.length;
   const tripCards = items.filter((item) => item.product_type === '次卡').length;
+  const platformTripCards = items.filter((item) => item.product_type === '平台次卡').length;
   const benefitCards = items.filter((item) => item.product_type === '权益卡').length;
-  const qunar = counts.find((item) => item.platform === '去哪儿') || { total: 0, tripCards: 0, benefitCards: 0 };
+  const qunar = counts.find((item) => item.platform === '去哪儿') || { total: 0, tripCards: 0, platformTripCards: 0, benefitCards: 0 };
   const competitorUnique = new Set(items.filter((item) => item.platform !== '去哪儿').map((item) => item.product_name)).size;
   const p0Gaps = gapCandidates.filter((item) => item.priority === 'P0').length;
   const p1Gaps = gapCandidates.filter((item) => item.priority === 'P1').length;
 
   const metrics = [
-    { label: '已入库产品', value: total, note: `次卡 ${tripCards} / 权益卡 ${benefitCards}` },
-    { label: '去哪儿基准', value: qunar.total, note: `次卡 ${qunar.tripCards} / 权益卡 ${qunar.benefitCards}`, baseline: true },
+    { label: '已入库产品', value: total, note: `航司次卡 ${tripCards} / 平台次卡 ${platformTripCards} / 权益卡 ${benefitCards}` },
+    { label: '去哪儿基准', value: qunar.total, note: `航司次卡 ${qunar.tripCards} / 平台次卡 ${qunar.platformTripCards} / 权益卡 ${qunar.benefitCards}`, baseline: true },
     { label: '竞品唯一产品', value: competitorUnique, note: '按名称粗去重，详情页核验后再合并' },
     { label: '去哪儿缺失候选', value: gapCandidates.length, note: `P0 ${p0Gaps} / P1 ${p1Gaps} / P2 ${gapCandidates.length - p0Gaps - p1Gaps}`, alert: true },
   ];
