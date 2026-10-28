@@ -2366,22 +2366,43 @@ function normalizeDateRangeParts(match) {
   return `${sy}-${sm.padStart(2, '0')}-${sd.padStart(2, '0')}至${ey}-${em.padStart(2, '0')}-${ed.padStart(2, '0')}`;
 }
 
-function extractDateRangeNear(text, labelRegex) {
+function extractDateRangesNear(text, labelRegex, options = {}) {
   const source = normalizeFeishuValue(text);
-  const lines = source.split(/\n+/).filter(line => labelRegex.test(line));
-  const candidates = lines.length ? lines : [source.slice(0, 1600)];
+  const fallbackToHead = options.fallbackToHead !== false;
+  const lines = source.split(/\n+/).map(line => line.trim()).filter(Boolean);
+  const candidates = [];
+  const hasDateRangeOnLine = line => /20\d{2}.{0,20}(?:至|到|-|—|~).{0,20}\d{1,2}\s*(?:日|号)?/.test(line);
+  lines.forEach((line, idx) => {
+    if (labelRegex.test(line)) candidates.push(hasDateRangeOnLine(line) ? line : lines.slice(idx, idx + 4).join(' '));
+  });
+  if (!candidates.length && fallbackToHead) candidates.push(source.slice(0, 1600));
   const patterns = [
-    /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|-|—|~)\s*(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?/,
-    /(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\s*(?:至|到|-|—|~)\s*(?:(20\d{2})[-/.])?(\d{1,2})[-/.](\d{1,2})/,
+    /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|-|—|~)\s*(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?/g,
+    /(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\s*(?:至|到|-|—|~)\s*(?:(20\d{2})[-/.])?(\d{1,2})[-/.](\d{1,2})/g,
   ];
+  const values = [];
   for (const chunk of candidates) {
     for (const pattern of patterns) {
-      const m = chunk.match(pattern);
-      const value = normalizeDateRangeParts(m);
-      if (value) return value;
+      pattern.lastIndex = 0;
+      for (const m of chunk.matchAll(pattern)) {
+        const value = normalizeDateRangeParts(m);
+        if (value && !values.includes(value)) values.push(value);
+      }
     }
   }
-  return '';
+  return values;
+}
+
+function extractDateRangeNear(text, labelRegex) {
+  return extractDateRangesNear(text, labelRegex)[0] || '';
+}
+
+function joinDateRanges(ranges) {
+  return (ranges || []).filter(Boolean).filter((value, idx, arr) => arr.indexOf(value) === idx).join('、');
+}
+
+function extractCombinedSaleDepartDateRange(text) {
+  return joinDateRanges(extractDateRangesNear(text, /适用销售、航班日期|适用销售.*航班日期|销售.*航班日期|适用销售.*乘机日期|销售.*乘机日期/, { fallbackToHead: false }));
 }
 
 function getRangeStart(value) {
@@ -2446,10 +2467,15 @@ function inferPolicyTypeFromEvidence(rawText) {
   const selfEvidence = hasSelfTicketingEvidence(source);
   const flagshipEvidence = hasCoreFlagshipEvidence(source);
   const plainFlagshipMention = /旗舰店/.test(source);
+  const internalFarePolicy = /客运销售运价政策|内部运价政策|私有运价|运价政策/.test(source) &&
+    /PAT\s*[:：]?\s*A|运价基础|大客户编码|运价引擎|出票指令|OFFICE号|航协号/i.test(source);
+  const flagshipConfigEvidence = /授权销售渠道|授权销售代理|官网旗舰店|旗舰店客票|直连合作方|TC项|产品代码|产品操作规定|优惠券|券码|资源编号/i.test(source);
 
   // Plain "OTA旗舰店" in a sales-channel table is only a channel mention.
   // When the file also has PAT/运价基础/自营渠道/运价引擎 evidence, route it to self-operated.
+  if (internalFarePolicy && !flagshipConfigEvidence) return '自营';
   if (selfEvidence && !flagshipEvidence) return '自营';
+  if (selfEvidence && flagshipEvidence && internalFarePolicy && !flagshipConfigEvidence) return '自营';
   if (flagshipEvidence) {
     return /券类|优惠券|券码|消费券|资源券|coupon|用券|领券/i.test(source) ? '旗舰店券类' : '旗舰店code';
   }
@@ -2517,12 +2543,26 @@ function carrierCodeForName(name) {
 
 function extractTitleFromSource(fileName, text) {
   const lines = normalizeFeishuValue(text).split(/\n+/).map(line => line.trim()).filter(Boolean);
-  const aboutTitle = lines.find(line => /关于.*(政策|规定|规则|产品|通告|通知)/.test(line) && line.length <= 90);
-  if (aboutTitle) return aboutTitle.replace(/^关于(?:修订|重新)?(?:制定并)?下发/, '').replace(/[《》]/g, '').replace(/的(?:业务)?(?:通告|通知)$/, '').trim() || aboutTitle;
-  const productTitle = lines.find(line => /(产品|政策|规则|规定)$/.test(line) && !/公司|委员会|市场营销|业务通知|业务通告/.test(line) && line.length >= 6 && line.length <= 60);
-  if (productTitle) return productTitle;
-  const title = lines.find(line => line.length >= 8 && line.length <= 80 && !/^[\d\s\t|:：.-]+$/.test(line));
-  return title || String(fileName || '').replace(/\.[^.]+$/, '');
+  const normalizeTitle = (raw) => {
+    let value = normalizeFeishuValue(raw)
+      .replace(/^编号[:：]?\s*[A-Z0-9_\-〔〕\[\]\u4e00-\u9fa5]+\s*/i, '')
+      .replace(/^关于(?:修订|重新)?(?:制定并)?下发/, '')
+      .replace(/的(?:业务)?(?:通告|通知)$/, '')
+      .replace(/[《》]/g, '')
+      .trim();
+    const circle = value.match(/圈层政策[（(]([^）)]+)[）)]/);
+    if (circle) value = circle[1].trim();
+    return value || normalizeFeishuValue(raw);
+  };
+  const isSectionHeading = line =>
+    /^(?:[一二三四五六七八九十]+、|[（(][一二三四五六七八九十\d]+[）)]|\d+[.、]|附件\s*\d*)/.test(line) ||
+    /^(?:产品背景|产品内容|产品适用条件|销售政策|定价及出票规则|退改签|正文|说明|备注)$/.test(line);
+  const aboutTitle = lines.find(line => /关于.*(政策|规定|规则|产品|通告|通知)/.test(line) && line.length <= 90 && !isSectionHeading(line));
+  if (aboutTitle) return normalizeTitle(aboutTitle);
+  const productTitle = lines.find(line => /(产品|政策|规则|规定|手册)$/.test(line) && !isSectionHeading(line) && !/公司|委员会|市场营销|业务通知|业务通告/.test(line) && line.length >= 6 && line.length <= 70);
+  if (productTitle) return normalizeTitle(productTitle);
+  const title = lines.find(line => line.length >= 8 && line.length <= 90 && !isSectionHeading(line) && !/^[\d\s\t|:：.-]+$/.test(line));
+  return normalizeTitle(title || String(fileName || '').replace(/\.[^.]+$/, ''));
 }
 
 function extractPolicyCode(text) {
@@ -2614,12 +2654,27 @@ function extractRefundChangeSignRules(text) {
   const source = normalizeFeishuValue(text);
   const lines = source.split(/\n+/).map(line => line.trim()).filter(Boolean);
   const out = { refund_rules: '', change_rules: '', sign_and_transfer_rules: '' };
+  const special = extractKCabinSpecialRules(source);
+  if (special) return special;
   const push = (key, line) => {
     if (!line || out[key].includes(line)) return;
     out[key] = out[key] ? `${out[key]}；${line}` : line;
   };
+  let inRefundChangeSection = false;
   lines.forEach(line => {
     if (line.length > 260) return;
+    const isRefundChangeHeading = /退改签|退票、变更和签转|变更、签转、退票|退票及变更|变更及退票|签转.*退票|退票.*签转/.test(line);
+    if (isRefundChangeHeading) inRefundChangeSection = true;
+    const isNextBusinessHeading = /^(?:[一二三四五六七八九十]+、|[（(][一二三四五六七八九十\d]+[）)]|\d+[.、]|附件\s*\d*)/.test(line) &&
+      !/(退票|退款|变更|改期|改签|签转|退改签)/.test(line);
+    if (isNextBusinessHeading) inRefundChangeSection = false;
+    const genericPassengerRule = /按(?:照)?(?:现行|最新|最新版)?[^。\n；]{0,24}《[^》]{2,80}客票[^》]{0,40}》[^。\n；]{0,30}(?:执行|办理|为准)|(?:现行|最新|最新版)?《[^》]{2,80}客票[^》]{0,40}》/.test(line);
+    if (genericPassengerRule && (inRefundChangeSection || isRefundChangeHeading || /退改|退票|变更|签转|EI/.test(line))) {
+      push('refund_rules', line);
+      push('change_rules', line);
+      if (inRefundChangeSection || /签转|退改签|EI/.test(line)) push('sign_and_transfer_rules', line);
+      return;
+    }
     const hasRefund = /退票|退款|仅退税费|不予退还|退还|自愿退/.test(line);
     const hasChange = /变更|改期|改签|升舱|降舱|改舱/.test(line);
     const hasSign = /签转|外航|EI项|EI\s*[:：]|不得签/.test(line);
@@ -2744,12 +2799,107 @@ function inferSelfDiscountPer(text) {
   return fallback ? asArrayValue(fallback) : null;
 }
 
+function extractKCabinSpecialRules(text) {
+  const source = normalizeFeishuValue(text);
+  const start = source.search(/K\s*舱.{0,16}(?:变更|改期).{0,16}退票规则|K\s*舱变更及退票规则/);
+  if (start < 0) return null;
+  const chunk = source.slice(start, start + 2600).replace(/\s+/g, ' ');
+  const rowStart = chunk.search(/K\s*(?:普通)?经济\s*舱|K\s+普通经济|K\s+不允/);
+  const row = rowStart >= 0 ? chunk.slice(rowStart, rowStart + 1200) : chunk;
+  const nums = [...row.matchAll(/(\d{1,3})\s*%/g)]
+    .map(m => Number(m[1]))
+    .filter(n => Number.isFinite(n) && n >= 0 && n <= 100)
+    .slice(0, 10);
+  if (nums.length < 10) return null;
+  const change = nums.slice(0, 5);
+  const refund = nums.slice(5, 10);
+  return {
+    sign_and_transfer_rules: '不允许自愿签转',
+    change_rules: `${change[0]}-168-${change[1]}-72-${change[2]}-24-${change[3]}-4-${change[4]}`,
+    refund_rules: `${refund[0]}-168-${refund[1]}-72-${refund[2]}-24-${refund[3]}-4-${refund[4]}`,
+  };
+}
+
+function inferSubCabinApplicability(text) {
+  const source = normalizeFeishuValue(text);
+  if (/不含(?:子舱|小舱)|不适用(?:子舱|小舱)|不包含(?:子舱|小舱)/.test(source)) return false;
+  if (/含(?:子舱|小舱)|(?:子舱|小舱)位|浮动舱位（?含小舱）?|[A-Z]\s*舱[（(]?\s*含\s*[）)]?\s*以上/.test(source)) return '是';
+  return null;
+}
+
+function extractLuggageAmount(text) {
+  const source = normalizeFeishuValue(text);
+  const kg = source.match(/(?:免费)?(?:托运)?行李(?:额|额度|重量)?[:：\s]*(\d+(?:\.\d+)?)\s*(?:KG|kg|Kg|公斤|千克)/);
+  if (kg) return `${kg[1]}kg`;
+  if (/免费托运行李(?:额|额度)?.{0,18}(?:与|同).{0,12}定座舱位.{0,12}(?:一致|保持一致)|行李(?:额|额度)?.{0,18}按(?:照)?(?:实际)?定座舱位/.test(source)) {
+    return '正常舱位行李额标准';
+  }
+  return '';
+}
+
+function firstAgeLowerBound(ageLimit) {
+  const text = normalizeFeishuValue(ageLimit);
+  const m = text.match(/(\d{1,3})\s*[-至]/);
+  return m ? Number(m[1]) : null;
+}
+
+function inferChildApplicableFromText(text, ageLimit = '') {
+  const source = normalizeFeishuValue(text);
+  if (/儿童.{0,16}(不适用|不得|不可|不能|不享受|不支持|不允许)|不适用.{0,16}儿童|不含儿童/.test(source)) return '否';
+  if (/适用旅客类型[:：]?\s*成人[、,，/]儿童|成人[、,，/]儿童|儿童.{0,16}(适用|可购买|可享受|允许)|适用.{0,16}儿童/.test(source)) return '是';
+  const lower = firstAgeLowerBound(ageLimit || normalizeAgeRangeText('', source));
+  if (lower !== null && lower >= 12) return '否';
+  return '';
+}
+
+function inferBabyApplicableFromText(text, ageLimit = '') {
+  const source = normalizeFeishuValue(text);
+  if (/婴儿.{0,16}(不适用|不得|不可|不能|不享受|不支持|不允许)|不适用.{0,16}婴儿|不含婴儿|婴儿等特殊旅客不适用/.test(source)) return '否';
+  if (/婴儿.{0,16}(适用|可购买|可享受|允许)|适用.{0,16}婴儿/.test(source)) return '是';
+  const lower = firstAgeLowerBound(ageLimit || normalizeAgeRangeText('', source));
+  if (lower !== null && lower >= 2) return '否';
+  if (/少年|青年|学生|长者|银发|老人|老年|年龄限制/.test(source)) return '否';
+  return '';
+}
+
+function inferDisplayMethodText(text) {
+  const source = normalizeFeishuValue(text);
+  const age = normalizeAgeRangeText('', source);
+  if (/青老年|学生/.test(source) && /学生认证|学生/.test(source) && /55\s*周岁|55\s*岁|银发|老年|长者/.test(source)) {
+    return '1、限16-24、55周岁以上旅客预定；2、学生认证';
+  }
+  if (/青年|银发|长者|老年/.test(source) && /18\s*(?:周岁|岁)?.{0,12}24|18-24|18至24/.test(source) && /50\s*(?:周岁|岁)?.{0,8}以上|50-110|银发|长者|老年/.test(source)) {
+    return '1、标签青年游，限18-24周岁旅客预定；2、标签银发产品，限50周岁以上旅客预定';
+  }
+  if (/少年|12\s*(?:周岁|岁)?.{0,12}18|12-17/.test(source)) return '限12-17周岁预定';
+  if (/小团|多人|同行/.test(source)) {
+    const count = inferPassengerCountLimit(source);
+    if (count) return `${count.replace('人及以上', '-9人')}预定，同退同改`;
+    return '限2-9人预定，同退同改';
+  }
+  if (age) return `限${age.replace('-', '-')}周岁旅客预定`;
+  return '';
+}
+
+function inferRefundChangeTogetherText(text) {
+  const source = normalizeFeishuValue(text);
+  if (/同退同改|同订同退|同订同改|必须.{0,8}同时(?:办理)?(?:退票|变更)|不允许部分(?:人员|旅客)(?:退票|变更)/.test(source)) return true;
+  return false;
+}
+
 function buildSelfOperatedConfigs({ text, carrier, saleRange, departRange, cabin, rules }) {
   const effectiveRange = extractEffectiveDateRange(text);
   const productCodes = extractSelfProductCodes(text);
   const codes = productCodes.length ? productCodes : [extractProductCode(text, carrier)].filter(Boolean);
   const departOrigin = extractDepartDateOrigin(text);
   const cabinArr = asArrayValue(cabin);
+  const ageLimit = normalizeAgeRangeText('', text);
+  const subCabin = inferSubCabinApplicability(text);
+  const luggageAmount = extractLuggageAmount(text);
+  const childApplicable = inferChildApplicableFromText(text, ageLimit);
+  const babyApplicable = inferBabyApplicableFromText(text, ageLimit);
+  const displayMethod = inferDisplayMethodText(text);
+  const passengerCount = inferPassengerCountLimit(text);
   const configs = (codes.length ? codes : ['']).map(code => {
     const obj = {};
     applyScenarioSchemaDefaults('自营', obj);
@@ -2762,29 +2912,30 @@ function buildSelfOperatedConfigs({ text, carrier, saleRange, departRange, cabin
     obj.depart_date = /以运价引擎呈报为准|以价引擎呈报为准|呈报为准/.test(departOrigin || text) ? ['需人工确认'] : (departRange ? [departRange] : null);
     obj.flight_type = extractFlightType(text) ? [extractFlightType(text)] : null;
     obj.cabin = cabinArr;
-    obj.sub_cabin = /不含子舱/.test(text) ? false : defaultSchemaValueForField('sub_cabin');
+    obj.sub_cabin = subCabin !== null ? subCabin : defaultSchemaValueForField('sub_cabin');
     const selfDiscountType = inferSelfDiscountType(text);
     obj.discount_type = selfDiscountType ? [selfDiscountType] : null;
     obj.discount_per = inferSelfDiscountPer(text);
     obj.od = /国内自营航班|国内航线/.test(text) && !extractOdText(text) ? 'ALL-ALL' : (extractOdText(text) || null);
     obj.passenger_type = /儿童/.test(text) ? ['成人', '儿童'] : ['成人'];
-    obj.child_applicable = /儿童/.test(text) ? true : null;
-    obj.baby_applicable = /婴儿/.test(text) ? true : null;
-    obj.luggage_amount = /行李/.test(text) ? '人工确认' : null;
+    obj.age_limit = ageLimit || null;
+    obj.child_applicable = childApplicable || null;
+    obj.baby_applicable = babyApplicable || null;
+    obj.luggage_amount = luggageAmount || (/行李/.test(text) ? '人工确认' : null);
     const cap = text.match(/(\d+)\s*(?:至|-|到)\s*(\d+)\s*人/);
-    obj.capacity_limit = cap ? `${cap[1]}-${cap[2]}` : null;
+    obj.capacity_limit = cap ? `${cap[1]}-${cap[2]}` : (passengerCount || null);
     obj.family_limit = /多人|同行|家庭/.test(text);
     obj.realname_limit = false;
     obj.equity_related = false;
     obj.remium_products = false;
-    obj.display_method = false;
-    obj.document_restrictions = /身份证/.test(text) ? '1' : null;
+    obj.display_method = displayMethod || false;
+    obj.document_restrictions = /身份证|年龄|周岁|青年|长者|银发|学生|少年/.test(text) ? '居民身份证' : null;
     obj.cabin_class = /经济舱|V\/N\/A\/U\/T|V、N、A、U、T/.test(text) ? '经济舱' : null;
-    obj.student_verification = false;
-    obj.student_verification_rules = false;
-    obj.product_label = /多人|同行/.test(text) ? '多人同行' : null;
-    obj.display_limit = obj.capacity_limit ? `${obj.capacity_limit.replace('-', '至')}人同行享折扣，限单程国内自营航班` : null;
-    obj.refund_change_together = /同时办理变更|同时办理退票|不允许部分人员/.test(text);
+    obj.student_verification = /学生认证|学生/.test(text) ? '是' : false;
+    obj.student_verification_rules = /学生认证|学生/.test(text) ? '是' : false;
+    obj.product_label = /多人|同行|小团/.test(text) ? (/小团/.test(text) ? '小团出行' : '多人同行') : null;
+    obj.display_limit = displayMethod || (obj.capacity_limit ? `${normalizeFeishuValue(obj.capacity_limit).replace('-', '至').replace(/(\d)$/, '$1人')}同行享折扣，限单程国内自营航班` : null);
+    obj.refund_change_together = inferRefundChangeTogetherText(text);
     obj.sign_and_transfer_rules = rules && rules.sign_and_transfer_rules ? rules.sign_and_transfer_rules : null;
     obj.refund_rules = rules && rules.refund_rules ? rules.refund_rules : '需人工确认';
     obj.change_rules = rules && rules.change_rules ? rules.change_rules : '需人工确认';
@@ -2803,12 +2954,19 @@ function buildPolicyDataFromSource({ fileName, source, queueFields }) {
   const uploadDate = parseDateToYmd(queueFields && queueFields['上传时间']) || todayInShanghai();
   const docDate = extractDocumentDate(text);
   const titleRange = inferDateRangeFromTitle(text, 'depart_date');
-  const saleRange = extractDateRangeNear(text, /销售|售卖|出票|购卡|购买|发售|上线/);
-  const departRange = extractDateRangeNear(text, /航班|旅行|出行|乘机|适用日期|适用时间|使用日期/) || titleRange;
-  const redeemRange = extractDateRangeNear(text, /兑换|使用|预约|核销/);
+  const combinedSaleDepartRange = extractCombinedSaleDepartDateRange(text);
+  const saleRange = combinedSaleDepartRange || joinDateRanges(extractDateRangesNear(text, /销售|售卖|出票|购卡|购买|发售|上线/));
+  const departRange = combinedSaleDepartRange || joinDateRanges(extractDateRangesNear(text, /航班|旅行|出行|乘机|适用日期|适用时间|使用日期/)) || titleRange || (/适用销售.*航班|销售.*航班|适用销售.*乘机|销售.*乘机/.test(text) ? saleRange : '');
+  const redeemRange = joinDateRanges(extractDateRangesNear(text, /兑换|使用|预约|核销/));
   const pat = extractPatInstruction(text);
   const cabin = extractCabin(text);
   const rules = extractRefundChangeSignRules(text);
+  const ageLimit = normalizeAgeRangeText('', text);
+  const childApplicable = inferChildApplicableFromText(text, ageLimit) || inferChildApplicable(null, { product_name: text });
+  const babyApplicable = inferBabyApplicableFromText(text, ageLimit);
+  const subCabin = inferSubCabinApplicability(text);
+  const luggageAmount = extractLuggageAmount(text);
+  const displayMethod = inferDisplayMethodText(text);
   if (fileType === '自营') {
     const configs = buildSelfOperatedConfigs({ text, carrier, saleRange, departRange, cabin, rules });
     const primary = configs[0] || {};
@@ -2840,12 +2998,17 @@ function buildPolicyDataFromSource({ fileName, source, queueFields }) {
     od: extractOdText(text),
     booking_cabin: cabin,
     cabin,
+    sub_cabin: subCabin !== null ? subCabin : undefined,
     sale_date: saleRange,
     depart_date: departRange,
     discount_type: inferDiscountType(null, { product_name: text }),
     discount_per: inferDiscountPerFromText(text),
-    age_limit: normalizeAgeRangeText('', text),
-    child_applicable: inferChildApplicable(null, { product_name: text }),
+    age_limit: ageLimit,
+    child_applicable: childApplicable,
+    baby_applicable: babyApplicable,
+    luggage_amount: luggageAmount,
+    display_method: displayMethod,
+    refund_change_together: inferRefundChangeTogetherText(text),
     document_restrictions: /年龄|周岁|青年|长者|银发|学生/.test(text) ? '居民身份证' : '',
     ...rules,
   };
@@ -4049,10 +4212,16 @@ function classifyCorrection(fieldKey, fieldLabel, reason, newValue) {
       rule: '旗舰店 code 场景不把 PAT:A/出票指令作为录入字段，也不因为缺少出票指令标记待确认。',
     };
   }
-  if (/次卡|销售日期|售卖日期|购卡日期|航班日期|旅行日期|出行日期|结束时间|结束日期/.test(text) && ['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) {
+  if (/次卡/.test(text) && /销售日期|售卖日期|购卡日期|航班日期|旅行日期|出行日期|结束时间|结束日期/.test(text) && ['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) {
     return {
       type: '次卡日期完整性规则',
       rule: '次卡必须分别输出销售/兑换/航班日期；只识别到截止日时不得留空，标题期间可用于补齐旅行日期并保留人工复核说明。',
+    };
+  }
+  if (/销售日期|售卖日期|购卡日期|航班日期|旅行日期|出行日期|适用日期|结束时间|结束日期/.test(text) && ['sale_date', 'depart_date', 'use_date', 'redeem_date'].includes(fieldKey)) {
+    return {
+      type: '日期字段抽取与同周期规则',
+      rule: '日期字段必须优先读取当前文件自身的正式日期段；“适用销售、航班日期”等合并描述时，销售日期和旅行日期输出同一个具体日期范围；多段日期需完整保留，不用人工确认占位覆盖已确认值。',
     };
   }
   if (['sign_and_transfer_rules', 'refund_rules', 'change_rules'].includes(fieldKey)) {
